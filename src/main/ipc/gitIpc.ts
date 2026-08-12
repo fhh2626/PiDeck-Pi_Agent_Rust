@@ -87,7 +87,6 @@ async function ensureGenProcess(
 		"--no-extensions",
 		"--no-skills",
 		"--no-prompt-templates",
-		"--no-context-files",
 		"--no-themes",
 		"--thinking", "off",
 	]);
@@ -156,6 +155,9 @@ async function quickGenerate(
 		settings.wslEnabled,
 		settings.wslDistro,
 		settings.wslUser,
+		settings.piRuntimePreference,
+		settings.piTypescriptPath,
+		settings.piRustPath,
 	);
 
 	try {

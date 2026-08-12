@@ -32,3 +32,9 @@ test("markIdle fallback path also notifies settled after confirming no work", ()
 		/兜底确认无工作也算成功空闲[\s\S]{0,80}this\.notifyAgentSettled\(agentId, runtime\.tab\.title\);/,
 	);
 });
+
+test("uses a short get_state fallback for Rust lifecycle events", () => {
+	assert.match(source, /this\.rustRuntimeAgents\.add\(agentId\)/);
+	assert.match(source, /const rustSettledFallback = this\.rustRuntimeAgents\.has\(agentId\)/);
+	assert.match(source, /rustSettledFallback \? AgentManager\.RUST_AGENT_SETTLED_TIMEOUT_MS/);
+});

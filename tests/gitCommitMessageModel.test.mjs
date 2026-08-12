@@ -35,7 +35,6 @@ test("Git summary selects the configured model while retaining the lightweight R
     "--no-extensions",
     "--no-skills",
     "--no-prompt-templates",
-    "--no-context-files",
     "--no-themes",
     "--thinking",
   ]) {

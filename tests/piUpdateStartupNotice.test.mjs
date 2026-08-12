@@ -29,7 +29,7 @@ test("opening dev settings does not auto-detect pi; cached result is shown direc
   assert.doesNotMatch(modal, /activeTab === "dev" && props\.piStatus === null/);
   assert.match(modal, /不自动检测 pi/);
   // settings 持久化字段 + 恢复逻辑（piStatus 为 null 时从缓存回填）
-  assert.match(settings, /piInstall\?: \{ command: string; version: string \}/);
+  assert.match(settings, /piInstall\?: \{ command: string; version: string; runtimeKind\?:/);
   assert.match(hook, /settings\.piInstall && piStatus === null/);
   assert.match(hook, /persistPiInstall/);
   // 未检测到时清除旧缓存，避免残留旧路径

@@ -1386,8 +1386,13 @@ function SettingsModalContent(props: SettingsModalProps) {
 																	version: props.piStatus.version ?? "pi",
 																})
 															: t("settings.piMissing")
-														: t("settings.piCliAvailable")}
-												</span>
+																				: t("settings.piCliAvailable")}
+																		</span>
+																		{props.piStatus?.installed && props.piStatus.runtimeKind && props.piStatus.runtimeKind !== "unknown" && (
+																			<small className="setting-status info">
+																				{props.piStatus.runtimeKind === "rust" ? t("settings.piRuntimeDetectedRust") : t("settings.piRuntimeDetectedTypescript")}
+																			</small>
+																		)}
 												{piPath && (
 													<span className="setting-path">
 														{piPath}
@@ -1545,6 +1550,27 @@ function SettingsModalContent(props: SettingsModalProps) {
 										)}
 									</div>
 									)}
+
+									<div className="my-3 border-0 border-t border-border-subtle" />
+
+									<div className="setting-pi-runtime-panel">
+										<SettingRow title={<span>{t("settings.piRuntimePreference")}</span>} description={t("settings.piRuntimePreferenceHint")}>
+											<Select value={draftSettings.piRuntimePreference} onValueChange={(value) => updateDraft({ piRuntimePreference: value as AppSettings["piRuntimePreference"] })}>
+												<SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+												<SelectContent>
+													<SelectItem value="auto">{t("settings.piRuntimePreferenceAuto")}</SelectItem>
+													<SelectItem value="typescript">{t("settings.piRuntimePreferenceTypescript")}</SelectItem>
+													<SelectItem value="rust">{t("settings.piRuntimePreferenceRust")}</SelectItem>
+												</SelectContent>
+											</Select>
+										</SettingRow>
+										<SettingRow title={<span>{t("settings.piTypescriptPath")}</span>} description={t("settings.piTypescriptPathHint")} stacked>
+											<Input type="text" value={draftSettings.piTypescriptPath} placeholder={t("settings.piTypescriptPathPlaceholder")} onChange={(event) => updateDraft({ piTypescriptPath: event.target.value })} />
+										</SettingRow>
+										<SettingRow title={<span>{t("settings.piRustPath")}</span>} description={t("settings.piRustPathHint")} stacked>
+											<Input type="text" value={draftSettings.piRustPath} placeholder={t("settings.piRustPathPlaceholder")} onChange={(event) => updateDraft({ piRustPath: event.target.value })} />
+										</SettingRow>
+									</div>
 
 									<div className="my-3 border-0 border-t border-border-subtle" />
 

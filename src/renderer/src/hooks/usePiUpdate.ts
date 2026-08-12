@@ -41,6 +41,7 @@ export function usePiUpdate(options: UsePiUpdateOptions) {
         installed: true,
         command: settings.piInstall.command,
         version: settings.piInstall.version,
+        runtimeKind: settings.piInstall.runtimeKind,
         searchedDirs: [],
       });
     }
@@ -85,11 +86,25 @@ export function usePiUpdate(options: UsePiUpdateOptions) {
   // 不重复 spawn 检测；手动点「检测环境」才重新探测。
   const persistPiInstall = useCallback(async (status: PiInstallStatus) => {
     if (status.installed && status.command && status.version) {
-      return api.settings.update({ piInstall: { command: status.command, version: status.version } });
+      const runtimePathPatch = status.command.startsWith("wsl -d ")
+        ? {}
+        : status.runtimeKind === "typescript" && !settings.piTypescriptPath
+          ? { piTypescriptPath: status.command }
+          : status.runtimeKind === "rust" && !settings.piRustPath
+            ? { piRustPath: status.command }
+            : {};
+      return api.settings.update({
+        piInstall: {
+          command: status.command,
+          version: status.version,
+          runtimeKind: status.runtimeKind,
+        },
+        ...runtimePathPatch,
+      });
     }
     // 未检测到：清除旧缓存，避免残留上一台机器/旧路径的结果
     return api.settings.update({ piInstall: undefined });
-  }, [api]);
+  }, [api, settings.piRustPath, settings.piTypescriptPath]);
 
   const checkPiInstall = useCallback(
     async (source: "startup" | "manual" = "manual") => {
@@ -123,13 +138,9 @@ export function usePiUpdate(options: UsePiUpdateOptions) {
       const next = await api.pi.check();
       setPiStatus(next);
       if (next.installed) {
-        const saved = await api.settings.update({
-          piEnvironmentChecked: true,
-          piInstall: next.command && next.version
-            ? { command: next.command, version: next.version }
-            : undefined,
-        });
-        setSettings(saved);
+        const saved = await persistPiInstall(next);
+        const marked = await api.settings.update({ piEnvironmentChecked: true });
+        setSettings({ ...saved, ...marked });
         showToast(
           t("app.piCheckPassed", {
             value: next.command ?? next.version ?? "pi",
@@ -146,7 +157,20 @@ export function usePiUpdate(options: UsePiUpdateOptions) {
     } finally {
       setPiChecking(false);
     }
-  }, [api, setPiStatus, setPiChecking, setSettings, setSettingsOpen, setEnvironmentDialog]);
+  }, [api, persistPiInstall, setPiStatus, setPiChecking, setSettings, setSettingsOpen, setEnvironmentDialog]);
+
+  /** 启动后的静默刷新：首装仍显示环境对话框，后续启动只更新版本/实现状态。 */
+  const refreshPiStatus = useCallback(async () => {
+    setPiChecking(true);
+    try {
+      const next = await api.pi.check();
+      setPiStatus(next);
+      const saved = await persistPiInstall(next);
+      setSettings(saved);
+    } finally {
+      setPiChecking(false);
+    }
+  }, [api, persistPiInstall, setPiChecking, setPiStatus, setSettings]);
 
   // ---- 自定义 Pi 路径 ----
   const validateCustomPiPath = useCallback(
@@ -366,6 +390,7 @@ export function usePiUpdate(options: UsePiUpdateOptions) {
     // functions
     checkPiInstall,
     checkPiInstallInline,
+    refreshPiStatus,
     validateCustomPiPath,
     clearCustomPiPath,
     checkNpm,

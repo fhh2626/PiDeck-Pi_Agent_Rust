@@ -90,6 +90,9 @@ const defaultSettings: AppSettings = {
   // （1480×960 只是最大化前的兜底尺寸，不是最终展示态）
   startupWindowMode: "last",
   piEnvironmentChecked: false,
+	piRuntimePreference: "auto",
+	piTypescriptPath: "",
+	piRustPath: "",
   sessionTabOpenMode: "preview",
   enableGitManagement: true,
   gitCommitMessagePrompt: `请根据以下 git diff 生成一条中文 git commit message。

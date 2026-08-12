@@ -40,6 +40,9 @@ function loadExtensionManagerModule() {
       if (specifier === "../logging/sharedLogger") {
         return { getAppLogger: () => null };
       }
+      if (specifier === "../../shared/piCompatibility") {
+        return nodeRequire("../src/shared/piCompatibility.ts");
+      }
       return nodeRequire(specifier);
     },
     Promise,

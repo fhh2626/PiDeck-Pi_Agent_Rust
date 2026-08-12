@@ -176,7 +176,15 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 
 	ipcMain.handle(ipcChannels.piCheck, async () => {
 		const settings = settingsStore.get();
-		const status = await piLocator.check(settings.customPiPath, settings.wslEnabled, settings.wslDistro, settings.wslUser);
+		const status = await piLocator.check(
+			settings.customPiPath,
+			settings.wslEnabled,
+			settings.wslDistro,
+			settings.wslUser,
+			settings.piRuntimePreference,
+			settings.piTypescriptPath,
+			settings.piRustPath,
+		);
 		void appLogger.info("pi", "Pi check completed", {
 			installed: status.installed,
 			version: status.version,
@@ -204,7 +212,7 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 
 	ipcMain.handle(ipcChannels.projectsListModels, async (_event, _projectId?: string) => {
 		try {
-			// 读缓存；无缓存时后台 fork pi --list-models（含加速参数，auth 由 pi 处理）。
+			// 读缓存；无缓存时优先通过 Pi RPC 获取模型，失败再回退 --list-models。
 			const models = await fetchModelList(piLocator, settingsStore);
 			void appLogger.info("pi", "Model list resolved", {
 				count: models.length,
@@ -213,7 +221,7 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 			});
 			return models;
 		} catch (error) {
-			void appLogger.warn("pi", "Failed to list models via pi --list-models", {
+			void appLogger.warn("pi", "Failed to list models via Pi RPC/text fallback", {
 				error: error instanceof Error ? error.message : String(error),
 			});
 			return [];
@@ -551,7 +559,16 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 	// ── 反馈环境 ─────────────────────────────────────────────────────
 
 	ipcMain.handle(ipcChannels.appFeedbackEnvironment, async () => {
-		const pi = await piLocator.check();
+		const settings = settingsStore.get();
+		const pi = await piLocator.check(
+			settings.customPiPath,
+			settings.wslEnabled,
+			settings.wslDistro,
+			settings.wslUser,
+			settings.piRuntimePreference,
+			settings.piTypescriptPath,
+			settings.piRustPath,
+		);
 		return {
 			appVersion: app.getVersion(),
 			platform: process.platform,
@@ -693,6 +710,14 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 						: "webService.startFailed",
 				));
 			}
+		}
+		if (
+			"piRuntimePreference" in patch ||
+			"piTypescriptPath" in patch ||
+			"piRustPath" in patch
+		) {
+			invalidateModelListCache();
+			void refreshModelList(piLocator, settingsStore).catch(() => undefined);
 		}
 		// WSL 设置变更时同步更新会话扫描器和配置管理器
 		if ("wslEnabled" in patch || "wslDistro" in patch || "wslUser" in patch) {

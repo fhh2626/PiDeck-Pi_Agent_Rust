@@ -183,6 +183,10 @@ export class AgentManager {
 	 * 这补偿了 Pi 在某些边缘情况下不发送 agent_settled 导致动画永久卡住的问题。
 	 */
 	private static readonly AGENT_SETTLED_TIMEOUT_MS = 5000;
+	/** pi_agent_rust currently emits sessionId-bearing agent_end without agent_settled. */
+	private static readonly RUST_AGENT_SETTLED_TIMEOUT_MS = 250;
+	/** Runtime kind observed from the lifecycle event shape; cleared with the Agent. */
+	private readonly rustRuntimeAgents = new Set<string>();
 	/**
 	 * 超过该大小的历史会话跳过 get_messages RPC，改为直接从 JSONL 文件尾部读取最近 N 条消息。
 	 * pi 当前不支持 limit/cursor，40MB JSONL 会以单行大 JSON 返回，主进程 JSON.parse 会短暂冻结整个应用。
@@ -1635,7 +1639,9 @@ export class AgentManager {
 
 		try {
 			const response = await runtime.process.client.request(
-				trimmedPrompt ? { type: "compact", prompt: trimmedPrompt } : { type: "compact" },
+				trimmedPrompt
+					? { type: "compact", customInstructions: trimmedPrompt }
+					: { type: "compact" },
 				120_000,
 			);
 			void this.appLogger?.info("agent", "Compact RPC response received", {
@@ -2365,6 +2371,7 @@ export class AgentManager {
 		this.retryStatusMessageIds.delete(agentId);
 		this.streamingText.delete(agentId);
 		this.rpcCompactingAgents.delete(agentId);
+		this.rustRuntimeAgents.delete(agentId);
 		this.autoRestartAttempted.delete(agentId);
 		this.messagePerfByAgent.delete(agentId);
 		this.lastPerfByAgent.delete(agentId);
@@ -3100,6 +3107,10 @@ export class AgentManager {
 		}
 
 		if (typed.type === "agent_start" && runtime) {
+			// Rust's lifecycle events carry sessionId and do not emit agent_settled.
+			// Remember the runtime from the reliable start event; agent_end payloads
+			// are intentionally normalized differently in Rust's RPC serializer.
+			if (typeof typed.sessionId === "string") this.rustRuntimeAgents.add(agentId);
 			// agent_start 表示一轮新的 agent run 开始：
 			// 1) 清理 recentlyAborted，允许状态机恢复 running
 			// 2) 推进 stream generation，解封流式闸门（唯一合法解封点）
@@ -3159,7 +3170,7 @@ export class AgentManager {
 
 		// 自动/手动压缩事件（pi 在自动或手动压缩完成后会发出这些事件），
 		// 用于记录压缩耗时和结果，便于排查压缩性能问题。
-		if (typed.type === "compaction_start") {
+		if (typed.type === "compaction_start" || typed.type === "auto_compaction_start") {
 			this.rpcCompactingAgents.add(agentId);
 			// 用户已主动中止或出错时不重新激活 running 状态
 			if (runtime && !this.recentlyAborted.has(agentId) && runtime.tab.status !== "error") {
@@ -3174,7 +3185,7 @@ export class AgentManager {
 				reason: typed.reason,
 			});
 		}
-		if (typed.type === "compaction_end") {
+		if (typed.type === "compaction_end" || typed.type === "auto_compaction_end") {
 			this.rpcCompactingAgents.delete(agentId);
 			if (runtime) {
 				// compaction 会向 session JSONL 写入新的边界记录；立即重载消息，
@@ -3274,9 +3285,10 @@ export class AgentManager {
 			// 兜底：如果 Pi 由于某些边缘情况未发送 agent_settled，
 			// 定时查询 get_state 确认是否已无工作可做，避免 UI 动画永久卡住。
 			// agent_settled 正常触发时 markIdleIfPiReportsNoWork 会因 status!=="running" 提前返回。
+			const rustSettledFallback = this.rustRuntimeAgents.has(agentId);
 			const settledTimer = setTimeout(() => {
 				void this.markIdleIfPiReportsNoWork(agentId);
-			}, AgentManager.AGENT_SETTLED_TIMEOUT_MS);
+			}, rustSettledFallback ? AgentManager.RUST_AGENT_SETTLED_TIMEOUT_MS : AgentManager.AGENT_SETTLED_TIMEOUT_MS);
 			settledTimer.unref?.();
 		}
 

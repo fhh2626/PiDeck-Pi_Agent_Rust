@@ -16,7 +16,10 @@ import { loadTsCommonJs } from "./helpers/loadTsCommonJs.mjs";
 const {
   parsePiListModels,
   MODEL_LIST_FAST_ARGS,
+  MODEL_LIST_RUST_ARGS,
+  MODEL_LIST_RPC_ARGS,
 } = loadTsCommonJs("src/main/pi/modelListCache.ts");
+const { normalizePiRpcModels } = loadTsCommonJs("src/shared/piCompatibility.ts");
 const cacheSource = readFileSync("src/main/pi/modelListCache.ts", "utf8");
 const systemIpc = readFileSync("src/main/ipc/systemIpc.ts", "utf8");
 const agentManager = readFileSync("src/main/pi/AgentManager.ts", "utf8");
@@ -71,6 +74,33 @@ test("parsePiListModels captures context/maxTokens/images columns", () => {
   assert.equal(models[2].images, true);
 });
 
+test("parsePiListModels ignores Rust's trailing Showing note", () => {
+  const stdout = [
+    "provider  model  context  max-out  thinking  images",
+    "openai    gpt-5   200K     64K      yes       yes",
+    "Showing 1 of 11 providers. Run `pi --list-providers` to see all.",
+  ].join("\n");
+  const models = parsePiListModels(stdout);
+  assert.equal(models.length, 1);
+  assert.equal(models[0].provider, "openai");
+});
+
+test("normalizes TypeScript/Rust RPC model payloads", () => {
+  const models = normalizePiRpcModels({
+    models: [
+      { provider: "anthropic", id: "claude", name: "Claude", input: ["text", "image"], contextWindow: 200000, maxTokens: 8192, reasoning: true },
+      { provider: "anthropic", id: "claude", name: "duplicate" },
+      { provider: "openai", id: "gpt", images: false },
+    ],
+  });
+  // The transpiled module runs in a VM context; normalize the array/object
+  // prototypes before using strict deep equality in the host test context.
+  assert.deepEqual(Array.from(models, (model) => ({ ...model })), [
+    { provider: "anthropic", id: "claude", name: "Claude", contextWindow: 200000, maxTokens: 8192, reasoning: true, images: true },
+    { provider: "openai", id: "gpt", name: "openai/gpt", contextWindow: undefined, maxTokens: undefined, reasoning: undefined, images: false },
+  ]);
+});
+
 test("parseTokenSize handles M/K/plain and rejects garbage", () => {
   const { parseTokenSize } = loadTsCommonJs("src/main/pi/modelListCache.ts");
   assert.equal(parseTokenSize("1M"), 1024 * 1024);
@@ -88,6 +118,17 @@ test("MODEL_LIST_FAST_ARGS includes speed flags", () => {
   assert.ok(MODEL_LIST_FAST_ARGS.includes("--no-extensions"));
   assert.ok(MODEL_LIST_FAST_ARGS.includes("--no-skills"));
   assert.ok(MODEL_LIST_FAST_ARGS.includes("--no-themes"));
+});
+
+test("MODEL_LIST_RPC_ARGS uses the neutral RPC mode", () => {
+  assert.deepEqual(Array.from(MODEL_LIST_RPC_ARGS.slice(0, 3)), ["--mode", "rpc", "--no-session"]);
+});
+
+test("Rust-safe text fallback never includes the unsupported --offline flag", () => {
+  assert.ok(MODEL_LIST_RUST_ARGS.includes("--list-models"));
+  assert.ok(!MODEL_LIST_RUST_ARGS.includes("--offline"));
+  assert.match(cacheSource, /MODEL_LIST_RUST_ARGS/);
+  assert.match(cacheSource, /settings\.piRuntimePreference === "typescript"/);
 });
 
 test("fetchModelList uses cache; refreshModelList forces reload", () => {
@@ -116,6 +157,11 @@ test("agent spawn refreshes model cache via onBeforeAgentSpawn hook", () => {
   assert.match(agentManager, /this\.onBeforeAgentSpawn\?\.\(\)/);
   // index.ts 装配时传 refreshModelList
   assert.match(indexSource, /refreshModelList\(piLocator, settingsStore\)/);
+});
+
+test("compact sends the shared customInstructions RPC field", () => {
+  assert.match(agentManager, /type: "compact", customInstructions: trimmedPrompt/);
+  assert.doesNotMatch(agentManager, /type: "compact", prompt: trimmedPrompt/);
 });
 
 test("startup prefetch still present", () => {

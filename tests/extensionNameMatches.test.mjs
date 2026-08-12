@@ -34,6 +34,7 @@ function loadExtensionConflictHelpers() {
 			// 删除走系统回收站统一入口；本测试不触达删除路径，提供 noop stub 即可。
 			if (id === "../fs/trash") return { trashPath: async () => {} };
 			if (id === "../logging/sharedLogger") return { getAppLogger: () => null };
+			if (id === "../../shared/piCompatibility") return require("../src/shared/piCompatibility.ts");
 			return require(id);
 		},
 	};

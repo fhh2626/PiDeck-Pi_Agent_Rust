@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { delimiter, dirname, extname, join } from "node:path";
 import { app } from "electron";
 import type { AppSettings, PiInstallStatus } from "../../shared/types";
+import { detectPiRuntimeKind, type PiRuntimePreference } from "../../shared/piCompatibility";
 import type { MainProcessTranslationKey } from "../../shared/i18n/mainProcessCopy";
 
 type PiLocatorCopy = (
@@ -47,11 +48,22 @@ export class PiLocator {
    * When `customPath` is provided, it takes priority over auto-detection —
    * this is the user's manually specified path from settings.
    */
-  resolveCommand(customPath?: string, wslEnabled?: boolean, wslDistro?: string, wslUser?: string) {
+  resolveCommand(
+    customPath?: string,
+    wslEnabled?: boolean,
+    wslDistro?: string,
+    wslUser?: string,
+    runtimePreference: PiRuntimePreference = "auto",
+    typescriptPath?: string,
+    rustPath?: string,
+  ) {
+    const selectedPath = runtimePreference === "typescript" ? typescriptPath :
+      runtimePreference === "rust" ? rustPath : undefined;
+    const normalizedSelectedPath = this.normalizeCustomPath(selectedPath);
     const normalizedCustomPath = this.normalizeCustomPath(customPath);
     // 用户手动指定路径优先，适用于 npm/pnpm/yarn 全局安装、nvm/volta/asdf/mise 等极端情况。
     // 旧版本可能已保存 pi.ps1；Windows 现在不再调用 PowerShell shim，遇到时忽略并回退自动检测。
-    if (normalizedCustomPath && !this.isUnsupportedPowerShellShim(normalizedCustomPath)) {
+    if (runtimePreference === "auto" && normalizedCustomPath && !this.isUnsupportedPowerShellShim(normalizedCustomPath)) {
       return normalizedCustomPath;
     }
     // 用户显式开启 WSL 时优先使用 WSL 中的 pi，不轮询本地 PATH 中的 Windows 版本
@@ -60,10 +72,15 @@ export class PiLocator {
       if (wslCommand) return wslCommand;
     }
 
-    const candidates = this.getCandidates();
+    // WSL 配置是另一套运行环境，不能被 Windows 侧保存的运行时路径抢先覆盖。
+    if (normalizedSelectedPath && !this.isUnsupportedPowerShellShim(normalizedSelectedPath)) {
+      return normalizedSelectedPath;
+    }
+
+    const candidates = this.getCandidates(runtimePreference);
     const found = candidates.find(candidate => existsSync(candidate));
     if (found) return found;
-    return "pi";
+    return runtimePreference === "rust" ? "pi-rust" : "pi";
   }
 
   getSearchDirs() {
@@ -265,12 +282,28 @@ export class PiLocator {
     return this.runCheck(command, []);
   }
 
-  async check(customPath?: string, wslEnabled?: boolean, wslDistro?: string, wslUser?: string): Promise<PiInstallStatus> {
+  async check(
+    customPath?: string,
+    wslEnabled?: boolean,
+    wslDistro?: string,
+    wslUser?: string,
+    runtimePreference: PiRuntimePreference = "auto",
+    typescriptPath?: string,
+    rustPath?: string,
+  ): Promise<PiInstallStatus> {
     const normalizedCustomPath = this.normalizeCustomPath(customPath);
-    if (normalizedCustomPath && this.isUnsupportedPowerShellShim(normalizedCustomPath)) {
+    if (runtimePreference === "auto" && normalizedCustomPath && this.isUnsupportedPowerShellShim(normalizedCustomPath)) {
       return this.unsupportedPowerShellStatus(normalizedCustomPath, this.getSearchDirs());
     }
-    const command = normalizedCustomPath || this.resolveCommand(customPath, wslEnabled, wslDistro, wslUser);
+    const command = this.resolveCommand(
+      customPath,
+      wslEnabled,
+      wslDistro,
+      wslUser,
+      runtimePreference,
+      typescriptPath,
+      rustPath,
+    );
     const searchedDirs = this.getSearchDirs();
 
     if (command.startsWith("wsl://")) {
@@ -387,7 +420,7 @@ export class PiLocator {
         }
 
         const version = this.decodeBuffer(stdout).trim();
-        resolve({ installed: true, command, searchedDirs, version });
+        resolve({ installed: true, command, searchedDirs, version, runtimeKind: detectPiRuntimeKind(version) });
       });
     });
   }
@@ -471,7 +504,14 @@ export class PiLocator {
           resolve({ installed: false, searchedDirs: [], error: this.translate("mainPi.checkFailed") });
           return;
         }
-        resolve({ installed: true, command: `wsl -d ${distro} -u ${user} ${piCommand}`, version: stdout.trim(), searchedDirs: [] });
+        const version = stdout.trim();
+        resolve({
+          installed: true,
+          command: `wsl -d ${distro} -u ${user} ${piCommand}`,
+          version,
+          runtimeKind: detectPiRuntimeKind(version),
+          searchedDirs: [],
+        });
       });
     });
   }
@@ -524,9 +564,16 @@ export class PiLocator {
     return existsSync(join(binDir, nodeName)) ? binDir : undefined;
   }
 
-  private getCandidates() {
+  private getCandidates(runtimePreference: PiRuntimePreference = "auto") {
     // Windows 不再自动检测 pi.ps1：PowerShell shim 与 .cmd 指向同一入口，但执行策略/编码/引号规则更复杂。
-    const names = process.platform === "win32" ? ["pi.cmd", "pi.exe", "pi"] : ["pi"];
+    const baseNames = runtimePreference === "typescript"
+      ? ["legacy-pi", "pi-ts", "pi"]
+      : runtimePreference === "rust"
+        ? ["pi-rust", "pi_agent_rust", "pi"]
+        : ["pi"];
+    const names = process.platform === "win32"
+      ? baseNames.flatMap((name) => [`${name}.cmd`, `${name}.exe`, name])
+      : baseNames;
     return this.getSearchDirs().flatMap(dir => names.map(name => join(dir, name)));
   }
 

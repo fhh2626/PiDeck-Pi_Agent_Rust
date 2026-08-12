@@ -2963,7 +2963,15 @@ async function ensureAllPiSettingsDefaults(): Promise<void> {
 	const s = settingsStore.get();
 	let piVersion = "";
 	if (piLocator) {
-		piVersion = (await piLocator.check(undefined, s.wslEnabled, s.wslDistro, s.wslUser).catch(() => null))?.version ?? "";
+		piVersion = (await piLocator.check(
+			s.customPiPath,
+			s.wslEnabled,
+			s.wslDistro,
+			s.wslUser,
+			s.piRuntimePreference,
+			s.piTypescriptPath,
+			s.piRustPath,
+		).catch(() => null))?.version ?? "";
 	}
 
 	// Windows 本地

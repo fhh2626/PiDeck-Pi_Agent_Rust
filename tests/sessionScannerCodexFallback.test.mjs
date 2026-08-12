@@ -159,6 +159,7 @@ function loadSessionScanner(homePath) {
 		},
 	});
 	const codexMeta = loadCodexMetaModule();
+	const piCompatibility = loadTranspiledModule("src/shared/piCompatibility.ts");
 	const messageContent = loadMessageContentModule();
 	const sessionSummaryCache = loadSessionSummaryCacheModule(homePath);
 	const wslPaths = loadWslPathsModule();
@@ -174,6 +175,7 @@ function loadSessionScanner(homePath) {
 				return { app: { getPath: () => homePath }, shell: {} };
 			}
 			if (id === "../../shared/codexSessionMeta") return codexMeta;
+			if (id === "../../shared/piCompatibility") return piCompatibility;
 			if (id === "../pi/messageContent") return messageContent;
 			if (id === "../wsl/WslPaths") return wslPaths;
 			if (id === "./sessionSummaryCache") return sessionSummaryCache;

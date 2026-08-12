@@ -37,6 +37,7 @@ function loadPiProcess(spawnImpl) {
 	};
 	const paths = loadSandboxed("src/main/wsl/WslPaths.ts", "WslPaths.ts");
 	const extensionFilter = loadSandboxed("src/main/pi/piExtensionFilter.ts", "piExtensionFilter.ts");
+	const compatibility = loadSandboxed("src/shared/piCompatibility.ts", "piCompatibility.ts");
 
 	class FakeRpcClient extends EventEmitter {
 		close() {}
@@ -60,6 +61,7 @@ function loadPiProcess(spawnImpl) {
 			}
 			if (id === "./PiRpcClient") return { PiRpcClient: FakeRpcClient };
 			if (id === "./PiLocator") return { PiLocator: FakePiLocator };
+			if (id === "../../shared/piCompatibility") return compatibility;
 			if (id === "../wsl/WslPaths") return paths;
 			if (id === "./piExtensionFilter") return extensionFilter;
 			// 25fd516 起 PiProcess 引入内置扩展参数拼接；本测试只关心 spawn 错误转发，

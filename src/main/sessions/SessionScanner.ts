@@ -13,6 +13,7 @@ import { toWslLinuxPath, type WslEnvironment } from "../wsl/WslPaths";
 import { getAppLogger } from "../logging/sharedLogger";
 import { isLegacySessionNameEntry, isLegacySessionNameLine, stripLegacySessionNameLine } from "./sessionNameLine";
 import { SessionSummaryCache, type SessionFileVersion } from "./sessionSummaryCache";
+import { getPiSessionParent } from "../../shared/piCompatibility";
 
 type SessionScannerCopyKey = Extract<MainProcessTranslationKey,
   | "session.untitled"
@@ -1220,8 +1221,8 @@ export class SessionScanner {
     let codexAgentRole: string | undefined;
     let codexAgentNickname: string | undefined;
     let codexSourcePath: string | undefined;
-    let latestSessionInfoName: string | undefined;
-    let forkParentSession: string | undefined;
+		let latestSessionInfoName: string | undefined;
+		let forkParentSession: string | undefined;
     let hasSubagentChildMarker = false;
     /** 最后一条 model_change / thinking_level_change 记录 */
     let modelProvider: string | undefined;
@@ -1236,8 +1237,8 @@ export class SessionScanner {
         // Forked sessions may contain an older copied name; only the latest marker is authoritative.
         latestSessionInfoName = this.optionalString(entry.name ?? entry.data?.name);
       }
-      if (entry.type === "session") {
-        forkParentSession ||= this.optionalString(entry.parentSession ?? entry.header?.parentSession);
+		if (entry.type === "session") {
+			forkParentSession ||= getPiSessionParent(entry);
       }
       // 检测显式子会话标记：支持任何 "*.child-session" 格式，
       // 不仅限于 pi-subagents，未来其他扩展也可沿用此约定。
@@ -1304,13 +1305,14 @@ export class SessionScanner {
     //
     // 采用分层信号打分机制，兼容不同扩展的子会话存储方式：
     //   强信号（2分）：路径布局匹配、显式 customType 标记
-    //   弱信号（1分）：子会话命名模式、parentSession header 引用
+    //   弱信号（1分）：子会话命名模式
+    //   header 引用（2分）：Rust 的 branchedFrom/原版 Pi 的 parentSession
     //   置信度阈值：≥ 2 分判定为子会话
     const subagentScore = {
       pathInferred: 0,       // 路径布局 ← 新泛化算法
       customMarker: 0,       // customType: "*.child-session"
       namePattern: 0,        // sessionName 以 "subagent-" 开头
-      parentHeader: 0,       // session header 中的 parentSession
+		parentHeader: forkParentSession ? 2 : 0,
     };
 
     const pathInferredParent = isWsl
@@ -1319,7 +1321,6 @@ export class SessionScanner {
     subagentScore.pathInferred = pathInferredParent ? 2 : 0;
     subagentScore.customMarker = hasSubagentChildMarker ? 2 : 0;
     subagentScore.namePattern = latestSessionInfoName?.startsWith("subagent-") ? 1 : 0;
-    subagentScore.parentHeader = forkParentSession ? 1 : 0;
 
     const confidenceScore =
       subagentScore.pathInferred +

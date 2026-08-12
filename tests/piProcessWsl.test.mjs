@@ -31,6 +31,12 @@ function loadPiExtensionFilter() {
 	return sandbox.exports;
 }
 
+function loadPiCompatibility() {
+	const sandbox = { exports: {}, require };
+	vm.runInNewContext(transpile("src/shared/piCompatibility.ts"), sandbox, { filename: "piCompatibility.ts" });
+	return sandbox.exports;
+}
+
 function createChildProcess() {
 	const child = new EventEmitter();
 	child.stdin = new PassThrough();
@@ -43,6 +49,7 @@ function createChildProcess() {
 function loadPiProcess(spawnCalls) {
 	const paths = loadWslPaths();
 	const extensionFilter = loadPiExtensionFilter();
+	const compatibility = loadPiCompatibility();
 	class FakeRpcClient extends EventEmitter {
 		close() {}
 	}
@@ -68,6 +75,7 @@ function loadPiProcess(spawnCalls) {
 			}
 			if (id === "./PiRpcClient") return { PiRpcClient: FakeRpcClient };
 			if (id === "./PiLocator") return { PiLocator: FakePiLocator };
+			if (id === "../../shared/piCompatibility") return compatibility;
 			if (id === "../wsl/WslPaths") return paths;
 			if (id === "./piExtensionFilter") return extensionFilter;
 			// 25fd516 起 PiProcess 引入内置扩展参数拼接；WSL 测试只关心路径转换，
@@ -108,6 +116,22 @@ function createLocator(invocationCalls) {
 	};
 }
 
+function createRustLocator(invocationCalls) {
+	return {
+		resolveCommand: () => "wsl://Ubuntu-24.04/root/pi",
+		createInvocation: (_command, args, options = {}) => {
+			invocationCalls.push({ args: [...args], options: { ...options } });
+			return {
+				command: "wsl.exe",
+				args: ["-d", "Ubuntu-24.04", "-u", "root", ...(options.wslCwd ? ["--cd", options.wslCwd] : []), "pi", ...args],
+				shell: false,
+				wsl: { distro: "Ubuntu-24.04", user: "root", piCommand: "pi" },
+			};
+		},
+		createProcessEnv: () => ({}),
+	};
+}
+
 const settings = {
 	wslEnabled: true,
 	wslDistro: "Ubuntu-24.04",
@@ -132,7 +156,7 @@ test("starts WSL pi with Linux cwd/session while keeping a Windows-accessible sp
 	assert.equal(invocationCalls[0].options.wslCwd, "/root/ba_cli");
 	assert.deepEqual(
 		invocationCalls[0].args,
-		["--mode", "rpc", "--no-themes", "--offline", "--session", "/root/.pi/agent/sessions/session.jsonl"],
+		["--mode", "rpc", "--no-themes", "--session", "/root/.pi/agent/sessions/session.jsonl"],
 	);
 	assert.equal(spawnCalls[0].options.cwd, "\\\\wsl.localhost\\Ubuntu-24.04\\root\\ba_cli");
 	assert.deepEqual(
@@ -141,7 +165,7 @@ test("starts WSL pi with Linux cwd/session while keeping a Windows-accessible sp
 			"-d", "Ubuntu-24.04",
 			"-u", "root",
 			"--cd", "/root/ba_cli",
-			"pi", "--mode", "rpc", "--no-themes", "--offline",
+			"pi", "--mode", "rpc", "--no-themes",
 			"--session", "/root/.pi/agent/sessions/session.jsonl",
 		],
 	);
@@ -162,4 +186,49 @@ test("rejects a project UNC from another distro before spawning pi", async () =>
 		(error) => error.code === "WSL_DISTRO_MISMATCH",
 	);
 	assert.equal(spawnCalls.length, 0);
+});
+
+test("does not pass TypeScript-only --offline to a detected Rust runtime", async () => {
+	const spawnCalls = [];
+	const invocationCalls = [];
+	const { PiProcess } = loadPiProcess(spawnCalls);
+	const rustSettings = {
+		...settings,
+		piInstall: {
+			command: "wsl -d Ubuntu-24.04 -u root pi",
+			version: "pi 0.2.0 (unknown)",
+			runtimeKind: "rust",
+		},
+	};
+	const process = new PiProcess(
+		"//wsl.localhost/Ubuntu-24.04/root/ba_cli",
+		rustSettings,
+		createRustLocator(invocationCalls),
+	);
+
+	await process.start();
+	assert.deepEqual(invocationCalls[0].args, ["--mode", "rpc", "--no-themes"]);
+	assert.deepEqual(spawnCalls[0].args.slice(-4), ["pi", "--mode", "rpc", "--no-themes"]);
+});
+
+test("does not reuse a cached WSL runtime kind from another distro", async () => {
+	const spawnCalls = [];
+	const invocationCalls = [];
+	const { PiProcess } = loadPiProcess(spawnCalls);
+	const rustSettings = {
+		...settings,
+		piInstall: {
+			command: "wsl -d Debian -u root pi",
+			version: "pi 0.2.0 (unknown)",
+			runtimeKind: "rust",
+		},
+	};
+	const process = new PiProcess(
+		"//wsl.localhost/Ubuntu-24.04/root/ba_cli",
+		rustSettings,
+		createRustLocator(invocationCalls),
+	);
+
+	await process.start();
+	assert.deepEqual(invocationCalls[0].args, ["--mode", "rpc", "--no-themes"]);
 });
