@@ -2,7 +2,7 @@
 
 ## 项目简介
 
-PiDeck 是一个面向本地开发工作的 Electron 桌面应用，用于在多个项目目录之间管理和运行 pi RPC Agent。应用提供多项目工作区、会话时间线、历史会话恢复、文件抽屉、Git 面板、模型选择、工具调用展示、内置浏览器、中文提示词精选、技能/扩展商店以及打包发布能力，目标是让用户可以在桌面端更稳定地管理多个 pi 编码助手会话。
+PiDeck 是一个面向本地开发工作的 Electron 桌面应用，同时支持原版 Pi Agent 和 Pi_Agent_Rust，用于在多个项目目录之间管理和运行编码 Agent。应用提供多项目工作区、会话时间线、历史会话恢复、文件抽屉、Git 面板、模型选择、工具调用展示、内置浏览器、中文提示词精选、技能/扩展商店以及打包发布能力，目标是让用户可以在桌面端更稳定地管理多个编码助手会话。
 
 技术栈：Electron 38 + React 19 + TypeScript + Vite。
 
@@ -251,7 +251,7 @@ src/
 
 ## 发版要求
 
-1. 核对 `README.md` / `README.en.md` 功能与安装说明仍准确。
+1. 核对 `README.md`（英文默认）/ `README.zh-CN.md` 功能与安装说明仍准确。
 2. `CHANGELOG.md` / `CHANGELOG.zh-CN.md` 加版本号与日期，条目记录用户可感知变化，中英文一致。
 3. GitHub Release notes 写明主要变化，不接受只写版本号。
 4. `package.json` 与 `package-lock.json` 版本号一致；发版提交用 `chore: release vX.Y.Z`。

@@ -1,6 +1,6 @@
 # 快速开始
 
-PiDeck 是一个用于管理多个 [pi](https://pi.dev) 编码 Agent 会话的桌面工作台。它负责桌面端工作流，Agent 能力仍由 pi CLI 提供。
+PiDeck 是一个同时支持原版 [Pi Agent](https://pi.dev) 和 Pi_Agent_Rust、用于管理多个编码 Agent 会话的桌面工作台。它负责桌面端工作流，Agent 能力仍由所选运行时提供。
 
 ## 环境要求
 

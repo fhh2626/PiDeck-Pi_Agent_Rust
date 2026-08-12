@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: PiDeck
-  text: Desktop Workbench for pi AI Coding Agents
-  tagline: Manage local pi coding assistant sessions, configs, Git, and terminal in a unified desktop workspace for Windows, macOS, and Linux.
+  text: Desktop Workbench for Pi Agent and Pi_Agent_Rust
+  tagline: Manage sessions, configs, Git, and terminal for the original Pi Agent, Pi_Agent_Rust, and other local coding assistants in one desktop workspace for Windows, macOS, and Linux.
   actions:
     - theme: brand
       text: Download Latest
@@ -18,7 +18,7 @@ hero:
 
 features:
   - title: Multi-Project Workspace
-    details: Add, search, drag-sort, and switch local project folders. Run multiple pi agents simultaneously with per-project isolation.
+    details: Add, search, drag-sort, and switch local project folders. Run the original Pi Agent and Pi_Agent_Rust simultaneously with per-project isolation.
   - title: Session History & Restore
     details: Restore previous conversations, browse tool calls and answers by timeline, and review file changes in past sessions. Import Codex and Claude sessions.
   - title: Git Integration
@@ -42,7 +42,7 @@ features:
   <figcaption>Workspace, sessions, file drawer, Git branches, and tool calls — all in one desktop window.</figcaption>
 </figure>
 
-- **Multi-Project Workspace** — Add, search, drag-sort, and switch local project folders. Run multiple pi agents simultaneously with per-project isolation.
+- **Multi-Project Workspace** — Add, search, drag-sort, and switch local project folders. Run the original Pi Agent and Pi_Agent_Rust simultaneously with per-project isolation.
 - **Session History & Restore** — Restore previous conversations, browse tool calls and answers by timeline, and review file changes in past sessions. Import local Codex and Claude sessions.
 - **Git Integration** — Real-time branch display and switching, VS Code-style 3-panel view (Changes/History/Compare), AI commit message generation, branch graph visualization, cherry-pick/revert/reset/drop, file tree with Git status, worktree support.
 - **Session Reference (&)** — Type & in composer to search and reference past sessions across the same project. Inject full context or select specific messages.

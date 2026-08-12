@@ -1,6 +1,6 @@
 # 功能介绍
 
-PiDeck 的核心目标是把多个本地 pi Agent 会话收拢到一个稳定的桌面工作台里。
+PiDeck 的核心目标是把原版 Pi Agent、Pi_Agent_Rust 及其他本地编码 Agent 会话收拢到一个稳定的桌面工作台里。
 
 ## 多项目工作区
 

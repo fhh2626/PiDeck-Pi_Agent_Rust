@@ -1,6 +1,6 @@
 # 配置与 Skills
 
-PiDeck 提供图形化配置入口，减少频繁查找和编辑 pi 配置文件的成本。
+PiDeck 提供图形化配置入口，减少频繁查找和编辑 Pi Agent / Pi_Agent_Rust 配置文件的成本。
 
 ## 配置管理
 
@@ -14,9 +14,9 @@ PiDeck 提供图形化配置入口，减少频繁查找和编辑 pi 配置文件
 
 <img class="doc-screenshot" src="/images/config.png" alt="配置管理界面">
 
-## pi 路径
+## Agent 路径
 
-应用启动时会自动检测系统中的 `pi` 命令。自动检测失败时，可以在设置中手动输入路径。
+应用启动时会自动检测系统中的 Agent 运行时命令。自动检测失败时，可以在设置中手动输入路径。
 
 Windows 下支持常见路径形式：
 
@@ -30,7 +30,7 @@ C:\Program Files\pi\pi
 
 PiDeck 区分两类代理：
 
-- pi agent 子进程代理：影响实际 Agent 进程。
+- Agent 子进程代理：影响实际 Agent 进程。
 - 桌面端代理：影响模型拉取、连接测试等桌面应用请求。
 
 这种拆分可以避免桌面端检测和 Agent 执行互相干扰。
