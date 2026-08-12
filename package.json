@@ -1,7 +1,7 @@
 {
   "name": "pi-desktop",
   "version": "0.7.0-beta",
-  "description": "PiDeck is an open-source desktop workbench to manage multiple pi AI coding agents across local project folders with session history, Git integration, terminal, and config management.",
+  "description": "PiDeck is an open-source desktop workbench supporting the original Pi Agent and Pi_Agent_Rust across local project folders with session history, Git integration, terminal, and config management.",
   "private": true,
   "license": "MIT",
   "author": {

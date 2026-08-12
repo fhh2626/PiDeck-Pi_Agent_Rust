@@ -49,4 +49,4 @@ Output files are placed in the `release/` directory.
 
 1. Click **"Add Project"** or drag a folder into the workspace panel.
 2. Select a project to open its session view.
-3. Type your prompt in the composer and press Enter — PiDeck will start a pi RPC agent for that project.
+3. Type your prompt in the composer and press Enter — PiDeck will start the selected Agent runtime for that project.

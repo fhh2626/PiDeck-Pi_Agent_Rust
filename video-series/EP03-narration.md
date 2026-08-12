@@ -1,10 +1,10 @@
 上集我们安装了 PiDeck，也跑通了第一个项目。但如果你留意一下，会发现每个项目后面都有一个状态点。这背后到底发生了什么？这集我们就来搞清楚。
 
-首先你要理解一个核心概念：PiDeck 不是 pi 的分支，它是一个外壳。PiDeck 本身不提供 AI 能力。它做的是管理 pi 进程，然后把 pi 的能力包装成图形界面。你可以把 PiDeck 想象成一个浏览器，而 pi 是背后的搜索引擎。浏览器本身不搜索，但它让搜索变得好用。
+首先你要理解一个核心概念：PiDeck 不是原版 Pi Agent 或 Pi_Agent_Rust 的分支，它是一个外壳。PiDeck 本身不提供 AI 能力。它做的是管理 Agent 运行时进程，然后把运行时的能力包装成图形界面。你可以把 PiDeck 想象成一个浏览器，而 Agent 运行时是背后的搜索引擎。浏览器本身不搜索，但它让搜索变得好用。
 
-更具体地说，PiDeck 里每一个 Agent Tab，都对应一个独立的 pi RPC 进程。这意味着项目 A 和项目 B 是完全隔离的。它们的上下文、会话历史、环境变量，全部独立。你在项目 A 里聊到一半，切换到项目 B，再切回来，项目 A 的上下文还在。这就是为什么 PiDeck 可以同时管理多个项目，而不会互相干扰。如果你想验证这一点，打开任务管理器，你会看到每个运行中的项目都对应一个 pi 进程。
+更具体地说，PiDeck 里每一个 Agent Tab，都对应一个独立的 RPC Agent 进程。这意味着项目 A 和项目 B 是完全隔离的。它们的上下文、会话历史、环境变量，全部独立。你在项目 A 里聊到一半，切换到项目 B，再切回来，项目 A 的上下文还在。这就是为什么 PiDeck 可以同时管理多个项目，而不会互相干扰。如果你想验证这一点，打开任务管理器，你会看到每个运行中的项目都对应一个 Agent 进程。
 
-理解了架构之后，我们来看连接状态。PiDeck 左侧项目列表后面的小圆点，就是 pi 进程的连接状态。绿色代表运行中，说明 pi 进程已经启动，并且 PiDeck 成功连接上了。黄色代表启动中，pi 进程正在初始化。灰色或者没有圆点，代表这个项目还没有启动 Agent。正常情况下，你点击项目后几秒钟内应该变成绿色。如果一直是黄色或者红色，说明连接有问题。
+理解了架构之后，我们来看连接状态。PiDeck 左侧项目列表后面的小圆点，就是 Agent 运行时进程的连接状态。绿色代表运行中，说明进程已经启动，并且 PiDeck 成功连接上了。黄色代表启动中，Agent 正在初始化。灰色或者没有圆点，代表这个项目还没有启动 Agent。正常情况下，你点击项目后几秒钟内应该变成绿色。如果一直是黄色或者红色，说明连接有问题。
 
 最常见的连接问题是：pi 命令不在系统的 PATH 中。这通常发生在你刚安装了 pi，但终端还没有刷新环境变量的时候。解决方法很简单。先关闭所有已经打开的终端窗口，然后重新打开一个新的终端，输入 pi --version。如果还是报错，检查一下 Node.js 的全局安装目录是否已经加入了 PATH。Windows 用户可以在 PowerShell 里输入 echo $env:PATH 查看。Mac 和 Linux 用户输入 echo $PATH。
 
@@ -20,11 +20,11 @@
 
 Last episode we installed PiDeck and ran our first project. But if you look closely, you will notice a small status dot next to each project. What is actually happening behind the scenes? That is what we are covering in this episode.
 
-First, you need to understand one core concept: PiDeck is not a fork of pi. It is a shell. PiDeck does not provide AI capabilities itself. What it does is manage pi processes and wrap pi's capabilities into a graphical interface. You can think of PiDeck as a browser, and pi as the search engine behind it. The browser does not search, but it makes searching usable.
+First, you need to understand one core concept: PiDeck is not a fork of the original Pi Agent or Pi_Agent_Rust. It is a shell. PiDeck does not provide AI capabilities itself. What it does is manage Agent runtime processes and wrap their capabilities into a graphical interface. You can think of PiDeck as a browser, and the Agent runtime as the search engine behind it. The browser does not search, but it makes searching usable.
 
 More specifically, every Agent Tab in PiDeck corresponds to an independent pi RPC process. This means Project A and Project B are completely isolated. Their contexts, session histories, and environment variables are all separate. If you are in the middle of a conversation in Project A, switch to Project B, and then switch back, Project A's context is still there. That is why PiDeck can manage multiple projects simultaneously without them interfering with each other. If you want to verify this, open Task Manager and you will see a separate pi process for each running project.
 
-Now let us look at the connection status. The small dot next to each project in the PiDeck sidebar represents the connection status of the pi process. Green means running, which indicates the pi process has started and PiDeck has successfully connected. Yellow means starting up, which means the pi process is initializing. Gray or no dot means the Agent for that project has not started yet. Normally, the dot should turn green within a few seconds after you click the project. If it stays yellow or red, there is a connection issue.
+Now let us look at the connection status. The small dot next to each project in the PiDeck sidebar represents the connection status of the Agent runtime process. Green means running, which indicates the process has started and PiDeck has successfully connected. Yellow means starting up, which means the Agent runtime is initializing. Gray or no dot means the Agent for that project has not started yet. Normally, the dot should turn green within a few seconds after you click the project. If it stays yellow or red, there is a connection issue.
 
 The most common connection problem is that the pi command is not in your system's PATH. This usually happens right after you install pi, before your terminal has refreshed its environment variables. The fix is simple. Close all open terminal windows, open a new terminal, and type pi --version. If you still get an error, check whether Node.js's global installation directory has been added to PATH. Windows users can type echo $env:PATH in PowerShell to check. Mac and Linux users type echo $PATH.
 

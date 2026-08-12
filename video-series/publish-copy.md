@@ -15,13 +15,12 @@ Release 下载：https://github.com/ayuayue/PiDeck/releases
 【相关】
 pi 官方文档：https://pi.dev/docs/latest
 Node.js 下载：https://nodejs.org/zh-cn/download
-LinuxDO 友链：https://linux.do
 
 【交流群】
 QQ 群：1026218644
 
 【说明】
-PiDeck 是 pi 的桌面工作台（非 pi 分支），开源免费。
+PiDeck 是同时支持原版 Pi Agent 和 Pi_Agent_Rust 的桌面工作台（非任一 Agent 分支），开源免费。
 系列作者：caoayu
 ```
 
@@ -49,18 +48,18 @@ QQ 群：1026218644
 
 ```
 PiDeck 全流程教学：安装 · 配模型 · 加项目 · 高效对话
-用桌面工作台管理 pi Agent：PiDeck 上手合集
+用桌面工作台管理 Pi Agent 与 Pi_Agent_Rust：PiDeck 上手合集
 ```
 
 ### 简介
 
 ```
-PiDeck 是一个开源的本地 AI 编程工作台，用来统一管理多个项目的 pi Agent 会话。
+PiDeck 是一个开源的本地 AI 编程工作台，同时支持原版 Pi Agent 和 Pi_Agent_Rust，用来统一管理多个项目的编码 Agent 会话。
 本合集从「是什么」讲到安装、环境检测、模型配置、第一次对话和进阶功能，跟着做就能跑通。
 
 目录：
 EP01  PiDeck 是什么？为什么你需要它
-EP02  安装与环境检测（Node / pi / PiDeck）
+EP02  安装与环境检测（Node / Agent Runtime / PiDeck）
 EP03  配置模型与认证（Models vs Auth）
 EP04  添加项目与第一次对话
 EP05  对话进阶（@ 引用 / 斜线命令 / Shell）
@@ -94,16 +93,16 @@ PiDeck,AI编程,pi,Cursor,Claude Code,开发者工具,效率工具,本地Agent,�
 **简介**
 
 ```
-如果你已经在用 pi、Cursor 或 Claude Code，多项目、多会话、回看历史全靠命令行会很痛苦。
+如果你已经在用 Pi Agent、Pi_Agent_Rust、Cursor 或 Claude Code，多项目、多会话、回看历史全靠命令行会很痛苦。
 这一集讲清楚：PiDeck 是什么、解决什么问题、适合谁用。
 
-下一集：安装 Node、pi、PiDeck，并完成环境检测。
+下一集：安装 Node、Agent runtime、PiDeck，并完成环境检测。
 
 GitHub：https://github.com/ayuayue/PiDeck
 下载：https://github.com/ayuayue/PiDeck/releases
 QQ 群：1026218644
 
-#PiDeck #AI编程 #pi #开发者工具
+#PiDeck #AI编程 #PiAgent #PiAgentRust #开发者工具
 ```
 
 **封面大字建议：** `PiDeck 是什么` / `为什么需要它`

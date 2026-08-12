@@ -2,8 +2,8 @@
  * sync-release-notes.js
  *
  * 从 CHANGELOG.zh-CN.md 自动提取最新版本亮点，同步到：
- *   - README.md 的「更新亮点」区块
- *   - README.en.md 的「Release Highlights」区块
+ *   - README.zh-CN.md 的「更新亮点」区块
+ *   - README.md 的「Release Highlights」区块
  *   - docs-site/changelog.md 的最近版本条目
  *
  * 用法：
@@ -258,15 +258,15 @@ function main() {
   // 应用变更
   console.log("正在应用变更...");
 
-  const zhReadme = path.join(ROOT, "README.md");
-  const enReadme = path.join(ROOT, "README.en.md");
+  const zhReadme = path.join(ROOT, "README.zh-CN.md");
+  const enReadme = path.join(ROOT, "README.md");
 
   const zhOk = updateReadme(zhReadme, zhBlock);
   const enOk = updateReadme(enReadme, enBlock);
   const docsOk = updateDocsSite(zhData);
 
-  if (zhOk) console.log("  ✅ README.md 已更新");
-  if (enOk) console.log("  ✅ README.en.md 已更新");
+  if (zhOk) console.log("  ✅ README.zh-CN.md 已更新");
+  if (enOk) console.log("  ✅ README.md 已更新");
   if (docsOk) console.log("  ✅ docs-site/changelog.md 已更新");
   if (!zhOk && !enOk && !docsOk) {
     console.log("  ⚠️  无需更新，或未找到匹配区块");
@@ -275,7 +275,7 @@ function main() {
   console.log("");
   if (zhOk || enOk || docsOk) {
     console.log("📋 三处同步完成。请检查后提交：");
-    console.log("   git diff README.md README.en.md docs-site/changelog.md");
+    console.log("   git diff README.md README.zh-CN.md docs-site/changelog.md");
   }
 }
 

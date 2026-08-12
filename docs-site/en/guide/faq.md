@@ -4,11 +4,11 @@
 
 ### What is PiDeck?
 
-PiDeck is an open-source desktop workbench for managing multiple pi AI coding agents across local project folders. It provides a unified interface for sessions, Git, terminal, and configuration management.
+PiDeck is an open-source desktop workbench supporting the original Pi Agent and Pi_Agent_Rust across local project folders. It provides a unified interface for coding-agent sessions, Git, terminal, and configuration management.
 
 ### Is PiDeck a fork of pi?
 
-No. PiDeck is a lightweight Electron shell that launches `pi --mode rpc` processes. The agent capabilities are provided by pi itself — PiDeck manages the project and session layer on top.
+No. PiDeck is a lightweight Electron shell that launches compatible RPC agent processes. The agent capabilities are provided by the selected runtime — PiDeck manages the project and session layer on top.
 
 ### Which platforms are supported?
 
@@ -18,7 +18,7 @@ Windows, macOS, and Linux. Pre-built packages are available on GitHub Releases.
 
 ### Can I run multiple agents at the same time?
 
-Yes. Each project gets its own independent pi RPC process, so you can have multiple agents running simultaneously for different projects.
+Yes. Each project gets its own independent RPC agent process, so you can run the original Pi Agent and Pi_Agent_Rust simultaneously for different projects.
 
 ### How do I recover a previous session?
 
