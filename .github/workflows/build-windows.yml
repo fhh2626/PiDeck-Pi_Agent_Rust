@@ -35,7 +35,7 @@ jobs:
         run: npm run make-icon
 
       - name: Build Windows ${{ matrix.arch }} package
-        run: npm run build && npx electron-builder --win nsis portable zip --${{ matrix.arch }} --publish never
+        run: npm run build && npx electron-builder --win nsis zip --${{ matrix.arch }} --publish never
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"
 

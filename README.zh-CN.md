@@ -184,7 +184,7 @@ npm run dev
 | `npm run typecheck` | 运行 TypeScript 类型检查 |
 | `npm run build` | 构建 Renderer + Main 产物 |
 | `npm run dist` | 为当前平台打包 |
-| `npm run dist:win` | 打包 Windows（NSIS + portable + zip） |
+| `npm run dist:win` | 打包 Windows（NSIS + zip） |
 | `npm run dist:mac` | 打包 macOS（DMG + zip） |
 | `npm run dist:linux` | 打包 Linux（AppImage + deb + tar.gz） |
 | `npm run make-icon` | 生成图标资源到 `build/icon.svg` |

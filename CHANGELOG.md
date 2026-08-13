@@ -93,7 +93,8 @@ All notable changes to PiDeck are documented here.
   App root; session-owned composer / timeline / sidebar / surface; stale runtime
   results rejected by generation.
 - **Packaging** — Renderer deps moved to devDependencies; asar compression
-  maximum.
+  maximum. Windows now ships only the regular NSIS installer and zip; the
+  single-file portable .exe target was removed because it unpacks on every launch.
 - **E2E infrastructure** — Playwright Electron harness with mock-pi RPC flows
   (prompt / stream / done / abort, queued prompts, model picker, compact / fork,
   restart keeps session usable).

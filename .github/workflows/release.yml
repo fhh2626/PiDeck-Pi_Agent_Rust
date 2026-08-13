@@ -108,7 +108,7 @@ jobs:
         include:
           - platform: windows
             os: windows-latest
-            command: npm run build && npx electron-builder --win nsis portable zip --publish never
+            command: npm run build && npx electron-builder --win nsis zip --publish never
             electron_mirror: https://npmmirror.com/mirrors/electron/
             electron_builder_binaries_mirror: https://npmmirror.com/mirrors/electron-builder-binaries/
           - platform: macos

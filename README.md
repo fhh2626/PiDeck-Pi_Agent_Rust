@@ -182,7 +182,7 @@ npm run dev
 | `npm run typecheck` | Run TypeScript type checking |
 | `npm run build` | Build renderer + main bundles |
 | `npm run dist` | Package for current platform |
-| `npm run dist:win` | Package for Windows (NSIS + portable + zip) |
+| `npm run dist:win` | Package for Windows (NSIS + zip) |
 | `npm run dist:mac` | Package for macOS (DMG + zip) |
 | `npm run dist:linux` | Package for Linux (AppImage + deb + tar.gz) |
 | `npm run make-icon` | Generate icon assets to `build/icon.svg` |
