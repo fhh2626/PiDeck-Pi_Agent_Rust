@@ -1,7 +1,7 @@
 import { Button } from "../components/ui-shadcn/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui-shadcn/table";
 import { useEffect, useState } from "react";
-import { Copy, Download, RotateCcw, Trash2 } from "lucide-react";
+import { CircleCheck, CircleOff, Copy, Download, RotateCcw, Trash2 } from "lucide-react";
 import type { PiCliUpdateResult, PiExtensionListResult, PiExtensionSummary, PiPackageInfo } from "../../../shared/types";
 import { t } from "../i18n";
 import type { TranslationKey } from "../i18n/rendererCopy.zh-CN";
@@ -12,6 +12,7 @@ type ExtensionsApi = {
 	list: () => Promise<PiExtensionListResult>;
 	uninstall: (source: string, scope?: "user" | "project" | "unknown") => Promise<void>;
 	install: (source: string) => Promise<string>;
+	toggle: (source: string, enabled: boolean) => Promise<void>;
 	removeBuiltIn: (source: string) => Promise<void>;
 	restoreBuiltIn: (source: string) => Promise<void>;
 	update: () => Promise<PiCliUpdateResult>;
@@ -141,6 +142,7 @@ export function ExtensionsTab(props: {
 	const [installingSources, setInstallingSources] = useState<Set<string>>(() => new Set());
 	const [restoringBuiltIn, setRestoringBuiltIn] = useState<string | null>(null);
 	const [removingBuiltIn, setRemovingBuiltIn] = useState<string | null>(null);
+	const [togglingSource, setTogglingSource] = useState<string | null>(null);
 
 	// 首次加载或列表刷新时展示扩展冲突通知
 	useEffect(() => {
@@ -188,6 +190,27 @@ export function ExtensionsTab(props: {
 			);
 		} finally {
 			setRestoringBuiltIn(null);
+		}
+	};
+
+	/** 普通扩展通过 Pi 原生 disabledExtensions 启停，文件和安装记录保持不变。 */
+	const handleToggle = async (extension: PiExtensionSummary, enabled: boolean) => {
+		if (togglingSource) return;
+		setTogglingSource(extension.source);
+		try {
+			await getExtensionsApi().toggle(extension.source, enabled);
+			props.onRefresh();
+			showNotice(t(enabled ? "config.extensionEnabledToast" : "config.extensionDisabledToast", {
+				name: shortName(extension.source),
+			}), 3000);
+		} catch (e) {
+			showNotice(
+				t("config.extensionOperationFailed", { error: formatExtensionError(e) }),
+				4500,
+				"error",
+			);
+		} finally {
+			setTogglingSource(null);
 		}
 	};
 	const [updating, setUpdating] = useState<string | null>(null);
@@ -435,6 +458,8 @@ export function ExtensionsTab(props: {
 										onRestoreBuiltIn={handleRestoreBuiltIn}
 										removingBuiltIn={removingBuiltIn === extension.source}
 										restoringBuiltIn={restoringBuiltIn === extension.source}
+										toggling={togglingSource === extension.source}
+										onToggle={handleToggle}
 										updatingOne={updatingOne === extension.source}
 										onUpdateOne={handleUpdateOne}
 										onCopyUpdateCommand={handleCopyUpdateCommand}
@@ -457,6 +482,8 @@ function ExtensionTableRow(props: {
 	onRestoreBuiltIn: (extension: PiExtensionSummary) => void;
 	removingBuiltIn?: boolean;
 	restoringBuiltIn?: boolean;
+	toggling: boolean;
+	onToggle: (extension: PiExtensionSummary, enabled: boolean) => void;
 	updatingOne: boolean;
 	onUpdateOne: (extension: PiExtensionSummary) => void;
 	onCopyUpdateCommand: (extension: PiExtensionSummary) => void;
@@ -505,6 +532,23 @@ function ExtensionTableRow(props: {
 			</TableCell>
 			<TableCell className="text-right">
 				<div className="flex justify-end gap-1">
+					{!extension.builtIn && (
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							className="size-7"
+							disabled={props.toggling}
+							onClick={() => props.onToggle(extension, extension.enabled === false)}
+							title={extension.enabled === false ? t("config.enableExtension") : t("config.disableExtension")}
+							aria-label={extension.enabled === false ? t("config.enableExtension") : t("config.disableExtension")}
+						>
+							{extension.enabled === false ? (
+								<CircleCheck size={14} strokeWidth={1.8} aria-hidden="true" />
+							) : (
+								<CircleOff size={14} strokeWidth={1.8} aria-hidden="true" />
+							)}
+						</Button>
+					)}
 					{extension.builtIn && extension.enabled !== false && (
 						<Button variant="ghost" size="icon-sm" className="size-7" disabled={props.removingBuiltIn} onClick={() => props.onRemoveBuiltIn(extension)} title={props.removingBuiltIn ? t("config.uninstalling") : t("config.uninstall")}>
 							<Trash2 size={14} strokeWidth={1.8} />

@@ -167,11 +167,15 @@ export class ExtensionManager {
 			}
 		}
 
-		// 通过 PiDeck 桌面设置标记内置扩展移除状态（与 pi disabledExtensions 分离）。
+		// 普通扩展沿用 Pi 的 disabledExtensions；内置扩展由 PiDeck 自己的移除清单控制。
+		// 两种状态都汇总到 enabled，渲染层无需理解各自的持久化细节。
+		const disabledExtensions = await this.getDisabledExtensions();
 		// 必须在冲突检测前初始化：后续逻辑会写回 removedBuiltInExtensions 并删磁盘文件。
 		const removedBuiltIn = new Set(this.getPiDeckSettings().removedBuiltInExtensions ?? []);
 		for (const ext of merged) {
-			ext.enabled = !(ext.builtIn && removedBuiltIn.has(ext.source));
+			ext.enabled = ext.builtIn
+				? !removedBuiltIn.has(ext.source)
+				: !disabledExtensions.has(ext.source);
 		}
 
 		// 仅检测 todo / plan / ask 固定冲突：三方包名含对应关键词时自动禁用内置版。

@@ -734,6 +734,7 @@ export function createPreviewApi(): PiDesktopApi {
 						source: "npm:preview-extension",
 						path: "C:/Users/preview/.pi/agent/npm/node_modules/preview-extension",
 						scope: "user" as const,
+						enabled: true,
 					},
 				],
 				raw: "User packages:\n  npm:preview-extension\n    C:/Users/preview/.pi/agent/npm/node_modules/preview-extension\n",
