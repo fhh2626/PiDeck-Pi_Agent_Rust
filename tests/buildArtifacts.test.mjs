@@ -35,23 +35,20 @@ async function createBuildFixture(repo) {
 		join(repo, "out", "main", "index.js"),
 		join(repo, "out", "preload", "index.js"),
 		join(repo, "out", "renderer", "assets", "app.js"),
-		join(repo, "out", "renderer", "assets", "pet.js"),
 		join(repo, "out", "renderer", "assets", "web.js"),
 		join(repo, "out", "renderer", "assets", "style.css"),
 	];
 	for (const artifact of artifactFiles) await put(artifact, "artifact");
 	const indexHtml = join(repo, "out", "renderer", "index.html");
-	const petHtml = join(repo, "out", "renderer", "pet.html");
 	const webHtml = join(repo, "out", "renderer", "web.html");
 	await put(indexHtml, '<link href="/assets/style.css" rel="stylesheet"><script src="/assets/app.js"></script>');
-	await put(petHtml, '<script type="module" src="./assets/pet.js?hash=1"></script>');
 	await put(webHtml, '<script type="module" src="./assets/web.js?hash=1"></script>');
-	artifactFiles.push(indexHtml, petHtml, webHtml);
+	artifactFiles.push(indexHtml, webHtml);
 	const sourceTime = new Date("2026-01-01T00:00:00Z");
 	const artifactTime = new Date("2026-01-01T00:01:00Z");
 	await Promise.all(sourceFiles.map((path) => utimes(path, sourceTime, sourceTime)));
 	await Promise.all(artifactFiles.map((path) => utimes(path, artifactTime, artifactTime)));
-	return { sourceFiles, artifactFiles, indexHtml, petHtml, webHtml };
+	return { sourceFiles, artifactFiles, indexHtml, webHtml };
 }
 
 test("an empty build output fails with all required Electron entry points", async () => {
@@ -59,11 +56,10 @@ test("an empty build output fails with all required Electron entry points", asyn
 		await mkdir(join(repo, "out"));
 		const result = await verifyBuildArtifacts({ repoRoot: repo });
 		assert.equal(result.ok, false);
-		assert.equal(result.errors.length, 5);
+		assert.equal(result.errors.length, 4);
 		assert.match(result.errors.join("\n"), /main\/index\.js|main\\index\.js/);
 		assert.match(result.errors.join("\n"), /preload\/index\.js|preload\\index\.js/);
 		assert.match(result.errors.join("\n"), /renderer[/\\]index\.html/);
-		assert.match(result.errors.join("\n"), /renderer[/\\]pet\.html/);
 		assert.match(result.errors.join("\n"), /renderer[/\\]web\.html/);
 	});
 });
@@ -73,7 +69,7 @@ test("a complete temporary build fixture passes entry, resource, and freshness c
 		await createBuildFixture(repo);
 		const result = await verifyBuildArtifacts({ repoRoot: repo });
 		assert.equal(result.ok, true, result.errors.join("\n"));
-		assert.equal(result.checked.length, 9);
+		assert.equal(result.checked.length, 7);
 	});
 });
 

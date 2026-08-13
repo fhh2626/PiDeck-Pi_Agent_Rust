@@ -46,16 +46,16 @@ function loadMessageContentModule() {
 		module: ts.ModuleKind.CommonJS,
 		target: ts.ScriptTarget.ES2022,
 	};
-	const docActions = { exports: {} };
+	const hostInstruction = { exports: {} };
 	vm.runInNewContext(
-		ts.transpileModule(readFileSync("src/main/feishu/docActions.ts", "utf8"), { compilerOptions }).outputText,
-		docActions,
-		{ filename: "docActions.ts" },
+		ts.transpileModule(readFileSync("src/main/pi/hostInstruction.ts", "utf8"), { compilerOptions }).outputText,
+		hostInstruction,
+		{ filename: "hostInstruction.ts" },
 	);
 	const messageContent = {
 		exports: {},
 		require: (id) => {
-			if (id === "../feishu/docActions") return docActions.exports;
+			if (id === "./hostInstruction") return hostInstruction.exports;
 			throw new Error(`Unexpected messageContent import: ${id}`);
 		},
 	};
@@ -153,6 +153,10 @@ function loadSessionNameLineModule() {
 	return sandbox.exports;
 }
 
+function loadPiCompatibilityModule() {
+	return loadTranspiledModule("src/shared/piCompatibility.ts");
+}
+
 function loadSessionScanner(homePath, fsOverrides = {}) {
 	const source = readFileSync("src/main/sessions/SessionScanner.ts", "utf8");
 	const { outputText } = ts.transpileModule(source, {
@@ -165,6 +169,7 @@ function loadSessionScanner(homePath, fsOverrides = {}) {
 	const messageContent = loadMessageContentModule();
 	const sessionSummaryCache = loadSessionSummaryCacheModule(homePath);
 	const wslPaths = loadWslPathsModule();
+	const piCompatibility = loadPiCompatibilityModule();
 	const sandbox = {
 		AbortController,
 		AbortSignal,
@@ -179,6 +184,7 @@ function loadSessionScanner(homePath, fsOverrides = {}) {
 			if (id === "../pi/messageContent") return messageContent;
 			if (id === "../wsl/WslPaths") return wslPaths;
 			if (id === "./sessionSummaryCache") return sessionSummaryCache;
+			if (id === "../../shared/piCompatibility") return piCompatibility;
 			// sessionNameLine 为无依赖纯函数模块，直接编译加载真实实现，保证清理口径一致
 			if (id === "./sessionNameLine") return loadSessionNameLineModule();
 			// sharedLogger 未注册时 getAppLogger 返回 null，SessionScanner 埋点静默跳过
@@ -468,6 +474,28 @@ test("resolves fork child with absolute Windows parent path via parentSession he
 		assert.equal(summaries.length, 2);
 		const forkSummary = summaries.find(s => s.filePath === forkChildFile);
 		assert.equal(forkSummary.parentSessionPath, parentFile);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("resolves Rust Pi branchedFrom headers as parent sessions", async () => {
+	const home = mkdtempSync(join(tmpdir(), "pideck-rust-branched-session-"));
+	try {
+		const projectPath = "C:\\repo\\project";
+		const sessionsRoot = join(home, ".pi", "agent", "sessions");
+		const projectDir = join(sessionsRoot, "--C--repo-project--");
+		const parentFile = join(projectDir, "parent.jsonl");
+		const childFile = join(projectDir, "rust-child.jsonl");
+		writeSession(parentFile, session("Parent", projectPath));
+		writeSession(childFile, [
+			{ type: "session", id: "rust-child", branchedFrom: parentFile, cwd: projectPath },
+			...session("subagent-rust-child", projectPath),
+		]);
+
+		const { SessionScanner } = loadSessionScanner(home);
+		const summaries = await new SessionScanner().list(projectPath);
+		assert.equal(summaries.find((item) => item.filePath === childFile)?.parentSessionPath, parentFile);
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}

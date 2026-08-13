@@ -72,6 +72,3 @@ jobs:
 
       - name: Build
         run: npm run build
-
-      - name: Pet window smoke test
-        run: xvfb-run -a npx electron scripts/pet-smoke.cjs

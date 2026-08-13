@@ -120,12 +120,11 @@ test("widget chips render in the chat header left slot, not the composer", () =>
   assert.doesNotMatch(view, /ChatDirectoryButton/);
   assert.match(view, /widgetChips=\{<SessionWidgetChips sessionId=\{sessionId\} \/>\}/);
 
-  // composer 不再渲染 widget：槽位类型与渲染点都已移除
-  const runtime = readFileSync("src/renderer/src/components/session/ComposerRuntimeIntegrations.tsx", "utf8");
-  assert.doesNotMatch(runtime, /ExtensionWidgetCard/);
-  assert.doesNotMatch(runtime, /widgets: ReactNode/);
-  const area = readFileSync("src/renderer/src/components/session/ComposerArea.tsx", "utf8");
-  assert.doesNotMatch(area, /\{widgets\}/);
+	// composer 不再渲染 widget：槽位类型与渲染点都已移除
+	const area = readFileSync("src/renderer/src/components/session/ComposerArea.tsx", "utf8");
+	assert.doesNotMatch(area, /ExtensionWidgetCard/);
+	assert.doesNotMatch(area, /\{widgets\}/);
+	assert.match(area, /widgets=\{null\}/);
 });
 
 test("chip popover uses the official BeUI TodoList with mapping, not a local imitation", () => {

@@ -57,6 +57,7 @@ function loadExtensionManager({ homeDir, runPiOutput = "", fsOverrides = {} } = 
 			if (id === "../pi/PiLocator") return {};
 			if (id === "../fs/trash") return { trashPath: async () => {} };
 			if (id === "../logging/sharedLogger") return { getAppLogger: () => null };
+			if (id === "../../shared/piCompatibility") return require("../src/shared/piCompatibility.ts");
 			if (id === "./builtInExtensions") {
 				// ExtensionManager 只需要内置名列表；避免 vm 沙箱解析相对 TS 路径失败。
 				return {
@@ -214,6 +215,43 @@ test("list purges residual built-in file already marked removed", async () => {
 	assert.equal(existsSync(builtinPath), false, "residual removed built-in must be purged on list");
 
 	rmSync(fixtureHome, { recursive: true, force: true });
+});
+
+test("list marks regular extensions disabled from Pi settings", async () => {
+	const fixtureHome = mkdtempSync(join(tmpdir(), "pideck-disabled-extension-list-"));
+	const settingsDir = join(fixtureHome, ".pi", "agent");
+	mkdirSync(settingsDir, { recursive: true });
+	writeFileSync(
+		join(settingsDir, "settings.json"),
+		JSON.stringify({ disabledExtensions: ["npm:pi-subagents"] }),
+		"utf8",
+	);
+
+	const { ExtensionManager } = loadExtensionManager({
+		homeDir: fixtureHome,
+		runPiOutput: [
+			"User packages:",
+			"npm:pi-subagents",
+			join(settingsDir, "npm", "node_modules", "pi-subagents"),
+			"npm:context-mode",
+			join(settingsDir, "npm", "node_modules", "context-mode"),
+		].join("\n"),
+	});
+	const locator = {
+		check: async () => ({ installed: true, version: "0.80.0" }),
+		createInvocation: (cmd, args) => ({ command: cmd, args, shell: false }),
+		createProcessEnv: () => ({ ...process.env }),
+		resolveCommand: () => "pi",
+	};
+	const manager = new ExtensionManager(locator, () => ({}), () => ({ removedBuiltInExtensions: [] }));
+
+	try {
+		const result = await manager.list(false);
+		assert.equal(result.extensions.find((extension) => extension.source === "npm:pi-subagents")?.enabled, false);
+		assert.equal(result.extensions.find((extension) => extension.source === "npm:context-mode")?.enabled, true);
+	} finally {
+		rmSync(fixtureHome, { recursive: true, force: true });
+	}
 });
 
 // 避免 unused import 告警风格（homedir 仅文档用）

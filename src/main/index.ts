@@ -17,14 +17,12 @@ import { basename, join } from "node:path";
 import { createWriteStream, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { is } from "@electron-toolkit/utils";
-import { PetSystem, type PetSystemDeps } from "./pet";
 import {
 	applyLinuxDisplayBackendWorkaround,
 	isUsingLinuxXWaylandWorkaround,
 } from "./linuxDisplayBackend";
 import {
 	readElectronChromiumSandboxPreference,
-	readPetEnabledPreference,
 	readSingleInstancePreference,
 } from "./settings/SettingsStore";
 import { acquireVersionSingleInstance, type FocusPayload } from "./singleInstance";
@@ -55,12 +53,8 @@ if (isDevBuild) {
 	}
 }
 
-// Linux XWayland 兼容层：仅当桌面宠物启用时才强制 ozone-platform=x11（#108，
-// 强制 XWayland 在部分 GNOME/Wayland 环境会导致主窗口不可见）。
-// ozone 平台一经启动不可更改，整个生命周期统一使用启动时快照。
-// 注意必须放在 dev userData 覆盖之后，否则 dev 模式会误读正式版的 petEnabled。
-const petEnabledAtLaunch = readPetEnabledPreference();
-applyLinuxDisplayBackendWorkaround(petEnabledAtLaunch);
+// 用户显式指定 X11 时必须在 app.ready 前应用；默认保持系统原生显示后端。
+applyLinuxDisplayBackendWorkaround();
 
 // Chromium 沙箱开关必须在 app.ready 前生效。
 // 默认关闭：Windows 上部分安全软件/旧 GPU 驱动会在沙箱初始化时触发原生断点（0x80000003）。
@@ -162,10 +156,6 @@ import type {
 	CreateAnonymousSessionInput,
 	CreateAnonymousSessionResult,
 	UpdateSessionRecordInput,
-	FeishuBotConfig,
-	FeishuBridgeStatus,
-	FeishuConnectInput,
-	FeishuTestResult,
 	SendPromptInput,
 	SendPromptResult,
 	SendSessionPromptInput,
@@ -210,7 +200,6 @@ import { GitService } from "./git/GitService";
 import { WorktreeService } from "./git/WorktreeService";
 import { ConfigManager } from "./config/ConfigManager";
 import { TerminalSessionManager } from "./terminal/TerminalSessionManager";
-import { TelemetryService } from "./telemetry/TelemetryService";
 import { PromptManager } from "./prompts/PromptManager";
 import { XuePromptManager } from "./prompts/XuePromptManager";
 import { SkillManager } from "./skills/SkillManager";
@@ -253,30 +242,7 @@ import {
 	openProjectInEditor,
 	validateExternalEditorCommand,
 } from "./editors/EditorDetector";
-import {
-	FeishuBridge,
-	type SessionRuntimeBindingGateway,
-} from "./feishu/FeishuBridge";
-import {
-	feishuT,
-	normalizeFeishuLocale,
-	type FeishuLocale,
-} from "./feishu/FeishuI18n";
-import { wantsFeishuDoc } from "./feishu/docActions";
-import { resolveFeishuFileSendIntent } from "./feishu/fileIntent";
-import {
-	listBots,
-	getBot,
-	addBot as addFeishuBot,
-	removeBot as removeFeishuBot,
-	updateBot as updateFeishuBot,
-	getDecryptedBotAppSecret,
-	getSessionBotId,
-	setSessionBotId,
-	setFeishuConfigDefaultBotName,
-} from "./feishu/FeishuConfig";
 import { startMemoryProfile, isMemoryProfileEnabled, type MemoryProfileHandle } from "./memory/MemoryMonitor";
-import type { FeishuChatBinding } from "../shared/types";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -304,12 +270,10 @@ let extensionManager: ExtensionManager;
 let projectResourceManager: ProjectResourceManager;
 let webServiceManager: WebServiceManager;
 let terminalManager: TerminalSessionManager;
-let petSystem: PetSystem | null = null;
 let appLogger: AppLogger;
 let rpcLogger: RpcLogger;
 /** 内存采样句柄（PIDECK_MEMORY_PROFILE=1 时启用），quit 时停止 */
 let memoryProfileHandle: MemoryProfileHandle | null = null;
-let feishuBridge: FeishuBridge | null = null;
 let usageStatsService: UsageStatsService | null = null;
 
 
@@ -657,154 +621,6 @@ function cancelUnboundUiRequest(payload: unknown): void {
 	void agentManager.sendUIResponse(request.agentId, request.requestId, { cancelled: true });
 }
 
-const feishuSessionRuntimeBindings: SessionRuntimeBindingGateway = {
-	async ensureSession(input) {
-		if (input.existingSessionId) {
-			const existing = sessionCatalog.get(input.existingSessionId);
-			if (existing) return { sessionId: existing.id };
-		}
-		const environment = settingsStore.get().wslEnabled ? "wsl" : "native";
-		if (input.sessionPath) {
-			const existing = sessionCatalog.findByFilePath(input.sessionPath, environment);
-			if (existing) return { sessionId: existing.id };
-			const restored = await sessionCatalog.ensureRuntimeTarget({
-				projectId: input.projectId,
-				title: input.title,
-				source: "pi",
-				environment,
-				filePath: input.sessionPath,
-				wslDistro: environment === "wsl" ? settingsStore.get().wslDistro : undefined,
-				wslUser: environment === "wsl" ? settingsStore.get().wslUser : undefined,
-			});
-			return { sessionId: restored.id };
-		}
-		const draft = await sessionCatalog.createDraft({
-			projectId: input.projectId,
-			title: input.title,
-			environment,
-			source: "pi",
-		});
-		return { sessionId: draft.id };
-	},
-	async activateRuntime(sessionId) {
-		const activated = await sessionRuntimeCoordinator.activateRuntime(sessionId);
-		if (!activated.ok) throw sessionCommandIpcError(activated.error);
-		const tab = agentManager.list().find((candidate) => candidate.id === activated.value.agentId);
-		if (!tab) throw sessionCommandIpcError({
-			code: "SESSION_COMMAND_FAILED",
-			debugDetails: `Activated runtime not found: ${activated.value.agentId}`,
-		});
-		tab.runtimeGeneration = activated.value.runtimeGeneration;
-		emitSessionRuntimeEvent(tab.id, ipcChannels.agentsState, tab);
-		return tab;
-	},
-	async bindRuntime(input) {
-		if (input.agent.status === "error" || input.agent.status === "closed") {
-			throw new Error(`Cannot bind terminal Feishu runtime: ${input.agent.id}`);
-		}
-		const environment = input.agent.sessionEnvironment ?? (
-			settingsStore.get().wslEnabled ? "wsl" : "native"
-		);
-		const source = input.agent.sessionSource ?? "pi";
-		let sessionId: string | undefined;
-		if (input.existingSessionId) {
-			const existing = sessionCatalog.get(input.existingSessionId);
-			if (existing) {
-				const currentBinding = sessionRuntimeCoordinator.getRuntimeBinding(input.agent.id);
-				if (currentBinding && currentBinding.sessionId !== existing.id) {
-					throw new Error(`Runtime is already bound to a different Session: ${currentBinding.sessionId}`);
-				}
-				if (input.agent.sessionPath && !canAttachRuntimeMetadata(existing, input.agent)) {
-					throw new Error(`Existing Session origin does not match runtime: ${existing.id}`);
-				}
-				sessionId = existing.id;
-			}
-		}
-		if (!sessionId && input.agent.sessionPath) {
-			const targetOrigin = buildSessionOriginKey({
-				source,
-				environment,
-				filePath: input.agent.sessionPath,
-				wslDistro: input.agent.wslDistro,
-				wslUser: input.agent.wslUser,
-				importedSourceId: input.agent.importedSourceId,
-			});
-			sessionId = sessionCatalog.listEntries().find((candidate) => (
-				candidate.filePath &&
-				buildSessionOriginKey({
-					source: candidate.source,
-					environment: candidate.environment,
-					filePath: candidate.filePath,
-					wslDistro: candidate.wslDistro,
-					wslUser: candidate.wslUser,
-					importedSourceId: candidate.importedSourceId,
-				}) === targetOrigin
-			))?.id;
-		}
-		if (!sessionId) {
-			const draft = await sessionCatalog.createDraft({
-				projectId: input.projectId,
-				title: input.agent.title || "Feishu session",
-				environment,
-				source,
-			});
-			sessionId = draft.id;
-		}
-		await sessionCatalog.attachRuntime(input.agent.sessionPath ? {
-			sessionId,
-			filePath: input.agent.sessionPath,
-			piSessionId: input.agent.sessionId,
-		} : {
-			sessionId,
-			piSessionId: input.agent.sessionId,
-		});
-		const runtimeGeneration = sessionRuntimeCoordinator.bindExistingAgent(
-			sessionId,
-			input.agent.id,
-		);
-		input.agent.runtimeGeneration = runtimeGeneration;
-		emitSessionRuntimeEvent(input.agent.id, ipcChannels.agentsState, input.agent);
-		return { sessionId };
-	},
-	async sendPrompt(input) {
-		const result = await sessionRuntimeCoordinator.send({
-			...input,
-			requestId: randomUUID(),
-		});
-		if (!result.accepted) throw new Error(result.error);
-	},
-	async abortRuntime(sessionId) {
-		const target = sessionRuntimeCoordinator.getTarget(sessionId);
-		if (!target) throw sessionCommandIpcError({ code: "SESSION_RUNTIME_UNAVAILABLE" });
-		const result = await sessionRuntimeCoordinator.abortRuntime(target);
-		if (!result.ok) throw sessionCommandIpcError(result.error);
-	},
-	async listRuntimeModels(sessionId) {
-		const target = sessionRuntimeCoordinator.getTarget(sessionId);
-		if (!target) throw sessionCommandIpcError({ code: "SESSION_RUNTIME_UNAVAILABLE" });
-		const result = await sessionRuntimeCoordinator.listRuntimeModels(target);
-		if (!result.ok) throw sessionCommandIpcError(result.error);
-		return result.value.value;
-	},
-	async getRuntimeState(sessionId) {
-		const target = sessionRuntimeCoordinator.getTarget(sessionId);
-		if (!target) return undefined;
-		const result = await sessionRuntimeCoordinator.getRuntimeState(target);
-		if (!result.ok) throw sessionCommandIpcError(result.error);
-		return result.value.value;
-	},
-	async setRuntimeModel(sessionId, provider, modelId) {
-		const target = sessionRuntimeCoordinator.getTarget(sessionId);
-		if (!target) throw sessionCommandIpcError({ code: "SESSION_RUNTIME_UNAVAILABLE" });
-		const result = await sessionRuntimeCoordinator.setRuntimeModel(target, provider, modelId);
-		if (!result.ok) throw sessionCommandIpcError(result.error);
-	},
-	// ask/confirm 等扩展 UI 请求的答案回写：agentId 是 runtime id，直接走 AgentManager（与桌面端弹窗同链路）。
-	sendUIResponse(agentId, requestId, response) {
-		agentManager.sendUIResponse(agentId, requestId, response);
-	},
-};
-
 function applyNativeThemeSource(settings: AppSettings) {
 	// 原生标题栏不受 renderer CSS 影响；跟随应用主题，避免暗色界面顶部仍是系统浅色栏。
 	nativeTheme.themeSource = settings.theme === "system" ? "system" : settings.theme;
@@ -813,10 +629,6 @@ function applyNativeThemeSource(settings: AppSettings) {
 const RELEASES_URL = "https://github.com/ayuayue/pi-desktop/releases";
 const LATEST_RELEASE_API =
 	"https://api.github.com/repos/ayuayue/pi-desktop/releases/latest";
-const POSTHOG_PROJECT_KEY =
-	process.env.POSTHOG_PROJECT_KEY ??
-	"phc_xgJ8gFUMgExZEEPzZ7VRa7698ENcaDRquWZVGYb2dCFK";
-const POSTHOG_HOST = process.env.POSTHOG_HOST ?? "https://us.i.posthog.com";
 
 type GitHubReleaseAsset = {
 	name: string;
@@ -1206,7 +1018,7 @@ function handleVersionFocusRequest(payload?: FocusPayload) {
 			sessionId = sessionRuntimeCoordinator.getSessionId(target.agentId);
 		}
 		if (sessionId) {
-			mainWindow.webContents.send(ipcChannels.petFocusAgentTarget, { sessionId });
+			mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, { sessionId });
 		}
 	};
 	if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1239,7 +1051,7 @@ function setupTray() {
 	// iconPath 由 electron-vite 的 ?asset 后缀自动解析，打包后也能正确定位
 	const icon = nativeImage.createFromPath(iconPath);
 	tray = new Tray(icon.resize({ width: 16, height: 16 }));
-	tray.setToolTip("PiDeck");
+	tray.setToolTip("PiDeck-Q");
 
 	// 双击托盘图标恢复窗口（Windows 常见交互）
 	tray.on("double-click", () => {
@@ -1300,7 +1112,7 @@ function printStartupInfo() {
 			"color: #8b5cf6; font-weight: bold;"
 		);
 		console.log(
-			"%c│                      PiDeck Desktop                      │",
+			"%c│                     PiDeck-Q Desktop                     │",
 			"color: #8b5cf6; font-weight: bold; font-size: 16px;"
 		);
 		console.log(
@@ -1481,7 +1293,9 @@ async function createWindow() {
 		height: startupBounds.height,
 		minWidth: 880,
 		minHeight: 640,
-		title: "",
+		// Windows 任务栏/Alt-Tab 显示这个标题。自定义无框标题栏时 UI 自己画标题，
+		// 但 OS 任务栏仍读 BrowserWindow.title；空字符串会变成“只有图标、没有软件名”。
+		title: "PiDeck-Q",
 		icon: iconPath,
 		frame: windowOptions.frame,
 		titleBarStyle: windowOptions.titleBarStyle,
@@ -1687,7 +1501,7 @@ function shouldUseDevRendererUrl() {
 }
 
 function shouldShowMainWindowImmediately() {
-	return isUsingLinuxXWaylandWorkaround(petEnabledAtLaunch);
+	return isUsingLinuxXWaylandWorkaround();
 }
 
 /** 启动尺寸预设 → 初始窗口尺寸；全屏/最大化也给合理兜底，避免显示器信息异常时缩成最小窗。 */
@@ -1732,19 +1546,6 @@ function applyStartupWindowMode(
 	}
 }
 
-// ===== 飞书桥接 IPC =====
-
-/** 自动连接：启动时检查已保存的 Bot 配置，自动连接 */
-async function autoConnectFeishu() {
-	const bots = listBots();
-	if (bots.length === 0) return;
-	const bot = bots.find((b) => b.enabled);
-	if (!bot) return;
-	// 不再自动连接，由用户手动在配置页点击连接
-	// 避免应用重启后静默恢复连接导致用户困惑
-	console.log("[飞书] 检测到已保存的 Bot 配置:", bot.name, "(跳过自动连接，需手动连接)");
-}
-
 function currentMainProcessLocale(): MainProcessLocale {
 	const language = settingsStore.get().language;
 	if (language === "pseudo") return "en-US";
@@ -1768,408 +1569,10 @@ function sessionCommandIpcError(error: SessionCommandError): SessionCommandIpcEr
 	return new SessionCommandIpcError(error, mainCopy);
 }
 
-function currentFeishuLocale(): FeishuLocale {
-	return normalizeFeishuLocale(currentMainProcessLocale());
-}
-
-function registerFeishuIpc() {
-	/** Bot 配置变更后主动推送给 renderer，保证多个页面/弹窗中的 Bot 列表实时同步。 */
-	function broadcastBotsChanged() {
-		if (!mainWindow || mainWindow.isDestroyed()) return;
-		mainWindow.webContents.send(ipcChannels.feishuBotsChanged, listBots());
-	}
-
-	// 临时连接（不保存 bot 配置），用于添加 Bot 时先验证凭证可用性
-	ipcMain.handle(ipcChannels.feishuConnectTemp, async (_event, input: FeishuConnectInput) => {
-		const appId = input.appId?.trim() ?? "";
-		const appSecret = input.appSecret?.trim() ?? "";
-		console.log("[Feishu] 收到临时连接请求", JSON.stringify({ appId: appId ? appId.slice(0, 8) + "..." : "", name: input.name, hasSecret: Boolean(appSecret) }));
-		try {
-			if (!appId || !appSecret) {
-				return { success: false, message: feishuT(currentFeishuLocale(), "bridge.configRequired") };
-			}
-			if (feishuBridge) {
-				feishuBridge.stop();
-			}
-			// 临时构造 botConfig，不做持久化；明文 secret 只传给当前 bridge，不写入磁盘。
-			const botConfig: FeishuBotConfig = {
-				id: "temp-" + randomUUID(),
-				name: input.name?.trim() || feishuT(currentFeishuLocale(), "bridge.tempBotName"),
-				enabled: true,
-				appId,
-				appSecret,
-				defaultUserOpenId: input.defaultUserOpenId,
-			};
-			feishuBridge = new FeishuBridge(
-				botConfig,
-				agentManager,
-				() => mainWindow,
-				() => projectStore.list(),
-				feishuSessionRuntimeBindings,
-				appSecret,
-				currentFeishuLocale(),
-			);
-			await feishuBridge.start();
-			const status = feishuBridge.getStatus();
-			console.log("[Feishu] 临时连接成功，状态:", JSON.stringify(status));
-			return {
-				success: true,
-				message: feishuT(currentFeishuLocale(), "connection.success"),
-				botInfo: { id: botConfig.id, name: botConfig.name },
-			};
-		} catch (error) {
-			const detail = error instanceof Error ? (error as Error & { cause?: unknown }).cause ?? error.message : String(error);
-			const message = error instanceof Error ? error.message : String(error);
-			console.error("[Feishu] 临时连接失败:", detail);
-			return { success: false, message, detail: String(detail) };
-		}
-	});
-
-	// 连接飞书（保存 bot）
-	ipcMain.handle(ipcChannels.feishuConnect, async (_event, input: FeishuConnectInput) => {
-		console.log("[Feishu] 收到连接请求", JSON.stringify({ appId: input.appId?.slice(0, 8) + "...", name: input.name }));
-		try {
-			if (feishuBridge) {
-				console.log("[Feishu] 停止旧 bridge 状态:", JSON.stringify(feishuBridge.getStatus()));
-				feishuBridge.stop();
-			}
-
-			// 先建立临时配置，不持久化；连接成功后再存盘
-			const plainAppSecret = input.appSecret;
-			const tempId = "pending-" + randomUUID();
-
-			feishuBridge = new FeishuBridge(
-				{
-					id: tempId,
-					name: input.name || feishuT(currentFeishuLocale(), "bridge.defaultBotName"),
-					enabled: true,
-					appId: input.appId,
-					appSecret: "",
-					defaultUserOpenId: input.defaultUserOpenId,
-				},
-				agentManager,
-				() => mainWindow,
-				() => projectStore.list(),
-				feishuSessionRuntimeBindings,
-				plainAppSecret,
-				currentFeishuLocale(),
-			);
-			await feishuBridge.start();
-
-			// 连接成功后再持久化
-			const botConfig = addFeishuBot({
-				name: input.name || feishuT(currentFeishuLocale(), "bridge.defaultBotName"),
-				appId: input.appId,
-				appSecret: input.appSecret,
-				defaultUserOpenId: input.defaultUserOpenId,
-			});
-			feishuBridge.updateBotConfig({ id: botConfig.id });
-
-			console.log("[Feishu] 连接成功，状态:", JSON.stringify(feishuBridge.getStatus()));
-			void appLogger.info("feishu", "Feishu connected", { botId: botConfig.id, name: botConfig.name });
-			broadcastBotsChanged();
-			return { success: true, message: feishuT(currentFeishuLocale(), "connection.success") };
-		} catch (error) {
-			const detail = error instanceof Error ? (error as Error & { cause?: unknown }).cause ?? error.message : String(error);
-			const message = error instanceof Error ? error.message : String(error);
-			console.error("[Feishu] 连接失败:", detail);
-			void appLogger.error("feishu", "Feishu connect failed", error);
-			// 返回详细错误信息（包含原始错误说明），供前端展示
-			return { success: false, message, detail: String(detail) };
-		}
-	});
-
-	// 断开连接
-	ipcMain.handle(ipcChannels.feishuDisconnect, async () => {
-		console.log("[Feishu] 收到断开请求");
-		if (feishuBridge) {
-			console.log("[Feishu] 停止 bridge，此前状态:", JSON.stringify(feishuBridge.getStatus()));
-			feishuBridge.stop();
-			feishuBridge = null;
-			console.log("[Feishu] bridge 已置 null");
-		}
-		void appLogger.info("feishu", "Feishu disconnected");
-		return { success: true };
-	});
-
-	// 查询状态
-	ipcMain.handle(ipcChannels.feishuStatusRequest, async () => {
-		if (feishuBridge) {
-			const s = feishuBridge.getStatus();
-			console.log("[Feishu] 状态查询:", JSON.stringify(s));
-			return s;
-		}
-		console.log("[Feishu] 状态查询: bridge 为 null，返回 disconnected");
-		return { status: "disconnected", activeBindings: 0 } as FeishuBridgeStatus;
-	});
-
-	// Bot 列表
-	ipcMain.handle(ipcChannels.feishuBotsList, async () => {
-		return listBots();
-	});
-
-	// 添加 Bot
-	ipcMain.handle(ipcChannels.feishuBotAdd, async (_event, input: FeishuConnectInput) => {
-		// 同 feishuConnect，但可以添加多个 Bot
-		try {
-			const botConfig = addFeishuBot({
-				name: input.name || feishuT(currentFeishuLocale(), "bridge.defaultBotName"),
-				appId: input.appId,
-				appSecret: input.appSecret,
-				defaultUserOpenId: input.defaultUserOpenId,
-			});
-			void appLogger.info("feishu", "Feishu bot added", { botId: botConfig.id, name: botConfig.name });
-			broadcastBotsChanged();
-			return { success: true, bot: { ...botConfig, appSecret: "" } };
-		} catch (error) {
-			void appLogger.warn("feishu", "Failed to add Feishu bot", {
-				error: error instanceof Error ? error.message : String(error),
-			});
-			return { success: false, error: feishuT(currentFeishuLocale(), "bridge.botAddFailed") };
-		}
-	});
-
-	// 删除 Bot
-	ipcMain.handle(ipcChannels.feishuBotRemove, async (_event, botId: string) => {
-		if (feishuBridge) {
-			feishuBridge.stop();
-			feishuBridge = null;
-		}
-		const result = removeFeishuBot(botId);
-		if (result) {
-			broadcastBotsChanged();
-		}
-		void appLogger.info("feishu", "Feishu bot removed", { botId });
-		return result;
-	});
-
-	// 更新 Bot 配置
-	ipcMain.handle(ipcChannels.feishuBotConfig, async (_event, botId: string, patch: Partial<FeishuBotConfig>) => {
-		const updated = updateFeishuBot(botId, patch);
-		void appLogger.info("feishu", "Feishu bot config updated", { botId, keys: Object.keys(patch) });
-		// 只热更新当前在线 Bot；修改其它 Bot 配置不应污染正在运行的 bridge。
-		if (feishuBridge && feishuBridge.getStatus().status === "connected" && feishuBridge.getStatus().botId === botId) {
-			feishuBridge.updateBotConfig(patch);
-			console.log("[飞书] 配置已热更新:", Object.keys(patch).join(", "));
-		}
-		if (updated) {
-			broadcastBotsChanged();
-		}
-		return updated ? { ...updated, appSecret: "" } : undefined;
-	});
-
-	// 返回解密后的 Secret，仅用于用户主动复制/查看凭证。
-	ipcMain.handle(ipcChannels.feishuBotSecret, async (_event, botId: string) => {
-		return getDecryptedBotAppSecret(botId);
-	});
-
-	// 测试连接
-	ipcMain.handle(ipcChannels.feishuTestConnection, async (_event, appId: string, appSecret: string) => {
-		// 创建临时 bridge 实例来测试连接
-		const testBridge = new FeishuBridge(
-			{
-				id: "test",
-				name: "测试",
-				enabled: true,
-				appId,
-				appSecret: "", // 将在 testConnection 中传入
-			},
-			agentManager,
-			() => mainWindow,
-			() => projectStore.list(),
-			feishuSessionRuntimeBindings,
-			undefined,
-			currentFeishuLocale(),
-		);
-		return testBridge.testConnection(appId, appSecret);
-	});
-
-	// 绑定列表
-	ipcMain.handle(ipcChannels.feishuBindingsList, async () => {
-		if (feishuBridge) {
-			return feishuBridge.listBindings();
-		}
-		return [];
-	});
-
-	// 移除绑定
-	ipcMain.handle(ipcChannels.feishuBindingRemove, async (_event, chatId: string) => {
-		if (feishuBridge) {
-			// 先查 binding 拿到 sessionId，移除后清理 session-bot 映射，
-			// 使 FeishuLinkIndicator 等 UI 同步更新断开状态。
-			const bindings = feishuBridge.listBindings();
-			const binding = bindings.find((b) => b.chatId === chatId);
-			const result = feishuBridge.removeBinding(chatId);
-			if (result && binding) {
-				setSessionBotId(binding.sessionId, undefined);
-			}
-			return result;
-		}
-		return false;
-	});
-
-	// 更新绑定
-	ipcMain.handle(ipcChannels.feishuBindingUpdate, async (_event, chatId: string, patch: Partial<FeishuChatBinding>) => {
-		if (feishuBridge) {
-			return feishuBridge.updateBinding(chatId, patch);
-		}
-		return undefined;
-	});
-
-	// 通过已保存的 Bot ID 连接（自动解密 Secret）
-	ipcMain.handle(ipcChannels.feishuConnectByBot, async (_event, botId: string) => {
-		try {
-			if (feishuBridge) {
-				feishuBridge.stop();
-			}
-			const botConfig = getBot(botId);
-			if (!botConfig) {
-				return { success: false, message: feishuT(currentFeishuLocale(), "bridge.botMissing") };
-			}
-			feishuBridge = new FeishuBridge(
-				botConfig,
-				agentManager,
-				() => mainWindow,
-				() => projectStore.list(),
-				feishuSessionRuntimeBindings,
-				undefined,
-				currentFeishuLocale(),
-			);
-			await feishuBridge.start();
-			void appLogger.info("feishu", "Feishu connected by saved bot", { botId, name: botConfig.name });
-			return { success: true, message: feishuT(currentFeishuLocale(), "connection.success") };
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return { success: false, message };
-		}
-	});
-
-	// 获取稳定 Session 绑定的飞书 Bot ID，并一次性迁移旧 runtime agentId 键。
-	ipcMain.handle(ipcChannels.feishuSessionBotGet, async (_event, sessionId: string) => {
-		const current = getSessionBotId(sessionId);
-		if (current) return current;
-		const target = sessionRuntimeCoordinator.getTarget(sessionId);
-		if (!target || target.agentId === sessionId) return null;
-		const legacy = getSessionBotId(target.agentId);
-		if (!legacy) return null;
-		setSessionBotId(sessionId, legacy);
-		setSessionBotId(target.agentId, undefined);
-		return legacy;
-	});
-
-	// 设置稳定 Session 使用的飞书 Bot ID。主进程始终重新解析当前 runtime，避免旧 agentId 操作替换后的会话。
-	ipcMain.handle(ipcChannels.feishuSessionBotSet, async (_event, sessionId: string, botId: string | null) => {
-		let target = sessionRuntimeCoordinator.getTarget(sessionId);
-		if (!botId) {
-			setSessionBotId(sessionId, undefined);
-			if (target && target.agentId !== sessionId) setSessionBotId(target.agentId, undefined);
-			// 取消当前会话的飞书关联：移除绑定但不停止 Agent 进程
-			if (feishuBridge && feishuBridge.getStatus().status === "connected") {
-				feishuBridge.removeBindingBySessionId(sessionId);
-			}
-			return { success: true };
-		}
-		const status = feishuBridge?.getStatus();
-		if (!feishuBridge || status?.status !== "connected") {
-			return { success: false, message: feishuT(currentFeishuLocale(), "session.bridgeUnavailable") };
-		}
-		if (status.botId !== botId) {
-			return { success: false, message: feishuT(currentFeishuLocale(), "session.botMismatch") };
-		}
-		// 会话尚未启动 runtime（仅浏览过历史会话）：先启动 Agent 再建立飞书镜像，
-		// 让「点会话连接飞书」在未启动 Agent 时也能成功；与桌面端启动走同一 activateRuntime 链路。
-		if (!target) {
-			try {
-				await feishuSessionRuntimeBindings.activateRuntime(sessionId);
-				target = sessionRuntimeCoordinator.getTarget(sessionId);
-			} catch (error) {
-				void appLogger.warn("feishu", "auto-start runtime for Feishu bind failed", {
-					sessionId,
-					error: error instanceof Error ? error.message : String(error),
-				});
-			}
-		}
-		if (!target) {
-			return { success: false, message: feishuT(currentFeishuLocale(), "session.runtimeUnavailable") };
-		}
-		const tab = agentManager.list().find((item) => item.id === target.agentId);
-		if (!tab) {
-			return { success: false, message: feishuT(currentFeishuLocale(), "session.runtimeUnavailable") };
-		}
-		const chatId = await feishuBridge.ensureSessionMirrorForSession(
-			sessionId,
-			target.agentId,
-			tab.title,
-			tab.sessionPath,
-		);
-		if (!chatId) {
-			return { success: false, message: feishuT(currentFeishuLocale(), "session.bindFailed") };
-		}
-		setSessionBotId(sessionId, botId);
-		if (target.agentId !== sessionId) setSessionBotId(target.agentId, undefined);
-		return { success: true, chatId };
-	});
-}
-
-async function sendAgentPromptWithIntegrations(
+async function sendAgentPrompt(
 	input: SendPromptInput,
 ): Promise<SendPromptResult> {
-	const bridge = feishuBridge;
-	const bridgeConnected = bridge?.getStatus().status === "connected";
-	const hasFeishuBinding = bridgeConnected && bridge.hasSessionBinding(input.agentId);
-	const docTitle = bridgeConnected ? wantsFeishuDoc(input.message) : undefined;
-	const sessionChatId = bridgeConnected ? bridge.getSessionChatId(input.agentId) : undefined;
-	let agentInstruction: string | undefined;
-	const buildFeishuActionInstruction = (chatId?: string) => [
-		"当前会话已连接飞书聊天。严禁调用 lark-cli、飞书 IM API 或搜索群聊来发送文件；不要询问 chat_id。需要把本地文件发到当前飞书聊天时，最终回答末尾独立一行写 [SEND_FILE:本地文件路径]，PiDeck 会按当前会话绑定自动上传。",
-		chatId ? `当前绑定的飞书 chat_id: ${chatId}。这是只读上下文，用于确认当前会话绑定；发送文件仍必须用 [SEND_FILE:本地文件路径]。` : undefined,
-	].filter(Boolean).join("\n");
-
-	if (bridgeConnected && hasFeishuBinding) {
-		const filePath = resolveFeishuFileSendIntent(input.message, agentManager.getCwd(input.agentId));
-		if (filePath) {
-			const result = await bridge.sendFileForSession(input.agentId, filePath);
-			agentManager.recordHostExchange(input.agentId, input.message, result);
-			void appLogger.info("feishu", "File sent through current session binding", {
-				agentId: input.agentId,
-				filePath,
-				success: result.startsWith("✅"),
-			});
-			return { accepted: true };
-		}
-	}
-
-	if (bridgeConnected && docTitle && !hasFeishuBinding) {
-		const tab = agentManager.list().find((item) => item.id === input.agentId);
-		if (tab) {
-			await bridge.ensureSessionMirror(tab.id, tab.title, tab.sessionPath).catch((error) => {
-				console.error("[Feishu] auto-bind session mirror failed:", error);
-			});
-			bridge.trackDocRequest(tab.id, docTitle);
-			void bridge.forwardUserMessageToFeishu(tab.id, input.message).catch((error) => {
-				console.error("[Feishu] forward PiDeck message failed:", error);
-			});
-			agentInstruction = `${buildFeishuActionInstruction(bridge.getSessionChatId(tab.id))}\n创建飞书文档时，先输出完整正文，最后独立一行写 [CREATE_DOC:文档标题]。`;
-		}
-	} else if (hasFeishuBinding) {
-		agentInstruction = buildFeishuActionInstruction(sessionChatId);
-		const tab = agentManager.list().find((item) => item.id === input.agentId);
-		if (tab) {
-			void bridge.startSessionMirrorRun(tab.id, tab.title, tab.sessionPath).catch((error) => {
-				console.error("[Feishu] session mirror card init failed:", error);
-			});
-			if (input.message.trim()) {
-				void bridge.forwardUserMessageToFeishu(tab.id, input.message).catch((error) => {
-					console.error("[Feishu] forward PiDeck message failed:", error);
-				});
-			}
-		}
-	}
-	const result = await agentManager.sendPrompt(
-		agentInstruction
-			? { ...input, agentMessage: `${agentInstruction}\n\n${input.message}` }
-			: input,
-	);
+	const result = await agentManager.sendPrompt(input);
 	void appLogger.info("agent", "Prompt sent", {
 		agentId: input.agentId,
 		messageLength: input.message.length,
@@ -2322,24 +1725,13 @@ function registerIpc() {
 		installDownloadedUpdate,
 		openExternalUrl,
 		extensionManager,
-		// 设置变更副作用（代理 / 主题 / 飞书语言 / WSL / 宠物 / Web 服务）
+		// 设置变更副作用（代理 / 主题 / WSL / Web 服务）
 		applyDesktopProxy,
 		testPiProxy,
 		applyWebServiceSettings: (settings) => webServiceManager.applySettings(settings),
 		restartWebService: (settings) => webServiceManager.restart(settings),
-		reactToPetSettings: async (prev, next) => {
-			await petSystem?.reactToSettings(prev, next);
-		},
 		applyNativeThemeSource,
 		refreshTrayContextMenu,
-		// 语言变更时按当前主进程 locale 重算，忽略 systemIpc 传入的占位参数
-		setFeishuLocale: () => {
-			feishuBridge?.setLocale(currentFeishuLocale());
-		},
-		setFeishuConfigDefaultBotName: (_name: string) => {
-			// systemIpc 传入空串只是触发点；实际默认名必须按当前主进程 locale 重算。
-			setFeishuConfigDefaultBotName(feishuT(currentFeishuLocale(), "bridge.defaultBotName"));
-		},
 		notifyTitleBarChange: (window) => settingsStore.notifyTitleBarChange(window),
 		setSessionCatalogIdentityContext: (ctx) => sessionCatalog.setIdentityContext(ctx),
 		resolveWslEnvironment: async (distro, user, logger) => {
@@ -2412,34 +1804,6 @@ function registerIpc() {
 	});
 }
 
-function sendTelemetryHeartbeat() {
-	const telemetry = new TelemetryService({
-		settingsStore,
-		config: {
-			projectKey: POSTHOG_PROJECT_KEY,
-			host: POSTHOG_HOST,
-		},
-		metadata: {
-			appVersion: app.getVersion(),
-			platform: process.platform,
-			arch: process.arch,
-			packaged: app.isPackaged,
-		},
-		capture: async (request) => {
-			const response = await net.fetch(request.url, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(request.body),
-			});
-			if (!response.ok) {
-				throw new Error(`Telemetry request failed: ${response.status}`);
-			}
-		},
-	});
-
-	void telemetry.sendHeartbeat().catch(() => undefined);
-}
-
 async function detectExternalEditorsOnFirstLaunch() {
 	const current = settingsStore.get().externalEditors;
 	if (Object.values(current).some((editor) => editor.command)) return;
@@ -2488,7 +1852,12 @@ app.whenReady().then(async () => {
 	worktreeService = new WorktreeService(mainCopy);
 	piLocator = new PiLocator(mainCopy);
 	configManager = new ConfigManager(undefined, mainCopy);
-	promptManager = new PromptManager(undefined, mainCopy);
+	promptManager = new PromptManager(
+		undefined,
+		mainCopy,
+		() => settingsStore.get(),
+		(patch) => settingsStore.update(patch),
+	);
 	xuePromptManager = new XuePromptManager();
 	skillManager = new SkillManager(undefined, mainCopy);
 	extensionManager = new ExtensionManager(
@@ -2520,9 +1889,6 @@ app.whenReady().then(async () => {
 		securityStore,
 		// spawn pi 前预检修复会话文件（旧版私有 sessionName 头行会让 pi 拒绝加载，见 #114）
 		(filePath) => sessionScanner.repairLegacySessionNameLine(filePath),
-		// 飞书绑定会话：spawn 时注入 PIDECK_FEISHU_LINKED，ask_question 切换为禁用提示版。
-		// 闭包延迟读 feishuBridge（连接成功后才创建），spawn 时 binding 已先于 runtime 建立。
-		(key) => Boolean(key && feishuBridge?.hasSessionBinding(key)),
 	);
 	webServiceManager = new WebServiceManager({
 		// dev 模式（electron-vite dev 不产出 out/renderer 构建物）下，静态资源
@@ -2531,7 +1897,7 @@ app.whenReady().then(async () => {
 		devRendererUrl: shouldUseDevRendererUrl()
 			? process.env.ELECTRON_RENDERER_URL
 			: undefined,
-		// 订阅 pi agent 事件流：供 Web SSE 端点转发给浏览器（与 FeishuBridge 同源机制）。
+		// 订阅 pi agent 事件流，供 Web SSE 端点转发给浏览器。
 		subscribePiEvents: (handler) => agentManager.addLocalEventListener(
 			(agentId, event) => handler(agentId, event as never),
 		),
@@ -2709,7 +2075,6 @@ app.whenReady().then(async () => {
 	);
 
 	await settingsStore.load();
-	setFeishuConfigDefaultBotName(feishuT(currentFeishuLocale(), "bridge.defaultBotName"));
 	const initialSessionSettings = settingsStore.get();
 	sessionCatalog = new SessionCatalog(
 		join(app.getPath("userData"), "session-catalog.json"),
@@ -2729,7 +2094,7 @@ app.whenReady().then(async () => {
 	sessionRuntimeCoordinator = new SessionRuntimeCoordinator(
 		sessionCatalog,
 		agentManager,
-		sendAgentPromptWithIntegrations,
+		sendAgentPrompt,
 		appLogger,
 	);
 	agentManager.onOutput((sourceChannel, payload) => {
@@ -2750,6 +2115,28 @@ app.whenReady().then(async () => {
 			}
 		}
 	});
+
+	await appLogger.info("app", "Application started", {
+		version: app.getVersion(),
+		platform: process.platform,
+		arch: process.arch,
+		installationType: settingsStore.get().installationType,
+	});
+	await applyDesktopProxy(settingsStore.get());
+	registerIpc();
+
+	// 内存分析模式（PIDECK_MEMORY_PROFILE=1）：尽早开始采样，覆盖窗口创建/加载全过程。
+	// 采样失败不阻塞启动（诊断工具降级为不可用）。
+	if (isMemoryProfileEnabled()) {
+		memoryProfileHandle = await startMemoryProfile(() => agentManager.hasActiveStreaming()).catch((error) => {
+			console.error("Failed to start memory profile:", error);
+			return null;
+		});
+	}
+	// 窗口先于 WSL 探测 / pi settings 修补 / Web 服务启动创建：
+	// 那几步可能各花数秒（wsl.exe printenv 最多 8s），Typora/VS Code 不会在首窗前做这些事。
+	await createWindow();
+	setupTray();
 
 	// 根据已加载的 WSL 设置配置会话扫描器，使其能同时扫描 WSL 中的 pi 会话目录
 	const syncWslConfig = async () => {
@@ -2774,79 +2161,35 @@ app.whenReady().then(async () => {
 			if (xuePromptManager) xuePromptManager.configureWsl(null);
 		}
 	};
-	await syncWslConfig();
-
-	// 内置扩展改为 RPC -e 注入（见 PiProcess/AgentManager），不再复制到用户扩展目录。
-	// 启动时清理历史版本部署的 pi-deck-* 与已下线扩展，避免 CLI/RPC 双加载。
-	await migrateLegacyBuiltInExtensions().catch((error) => {
+	// 这些启动修补不挡住首窗；失败只记日志，用户已经能看到 boot overlay。
+	void syncWslConfig().catch((error) => {
+		console.error("Failed to sync WSL config:", error);
+	});
+	void migrateLegacyBuiltInExtensions().catch((error) => {
 		console.error("Failed to migrate legacy built-in extensions:", error);
 	});
-
-	// 补齐 pi settings.json 缺失的默认配置项，新安装或精简配置的用户无需手动添加。
-	await ensureAllPiSettingsDefaults().catch((error) => {
+	void ensureAllPiSettingsDefaults().catch((error) => {
 		console.error("Failed to ensure pi settings defaults:", error);
 	});
-
-	await appLogger.info("app", "Application started", {
-		version: app.getVersion(),
-		platform: process.platform,
-		arch: process.arch,
-		installationType: settingsStore.get().installationType,
-	});
-	await applyDesktopProxy(settingsStore.get());
-	await webServiceManager.applySettings(settingsStore.get()).catch((error) => {
+	void webServiceManager.applySettings(settingsStore.get()).catch((error) => {
 		console.error("Failed to start web service:", error);
 		void appLogger.warn("web", "Web service disabled after apply failure", {
 			error: error instanceof Error ? error.message : String(error),
 		});
 		void settingsStore.update({ webServiceEnabled: false });
 	});
-	registerIpc();
-	registerFeishuIpc();
-
-	// 🆕 自动连接：如果已有 Bot 配置，自动启动飞书连接
-	autoConnectFeishu();
-
-	sendTelemetryHeartbeat();
-
-	// 内存分析模式（PIDECK_MEMORY_PROFILE=1）：尽早开始采样，覆盖窗口创建/加载全过程。
-	// 采样失败不阻塞启动（诊断工具降级为不可用）。
-	if (isMemoryProfileEnabled()) {
-		memoryProfileHandle = await startMemoryProfile(() => agentManager.hasActiveStreaming()).catch((error) => {
-			console.error("Failed to start memory profile:", error);
-			return null;
-		});
-	}
-	await createWindow();
-	setupTray();
 
 	// 冷启动通知唤起：应用未运行时点击系统通知，本进程即为唯一实例（无次实例 .focus 流转），
 	// argv 携带 pideck:// URL，窗口就绪后直接向 renderer 发送跳转目标。
 	// catalog 可能尚未加载完，renderer 侧监听会小间隔重试直到能解析到会话记录。
 	const coldStartTarget = extractFocusTargetFromArgv(process.argv);
 	if (coldStartTarget?.sessionId && mainWindow && !mainWindow.isDestroyed()) {
-		mainWindow.webContents.send(ipcChannels.petFocusAgentTarget, {
+		mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, {
 			sessionId: coldStartTarget.sessionId,
 		});
 	}
 	void detectExternalEditorsOnFirstLaunch().catch((error) => {
 		void appLogger.warn("editor", "External editor first launch detection failed", error);
-	});
-
-	// 桌面宠物系统：新增模块，默认关闭（petEnabled=false），不触碰现有 IPC 与主窗逻辑
-	petSystem = new PetSystem({
-		agentManager,
-		settingsStore,
-		getMainWindow: () => mainWindow,
-		resolveSessionId: (agentId) => sessionRuntimeCoordinator.getSessionId(agentId),
-		translate: (key, params) => mainCopy(key, params),
-		recreateMainWindow: async () => {
-			await createWindow();
-			return mainWindow!;
-		},
-	});
-	void petSystem.start().catch((error) => {
-		void appLogger.warn("pet", "Pet system start failed", error);
 	});
 
 	// 项目列表可能位于杀软/同步盘较慢的 userData；窗口先显示，随后异步加载，避免 packaged app 打开时白屏等待。
@@ -2963,7 +2306,15 @@ async function ensureAllPiSettingsDefaults(): Promise<void> {
 	const s = settingsStore.get();
 	let piVersion = "";
 	if (piLocator) {
-		piVersion = (await piLocator.check(undefined, s.wslEnabled, s.wslDistro, s.wslUser).catch(() => null))?.version ?? "";
+		piVersion = (await piLocator.check(
+			s.customPiPath,
+			s.wslEnabled,
+			s.wslDistro,
+			s.wslUser,
+			s.piRuntimePreference,
+			s.piTypescriptPath,
+			s.piRustPath,
+		).catch(() => null))?.version ?? "";
 	}
 
 	// Windows 本地
@@ -2986,8 +2337,6 @@ app.on("before-quit", () => {
 	void webServiceManager?.stop();
 	terminalManager?.closeAll();
 	agentManager?.stopAll();
-	petSystem?.stop();
-	petSystem = null;
 });
 
 app.on("window-all-closed", () => {

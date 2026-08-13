@@ -71,7 +71,7 @@
   react-resizable-panels；toast 统一 sonner；清理死 CSS 约 1900 行。
 - **Session-first 运行时** — SessionRuntimeInjector 把流式从 App 根隔离；Composer/
   时间线/侧栏/视图由会话持有；旧 runtime 的迟到结果按代际拒绝。
-- **打包优化** — 渲染层依赖移入 devDependencies；asar 压缩开满。
+- **打包优化** — 渲染层依赖移入 devDependencies；asar 压缩开满。Windows 以后只打普通 NSIS 安装包和 zip，不再产出每次启动都解压的单文件 portable exe。
 - **E2E 基建** — Playwright Electron 测试框架 + mock-pi RPC 全流程（prompt/stream/
   done/abort、排队消息、模型选择、compact/fork、重启后会话可用）。
 

@@ -1,4 +1,5 @@
 import type { PiSkillSummary } from "./skills";
+import type { PiRuntimeKind } from "../piCompatibility";
 
 // ── Pi / NPM / Config ──────────────────────────────────────────────────
 
@@ -12,6 +13,7 @@ export type PiInstallStatus = {
 	installed: boolean;
 	command?: string;
 	version?: string;
+	runtimeKind?: PiRuntimeKind;
 	searchedDirs: string[];
 	error?: string;
 };

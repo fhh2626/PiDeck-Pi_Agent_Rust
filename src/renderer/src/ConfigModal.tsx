@@ -347,6 +347,7 @@ function ConfigModalContent(props: ConfigModalProps) {
 	const [promptsData, setPromptsData] = useState<PiPromptTemplateListResult>({
 		templates: [],
 		globalDir: "",
+		hasHiddenBuiltins: false,
 	});
 	const [creatingPrompt, setCreatingPrompt] = useState(false);
 	const [newPromptName, setNewPromptName] = useState("");
@@ -355,10 +356,11 @@ function ConfigModalContent(props: ConfigModalProps) {
 	const [editPromptContent, setEditPromptContent] = useState("");
 	const [editPromptLoading, setEditPromptLoading] = useState(false);
 	const [editPromptSaving, setEditPromptSaving] = useState(false);
-	/** 用户已删除的内置模板名称（仅当前会话有效） */
-	const [deletedBuiltinNames, setDeletedBuiltinNames] = useState<Set<string>>(new Set());
 	/** 待确认删除的 Prompt 模板（删除前弹确认框） */
 	const [deletePromptConfirm, setDeletePromptConfirm] = useState<PiPromptTemplateSummary | null>(null);
+	/** 是否确认找回全部默认内置模板 */
+	const [restoreBuiltinPromptsConfirm, setRestoreBuiltinPromptsConfirm] = useState(false);
+	const [restoringBuiltinPrompts, setRestoringBuiltinPrompts] = useState(false);
 	const [uninstallExtensionConfirm, setUninstallExtensionConfirm] = useState<PiExtensionSummary | null>(null);
 	const [rawContent, setRawContent] = useState("");
 	const [rawFileName, setRawFileName] = useState("models.json");
@@ -568,9 +570,9 @@ function ConfigModalContent(props: ConfigModalProps) {
 			return;
 		}
 		if (section === "extensions") {
-			// 扩展页需要显示当前/最新版本与可更新状态，首次进入强制查一次版本；
-			// 主进程 listCacheHasVersionInfo 会让后续进入直接吃带版本的缓存，不重复打 npm view。
-			void refreshExtensions(true);
+			// 首次进入只做轻量扫描（或读取主进程缓存），避免为每个 npm 扩展联网查版本。
+			// 最新版本只在用户显式点击刷新时查询。
+			void refreshExtensions(false);
 			return;
 		}
 		void loadConfig(tab);
@@ -1194,13 +1196,11 @@ function ConfigModalContent(props: ConfigModalProps) {
 	/** 刷新 prompt templates 列表 */
 	const refreshPrompts = async () => {
 		const res = await api.prompts.list();
-		// 过滤掉用户已删除的内置模板，同时翻译内置模板的 description
-		res.templates = res.templates
-			.filter((t) => t.userCreated || !deletedBuiltinNames.has(t.name))
-			.map((tpl) => ({
-				...tpl,
-				description: translateBuiltinPromptDescription(tpl),
-			}));
+		// 主进程已按删除标记过滤内置项；这里只翻译内置模板的 description
+		res.templates = res.templates.map((tpl) => ({
+			...tpl,
+			description: translateBuiltinPromptDescription(tpl),
+		}));
 		setPromptsData(res);
 	};
 
@@ -1227,18 +1227,29 @@ function ConfigModalContent(props: ConfigModalProps) {
 	/** 确认删除 prompt template */
 	const confirmDeletePrompt = async (target: PiPromptTemplateSummary) => {
 		setError(null);
-		if (target.userCreated) {
-			try {
-				await api.prompts.delete(target.path);
-				await refreshPrompts();
-				showToast(t("config.promptDeletedToast"));
-			} catch (e) {
-				setError(e instanceof Error ? e.message : String(e));
-			}
-		} else {
-			// 内置模板：从显示列表中移除
-			setDeletedBuiltinNames((prev) => new Set(prev).add(target.name));
+		try {
+			await api.prompts.delete(target.path);
+			await refreshPrompts();
 			showToast(t("config.promptDeletedToast"));
+			setDeletePromptConfirm(null);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e));
+		}
+	};
+
+	/** 清空内置模板删除标记，使默认模板重新出现。 */
+	const confirmRestoreBuiltinPrompts = async () => {
+		setError(null);
+		setRestoringBuiltinPrompts(true);
+		try {
+			await api.prompts.restoreBuiltins();
+			await refreshPrompts();
+			showToast(t("config.promptRestoredToast"));
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setRestoringBuiltinPrompts(false);
+			setRestoreBuiltinPromptsConfirm(false);
 		}
 	};
 
@@ -1491,8 +1502,8 @@ function ConfigModalContent(props: ConfigModalProps) {
 				api.extensions.uninstall(target.source, target.scope),
 				exitAnimation,
 			]);
-			// 与禁用/手动刷新一致：强制重扫并跳过可能残留的 in-flight 缓存结果。
-			await refreshExtensions(true);
+			// 卸载已使主进程缓存失效；轻量重扫即可，不额外逐个查询 npm 最新版本。
+			await refreshExtensions(false);
 			showToast(t("config.extensionUninstalledToast"));
 		} catch (e) {
 			// 配置页顶部红字容易被滚出视口；卸载失败用 error toast，用户能立刻看到。
@@ -1907,6 +1918,9 @@ function ConfigModalContent(props: ConfigModalProps) {
 							editSaving={editPromptSaving}
 							onRefresh={refreshPrompts}
 							onOpenRoot={() => api.prompts.openFolder()}
+							canRestoreBuiltins={promptsData.hasHiddenBuiltins}
+							restoringBuiltins={restoringBuiltinPrompts}
+							onRestoreBuiltins={() => setRestoreBuiltinPromptsConfirm(true)}
 							onChangeNewName={setNewPromptName}
 							onChangeNewDescription={setNewPromptDescription}
 							onCreate={handleCreatePrompt}
@@ -1932,6 +1946,7 @@ function ConfigModalContent(props: ConfigModalProps) {
 							data={extensionsData}
 							loading={extensionsLoading}
 							uninstallingSource={uninstallingExtensionSource}
+							onReload={() => void refreshExtensions(false)}
 							onRefresh={() => void refreshExtensions(true)}
 							onUninstall={setUninstallExtensionConfirm}
 						/>
@@ -2013,6 +2028,16 @@ function ConfigModalContent(props: ConfigModalProps) {
 						danger
 						onConfirm={() => void confirmDeletePrompt(deletePromptConfirm)}
 						onCancel={() => setDeletePromptConfirm(null)}
+					/>
+				)}
+
+				{restoreBuiltinPromptsConfirm && (
+					<ConfirmDialog
+						title={t("config.restoreBuiltinPromptsTitle")}
+						message={t("config.restoreBuiltinPromptsBody")}
+						confirmLabel={t("common.confirm")}
+						onConfirm={() => void confirmRestoreBuiltinPrompts()}
+						onCancel={() => setRestoreBuiltinPromptsConfirm(false)}
 					/>
 				)}
 

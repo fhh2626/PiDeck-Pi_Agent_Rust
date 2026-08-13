@@ -29,6 +29,26 @@ test("main window records renderer load diagnostics", () => {
 	assert.match(source, /Main window renderer console error/);
 });
 
+test("Windows taskbar can read a non-empty app title", () => {
+	assert.match(source, /title:\s*"PiDeck-Q"/);
+	const html = readFileSync("src/renderer/index.html", "utf8");
+	assert.match(html, /<title>PiDeck-Q<\/title>/);
+});
+
+test("first window is created before WSL and pi startup probes", () => {
+	const createIndex = source.indexOf("await createWindow();");
+	const wslIndex = source.indexOf("void syncWslConfig()");
+	const migrateIndex = source.indexOf("void migrateLegacyBuiltInExtensions()");
+	const defaultsIndex = source.indexOf("void ensureAllPiSettingsDefaults()");
+	assert.notEqual(createIndex, -1);
+	assert.notEqual(wslIndex, -1);
+	assert.notEqual(migrateIndex, -1);
+	assert.notEqual(defaultsIndex, -1);
+	assert.ok(createIndex < wslIndex);
+	assert.ok(createIndex < migrateIndex);
+	assert.ok(createIndex < defaultsIndex);
+});
+
 test("linux display workaround opens the main window without hidden pre-map", () => {
 	assert.match(source, /const showMainWindowImmediately = shouldShowMainWindowImmediately\(\)/);
 	assert.match(source, /show: showMainWindowImmediately/);

@@ -9,7 +9,7 @@
 | `npm run build` | 构建 Renderer、Main 和 Preload 产物 |
 | `npm run pack` | 构建并生成未安装的应用目录 |
 | `npm run dist` | 为当前平台打包 |
-| `npm run dist:win` | 打包 Windows NSIS、portable、zip |
+| `npm run dist:win` | 打包 Windows NSIS、zip |
 | `npm run dist:mac` | 打包 macOS dmg、zip |
 | `npm run dist:linux` | 打包 Linux AppImage、deb、tar.gz |
 | `npm run docs:dev` | 启动本站点开发服务 |

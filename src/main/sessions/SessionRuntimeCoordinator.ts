@@ -63,9 +63,11 @@ export interface SessionAgentGateway {
 		messageId: string,
 	): Promise<{ text: string; images?: ImageContent[] }>;
 	setModel(agentId: string, provider: string, modelId: string): Promise<unknown>;
-	setThinking(agentId: string, level: string): Promise<unknown>;
+	setThinking(agentId: string, level: string): Promise<AgentRuntimeState>;
 	/** 主动推送一次完整 runtime state（get_state）给渲染层：懒启动/重启链路在偏好应用后调用。 */
 	publishRuntimeState(agentId: string): Promise<void>;
+	/** 首条 prompt 后补取可能延迟创建的持久会话文件身份。 */
+	refreshSessionIdentity(agentId: string): Promise<AgentTab>;
 	getForkMessages(agentId: string): Promise<Array<{ entryId: string; text: string }>>;
 	forkSession(agentId: string, entryId: string): Promise<unknown>;
 	sendUIResponse(
@@ -446,17 +448,19 @@ export class SessionRuntimeCoordinator {
 		level: string,
 	): Promise<SessionCommandResult<SessionTargetedValue<AgentRuntimeState>>> {
 		return this.runTargetCommand(target, async (agentId) => {
+			const state = await this.agents.setThinking(agentId, level);
+			const effectiveLevel = state.thinkingLevel ?? level;
 			await this.catalog.update(target.sessionId, {
-				thinkingLevel: level,
+				thinkingLevel: effectiveLevel,
 				updatedAt: Date.now(),
 			});
-			await this.agents.setThinking(agentId, level);
 			void this.logger?.info("session-runtime", "Runtime thinking changed", {
 				sessionId: target.sessionId,
 				agentId,
-				level,
+				requestedLevel: level,
+				effectiveLevel,
 			});
-			return this.agents.getRuntimeState(agentId);
+			return state;
 		});
 	}
 
@@ -864,7 +868,8 @@ export class SessionRuntimeCoordinator {
 			if (!currentTab) {
 				return this.unknownDelivery(input, "Session runtime stopped during prompt dispatch");
 			}
-			if (currentTab.sessionPath && !this.catalog.get(input.sessionId)?.noSession) {
+			const noSession = this.catalog.get(input.sessionId)?.noSession;
+			if (currentTab.sessionPath && !noSession) {
 				// Prompt acceptance is the latency-sensitive boundary. Catalog persistence is
 				// recovery metadata and must not keep the composer in a sending state; failures
 				// are intentionally isolated from the already accepted prompt.
@@ -873,6 +878,11 @@ export class SessionRuntimeCoordinator {
 					filePath: currentTab.sessionPath,
 					piSessionId: currentTab.sessionId,
 				}).catch(() => undefined);
+			} else if (result.accepted && !noSession) {
+				// Some Pi-compatible runtimes create their JSONL shortly after accepting the
+				// first prompt. Resolve it in the background, then attach the original draft
+				// Session so SessionCatalog can fold any scanner-created duplicate into it.
+				void this.attachDelayedSessionIdentity(lease).catch(() => undefined);
 			}
 			if (!this.isCurrentDispatchLease(lease)) {
 				return this.unknownDelivery(input, "Session runtime binding changed after prompt dispatch");
@@ -888,6 +898,24 @@ export class SessionRuntimeCoordinator {
 		} finally {
 			this.releaseDispatchLease(lease);
 		}
+	}
+
+	private async attachDelayedSessionIdentity(lease: DispatchLease): Promise<void> {
+		const tab = await this.agents.refreshSessionIdentity(lease.agentId);
+		const binding = this.getRuntimeBinding(lease.agentId);
+		if (
+			!tab.sessionPath ||
+			tab.noSession ||
+			!binding ||
+			binding.sessionId !== lease.sessionId ||
+			binding.runtimeGeneration !== lease.runtimeGeneration ||
+			this.agentIdBySession.get(lease.sessionId) !== lease.agentId
+		) return;
+		await this.catalog.attachRuntime({
+			sessionId: lease.sessionId,
+			filePath: tab.sessionPath,
+			piSessionId: tab.sessionId,
+		});
 	}
 
 	private ensureRuntime(sessionId: string): Promise<AgentTab> {
@@ -997,7 +1025,13 @@ export class SessionRuntimeCoordinator {
 			await this.agents.setModel(agentId, entry.model.provider, entry.model.modelId);
 		}
 		if (entry.thinkingLevel) {
-			await this.agents.setThinking(agentId, entry.thinkingLevel);
+			const state = await this.agents.setThinking(agentId, entry.thinkingLevel);
+			if (state.thinkingLevel && state.thinkingLevel !== entry.thinkingLevel) {
+				await this.catalog.update(entry.id, {
+					thinkingLevel: state.thinkingLevel,
+					updatedAt: Date.now(),
+				});
+			}
 		}
 	}
 

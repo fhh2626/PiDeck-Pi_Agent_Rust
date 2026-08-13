@@ -14,6 +14,8 @@ export type PiPromptTemplateSummary = {
 export type PiPromptTemplateListResult = {
 	templates: PiPromptTemplateSummary[];
 	globalDir: string;
+	/** 是否存在被用户删除、可通过「找回默认模板」恢复的内置项 */
+	hasHiddenBuiltins: boolean;
 };
 
 export type CreatePiPromptTemplateInput = {

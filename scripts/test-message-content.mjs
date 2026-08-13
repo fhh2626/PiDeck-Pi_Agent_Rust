@@ -6,16 +6,16 @@ const require = createRequire(import.meta.url);
 const ts = require("typescript");
 const source = readFileSync(new URL("../src/main/pi/messageContent.ts", import.meta.url), "utf8");
 const functionSource = source
-	.replace(/import \{ stripFeishuDocActionHint \} from "\.\.\/feishu\/docActions";\n\n/, "")
-	.replace(/export function extractMessageText/, "function extractMessageText");
+	.replace(/import \{ stripHostInstruction \} from "\.\/hostInstruction";\n\n/, "")
+	.replace(/export function /g, "function ");
 const compiled = ts.transpileModule(functionSource, {
 	compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const stripFeishuDocActionHint = (text) => text;
+const stripHostInstruction = (text) => text;
 const extractMessageText = new Function(
-	"stripFeishuDocActionHint",
+	"stripHostInstruction",
 	`${compiled}\nreturn extractMessageText;`,
-)(stripFeishuDocActionHint);
+)(stripHostInstruction);
 
 const fragmentedGlmContent = [
 	{ type: "text", text: "你好！" },

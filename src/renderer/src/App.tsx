@@ -184,7 +184,7 @@ export function App() {
             <path fill="url(#root-loading-logo-silver)" d="M517.36 400H634.72V634.72H517.36Z" />
           </svg>
         </div>
-        <strong>PiDeck</strong>
+        <strong>PiDeck-Q</strong>
         <span>{t("app.preloadMissing")}</span>
       </div>
     );
@@ -494,6 +494,9 @@ export function App() {
     language: "system",
     startupWindowMode: "last",
     piEnvironmentChecked: false,
+    piRuntimePreference: "auto",
+    piTypescriptPath: "",
+    piRustPath: "",
     sessionTabOpenMode: "preview",
     enableGitManagement: true,
     gitCommitMessagePrompt: "请根据以下 git diff 生成一条中文 git commit message。\n\n变更描述：\n{diff}\n\nGitmoji 对应关系：\n✨ feat - 新功能\n🐛 fix - Bug 修复\n📚 docs - 文档更新\n💎 style - 代码格式\n♻️ refactor - 重构\n🧪 test - 测试\n🔧 chore - 构建/工具",
@@ -522,7 +525,6 @@ export function App() {
     wslEnabled: false,
     wslDistro: "Ubuntu",
     wslUser: "root",
-    telemetryEnabled: true,
     webServiceEnabled: false,
     webServiceHost: "0.0.0.0",
     webServicePort: 8765,
@@ -534,13 +536,6 @@ export function App() {
     maxEditorFileSizeMB: 5,
     externalEditors: createDefaultExternalEditorSettings(),
 
-    // 桌面宠物默认关闭：关闭后应用与现状完全一致，零回归
-    petEnabled: false,
-    petId: "clawd",
-    petAlwaysOnTop: true,
-    petScale: 0.8,
-    petPatrolEnabled: true,
-    petPatrolPauseMin: 5,
     favoriteModels: [],
 
     // 字体配置：与 main SettingsStore 默认值保持一致，避免启动时闪烁
@@ -554,6 +549,7 @@ export function App() {
     fontFamilyMono: "system-mono",
     fontFamilyMonoCustom: "",
     removedBuiltInExtensions: [],
+    hiddenBuiltinPromptNames: [],
     disableUpdateCheck: false,
     piRpcOffline: true,
     piRpcNoExtensions: false,
@@ -1370,6 +1366,9 @@ export function App() {
       if (!next.piEnvironmentChecked) {
         // 首次检测延后一帧启动,先让主界面完成绘制,避免 packaged app 打开时出现几秒白屏。
         window.setTimeout(() => void piUpdate.checkPiInstall("startup"), 300);
+      } else {
+        // 后续启动静默重检，自动发现 PATH/版本变化，同时不打扰用户。
+        window.setTimeout(() => void piUpdate.refreshPiStatus(), 300);
       }
       if (!next.disableUpdateCheck) {
         window.setTimeout(() => void piUpdate.checkPiCliUpdateOnStartup(), 1200);
@@ -2254,6 +2253,13 @@ export function App() {
         if (activeProjectId) {
           void refreshProjectSessions(activeProjectId, true).catch(() => undefined);
         }
+      }
+      if (
+        "piRuntimePreference" in patch ||
+        "piTypescriptPath" in patch ||
+        "piRustPath" in patch
+      ) {
+        void api.pi.check().then((next) => setPiStatus(next)).catch(() => undefined);
       }
       showToast(notice);
     } catch (error) {

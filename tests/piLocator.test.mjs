@@ -17,6 +17,15 @@ function loadPiLocatorModule(platform = process.platform) {
 			target: ts.ScriptTarget.ES2022,
 		},
 	});
+	const compatibility = (() => {
+		const source = readFileSync("src/shared/piCompatibility.ts", "utf8");
+		const { outputText } = ts.transpileModule(source, {
+			compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+		});
+		const module = { exports: {} };
+		vm.runInNewContext(outputText, { module, exports: module.exports }, { filename: "piCompatibility.ts" });
+		return module.exports;
+	})();
 	const sandbox = {
 		Buffer,
 		TextDecoder,
@@ -30,6 +39,7 @@ function loadPiLocatorModule(platform = process.platform) {
 			if (id === "electron") {
 				return { app: { getPath: () => tmpdir() } };
 			}
+			if (id === "../../shared/piCompatibility") return compatibility;
 			return require(id);
 		},
 	};
@@ -37,6 +47,7 @@ function loadPiLocatorModule(platform = process.platform) {
 	vm.runInNewContext(outputText, sandbox, {
 		filename: "PiLocator.ts",
 	});
+	sandbox.exports.detectPiRuntimeKind = compatibility.detectPiRuntimeKind;
 	return sandbox.exports;
 }
 
@@ -103,4 +114,24 @@ test("places an explicit WSL cwd before the pi command", () => {
 		["-d", "Ubuntu-24.04", "-u", "root", "--cd", "/root/ba cli", "pi", "--mode", "rpc"],
 	);
 	assert.equal(invocation.wsl.distro, "Ubuntu-24.04");
+});
+
+test("classifies the original and Rust version formats", () => {
+	const { detectPiRuntimeKind } = loadPiLocatorModule("darwin");
+	assert.equal(detectPiRuntimeKind("0.84.1"), "typescript");
+	assert.equal(detectPiRuntimeKind("pi 0.2.0 (unknown abc)"), "rust");
+	assert.equal(detectPiRuntimeKind("development build"), "unknown");
+});
+
+test("explicit runtime paths override the generic PATH command", () => {
+	const { PiLocator } = loadPiLocatorModule("darwin");
+	const locator = new PiLocator();
+	assert.equal(
+		locator.resolveCommand(undefined, false, undefined, undefined, "typescript", "/opt/pi-ts", "/opt/pi-rust"),
+		"/opt/pi-ts",
+	);
+	assert.equal(
+		locator.resolveCommand(undefined, false, undefined, undefined, "rust", "/opt/pi-ts", "/opt/pi-rust"),
+		"/opt/pi-rust",
+	);
 });

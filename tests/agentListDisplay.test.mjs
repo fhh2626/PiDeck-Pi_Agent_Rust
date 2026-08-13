@@ -187,6 +187,38 @@ test("groups Pi child sessions under a parent using normalized paths", () => {
 	assert.equal(display.children[0].piSubagents[0].name, "Worker");
 });
 
+test("keeps a Rust branched child out of the top-level Agent list", () => {
+	const { getProjectAgentSessionDisplay } = loadModule();
+	const parentPath = "C:\\Users\\Dev\\.pi\\agent\\sessions\\parent.jsonl";
+	const childPath = "C:\\Users\\Dev\\.pi\\agent\\sessions\\rust-child.jsonl";
+	const display = getProjectAgentSessionDisplay({
+		agents: [{
+			id: "rust-child-runtime",
+			projectId: "p1",
+			cwd: "C:\\project",
+			title: "Rust child",
+			status: "running",
+			sessionPath: childPath,
+			createdAt: 20,
+		}],
+		sessions: [
+			session({ filePath: parentPath, name: "Parent", source: "pi", updatedAt: 10 }),
+			session({
+				filePath: childPath,
+				name: "Rust child",
+				source: "pi",
+				updatedAt: 12,
+				parentSessionPath: parentPath,
+			}),
+		],
+		visibleChildCount: 5,
+	});
+
+	assert.equal(display.children.length, 1);
+	assert.equal(display.children[0].session.name, "Parent");
+	assert.equal(display.children[0].piSubagents.length, 1);
+});
+
 test("keeps a started Pi child session nested under its parent without a duplicate top-level agent", () => {
 	const { getAgentForSessionPath, getProjectAgentSessionDisplay } = loadModule();
 	const parentPath = "C:\\Users\\Dev\\.pi\\agent\\sessions\\parent.jsonl";

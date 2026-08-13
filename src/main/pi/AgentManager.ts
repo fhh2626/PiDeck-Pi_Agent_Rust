@@ -85,6 +85,8 @@ import {
 /** 项目信任确认弹窗的用户选择 */
 export type ProjectTrustChoice = "trust-remember" | "trust-session" | "deny";
 
+const SESSION_IDENTITY_RETRY_DELAYS_MS: readonly number[] = [0, 50, 100, 200];
+
 /** 从 RPC 返回的未知 ask 记录中安全读取字段，避免批量答案转换扩散 any 强转。 */
 function readAskField(input: unknown, key: string): unknown {
 	if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
@@ -183,6 +185,10 @@ export class AgentManager {
 	 * 这补偿了 Pi 在某些边缘情况下不发送 agent_settled 导致动画永久卡住的问题。
 	 */
 	private static readonly AGENT_SETTLED_TIMEOUT_MS = 5000;
+	/** pi_agent_rust currently emits sessionId-bearing agent_end without agent_settled. */
+	private static readonly RUST_AGENT_SETTLED_TIMEOUT_MS = 250;
+	/** Runtime kind observed from the lifecycle event shape; cleared with the Agent. */
+	private readonly rustRuntimeAgents = new Set<string>();
 	/**
 	 * 超过该大小的历史会话跳过 get_messages RPC，改为直接从 JSONL 文件尾部读取最近 N 条消息。
 	 * pi 当前不支持 limit/cursor，40MB JSONL 会以单行大 JSON 返回，主进程 JSON.parse 会短暂冻结整个应用。
@@ -206,10 +212,8 @@ export class AgentManager {
 	 * 若完整存入 ChatMessage.meta 并随流式 emit 反复全量传输，会显著放大 IPC payload
 	 * 并推高渲染进程内存，是大会话白屏的重要诱因。超长结果保留首尾各一部分，中间省略。
 	 */
-	/** 本地事件监听器（用于 FeishuBridge 等主进程内部订阅） */
+	/** 本地事件监听器（用于 Web SSE 等主进程内部订阅） */
 	private readonly localEventListeners = new Set<(agentId: string, event: unknown) => void>();
-	/** 状态变更监听器（用于 PetStateBridge 等主进程内部模块订阅 AgentTab[] 聚合状态） */
-	private readonly stateListeners = new Set<(tabs: AgentTab[]) => void>();
 	/** 主进程内部观察所有 renderer 输出，用于增量桥接 session-addressed 事件。 */
 	private readonly outputListeners = new Set<(channel: string, payload: unknown) => void>();
 	/** 开启了 RPC 日志记录的 agent id 集合 */
@@ -287,8 +291,6 @@ export class AgentManager {
 	private readonly pendingUIRequests = new Map<string, Map<string, { method: string; title: string }>>();
 	/** abort 时正在等待 ask_question 响应的 agent，用于在工具结果中覆写 answer 为 null。 */
 	private readonly abortedDuringAsk = new Set<string>();
-	/** 成功空闲（settled）回调：供 PetStateBridge 等主进程内部模块订阅，携带完成 Agent 身份。 */
-	private readonly settledListeners = new Set<(info: { agentId: string; title: string }) => void>();
 	/** 已发送 ask 系统通知的 agent；新一轮 run（agent_start）时清除，避免同一轮多次提问刷屏。 */
 	private readonly notifiedAskAgents = new Set<string>();
 	/** 待处理的项目信任确认请求。key 为 requestId，用于在 Agent 启动前等待用户的信任决策。 */
@@ -326,12 +328,6 @@ export class AgentManager {
 		 * 该行会让 pi 拒绝加载会话并 exit 1，见 #114）。由 main/index.ts 装配 SessionScanner 实现。
 		 */
 		private readonly repairSessionFile?: (sessionPath: string) => Promise<boolean>,
-		/**
-		 * 会话是否已绑定飞书（key = SessionRecord.id）。
-		 * 由 main/index.ts 注入 FeishuBridge.hasSessionBinding 查询；
-		 * 命中时 PiProcess 注入 PIDECK_FEISHU_LINKED，ask_question 扩展切换为禁用提示版。
-		 */
-		private readonly isFeishuSession?: (sessionKey: string | undefined) => boolean,
 	) {
 		this.messageProjector = new AgentMessageProjector({
 			translate: this.translate,
@@ -381,9 +377,6 @@ export class AgentManager {
 			// 会话身份 = PiDeck 会话 key（SessionRecord.id，UUID 或旧版文件路径），扩展按它解析等级覆盖；
 			// 匿名会话（noSession）无 key，扩展仅用全局默认等级。
 			securitySessionId: securitySessionKey ?? sessionPath,
-			// 飞书绑定会话：ask_question 禁用（扩展读 PIDECK_FEISHU_LINKED）。
-			// 查询用与 securitySessionId 相同的会话 key，保证与 FeishuBridge 的 sessionId 索引一致。
-			feishuLinked: this.isFeishuSession?.(securitySessionKey ?? sessionPath) ?? false,
 			securitySnapshotPath: this.securityStore?.getSnapshotPath(),
 			// 预检修复：全部 spawn 路径（create/reattach/withTemporarySession）都在 start() 内生效。
 			repairSessionFileBeforeStart: this.repairSessionFile,
@@ -445,6 +438,50 @@ export class AgentManager {
 
 	getMessages(agentId: string) {
 		return this.messages.get(agentId) ?? [];
+	}
+
+	/**
+	 * 补取 Pi 延迟创建的持久会话身份。
+	 *
+	 * 原版 Pi 通常在进程启动后的首个 get_state 就返回 sessionFile；部分兼容实现
+	 * 会在首条 prompt 被接受后才异步创建 JSONL。这里使用同一条 stdio RPC 通道做
+	 * 短时、有界重试，让上层能把草稿 Session 绑定到实际文件并复用目录去重逻辑。
+	 */
+	async refreshSessionIdentity(agentId: string): Promise<AgentTab> {
+		const runtime = this.requireRuntime(agentId);
+		if (runtime.tab.noSession || runtime.tab.sessionPath) return runtime.tab;
+
+		for (const delayMs of SESSION_IDENTITY_RETRY_DELAYS_MS) {
+			if (delayMs > 0) {
+				await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+			}
+			if (this.agents.get(agentId) !== runtime || !runtime.process.isRunning()) break;
+
+			const response = await runtime.process.client
+				.request({ type: "get_state" }, Math.min(this.rpcTimeoutMs, 2_000))
+				.catch(() => ({ success: false, data: undefined }));
+			if (!response.success) continue;
+			const data = response.data as
+				| { sessionId?: string; sessionFile?: string; sessionName?: string }
+				| undefined;
+			const sessionPath = this.normalizeSessionPathFromPi(
+				data?.sessionFile,
+				this.getProject(runtime.tab.projectId)?.path ?? runtime.tab.cwd,
+				runtime.tab.sessionEnvironment ?? "native",
+			);
+			runtime.tab.sessionId = data?.sessionId ?? runtime.tab.sessionId;
+			if (data?.sessionName) runtime.tab.title = data.sessionName;
+			if (!sessionPath) continue;
+
+			runtime.tab.sessionPath = sessionPath;
+			this.emitState();
+			void this.appLogger?.info("agent", "Delayed session identity resolved", {
+				agentId,
+				sessionPath,
+			});
+			break;
+		}
+		return runtime.tab;
 	}
 
 	/**
@@ -1580,7 +1617,7 @@ export class AgentManager {
 		this.flushMessageEmit(agentId);
 		this.finishThinkingChannel(agentId);
 		this.activeAssistantMessageIds.delete(agentId);
-		this.streamingAgents.delete(agentId);
+		this.setStreamingAgent(agentId, false);
 		this.textEmitter.cancel(agentId);
 		this.streamingText.delete(agentId);
 		const hadActiveTool = Boolean(
@@ -1593,7 +1630,7 @@ export class AgentManager {
 		// abort 直接清本地工具状态时必须同步发送 false 边沿，
 		// 否则 renderer 可能只收到 idle，却继续保留旧的工具 spinner。
 		if (hadActiveTool) this.emitToolRuntimeTransition(agentId, false);
-		// 同步清除 streaming 标志，避免停止后“正在工具调用/正在回应”延迟到 settled 才消失。
+		// 工具边沿不含 isStreaming；abort 后必须再发一次关边沿，避免 spinner 残。
 		this.emitStreamingStatePatch(agentId);
 		// 取消节流中的 message 推送，避免 abort 后还有 pending flush 把旧内容刷回 UI。
 		this.cancelMessageEmit(agentId);
@@ -1635,7 +1672,9 @@ export class AgentManager {
 
 		try {
 			const response = await runtime.process.client.request(
-				trimmedPrompt ? { type: "compact", prompt: trimmedPrompt } : { type: "compact" },
+				trimmedPrompt
+					? { type: "compact", customInstructions: trimmedPrompt }
+					: { type: "compact" },
 				120_000,
 			);
 			void this.appLogger?.info("agent", "Compact RPC response received", {
@@ -2096,12 +2135,15 @@ export class AgentManager {
 		return this.getRuntimeState(agentId);
 	}
 
-	async setThinking(agentId: string, level: string) {
+	async setThinking(agentId: string, level: string): Promise<AgentRuntimeState> {
 		const runtime = this.requireRuntime(agentId);
-		await runtime.process.client.request(
+		const response = await runtime.process.client.request(
 			{ type: "set_thinking_level", level },
 			60_000,
 		);
+		if (!response.success) {
+			throw new Error(response.error ?? `Failed to set thinking level: ${level}`);
+		}
 		this.emitState();
 		return this.getRuntimeState(agentId);
 	}
@@ -2359,12 +2401,13 @@ export class AgentManager {
 	private clearAgentState(agentId: string) {
 		this.streamingThinking.delete(agentId);
 		this.thinkingSegmentByAgent.delete(agentId);
-		this.streamingAgents.delete(agentId);
+		this.setStreamingAgent(agentId, false);
 		this.activeAssistantMessageIds.delete(agentId);
 		this.toolMessageIds.delete(agentId);
 		this.retryStatusMessageIds.delete(agentId);
 		this.streamingText.delete(agentId);
 		this.rpcCompactingAgents.delete(agentId);
+		this.rustRuntimeAgents.delete(agentId);
 		this.autoRestartAttempted.delete(agentId);
 		this.messagePerfByAgent.delete(agentId);
 		this.lastPerfByAgent.delete(agentId);
@@ -2674,7 +2717,7 @@ export class AgentManager {
 		this.emitState();
 	}
 
-	/** 注册本地事件监听器（供 FeishuBridge 等主进程内部模块使用） */
+	/** 注册本地事件监听器（供 Web SSE 等主进程内部模块使用） */
 	addLocalEventListener(listener: (agentId: string, event: unknown) => void): () => void {
 		this.localEventListeners.add(listener);
 		return () => { this.localEventListeners.delete(listener); };
@@ -2683,34 +2726,6 @@ export class AgentManager {
 	onOutput(listener: (channel: string, payload: unknown) => void): () => void {
 		this.outputListeners.add(listener);
 		return () => this.outputListeners.delete(listener);
-	}
-
-	/** 注册状态变更监听器（供 PetStateBridge 等主进程内部模块使用）；每次 emitState 后同步回调最新 AgentTab[] */
-	addStateListener(listener: (tabs: AgentTab[]) => void): () => void {
-		this.stateListeners.add(listener);
-		return () => { this.stateListeners.delete(listener); };
-	}
-
-	/**
-	 * 注册「Agent 成功空闲」监听器（供 PetStateBridge 等主进程内部模块使用）。
-	 * 仅在 agent_settled 成功路径或 get_state 兜底确认无工作后触发，
-	 * abort / 自动重试 / 压缩 / agent_end 都不会触发 —— 这些都不是可靠的完成点。
-	 */
-	onAgentSettled(listener: (info: { agentId: string; title: string }) => void): () => void {
-		this.settledListeners.add(listener);
-		return () => { this.settledListeners.delete(listener); };
-	}
-
-	private notifyAgentSettled(agentId: string, title: string) {
-		for (const listener of this.settledListeners) {
-			try { listener({ agentId, title }); } catch {}
-		}
-	}
-
-	private notifyStateListeners(tabs: AgentTab[]) {
-		for (const listener of this.stateListeners) {
-			try { listener(tabs); } catch {}
-		}
 	}
 
 	stopAll() {
@@ -3075,7 +3090,7 @@ export class AgentManager {
 	}
 
 	private handlePiEvent(agentId: string, event: unknown) {
-		// 通知本地监听器（FeishuBridge 等主进程内部订阅）
+		// 通知本地监听器（Web SSE 等主进程内部订阅）
 		for (const listener of this.localEventListeners) {
 			try { listener(agentId, event); } catch {}
 		}
@@ -3100,6 +3115,10 @@ export class AgentManager {
 		}
 
 		if (typed.type === "agent_start" && runtime) {
+			// Rust's lifecycle events carry sessionId and do not emit agent_settled.
+			// Remember the runtime from the reliable start event; agent_end payloads
+			// are intentionally normalized differently in Rust's RPC serializer.
+			if (typeof typed.sessionId === "string") this.rustRuntimeAgents.add(agentId);
 			// agent_start 表示一轮新的 agent run 开始：
 			// 1) 清理 recentlyAborted，允许状态机恢复 running
 			// 2) 推进 stream generation，解封流式闸门（唯一合法解封点）
@@ -3120,7 +3139,7 @@ export class AgentManager {
 				return;
 			}
 			this.beginAssistantMessage(agentId);
-			this.streamingAgents.add(agentId);
+			this.setStreamingAgent(agentId, true);
 			// 性能计时起表（幂等：message_update start 先到则不重置）。
 			// 顶层 message_start 是 mock/pi 均走的确定路径，不能只依赖 delta 事件。
 			this.ensurePerfTimer(agentId);
@@ -3159,7 +3178,7 @@ export class AgentManager {
 
 		// 自动/手动压缩事件（pi 在自动或手动压缩完成后会发出这些事件），
 		// 用于记录压缩耗时和结果，便于排查压缩性能问题。
-		if (typed.type === "compaction_start") {
+		if (typed.type === "compaction_start" || typed.type === "auto_compaction_start") {
 			this.rpcCompactingAgents.add(agentId);
 			// 用户已主动中止或出错时不重新激活 running 状态
 			if (runtime && !this.recentlyAborted.has(agentId) && runtime.tab.status !== "error") {
@@ -3174,7 +3193,7 @@ export class AgentManager {
 				reason: typed.reason,
 			});
 		}
-		if (typed.type === "compaction_end") {
+		if (typed.type === "compaction_end" || typed.type === "auto_compaction_end") {
 			this.rpcCompactingAgents.delete(agentId);
 			if (runtime) {
 				// compaction 会向 session JSONL 写入新的边界记录；立即重载消息，
@@ -3204,7 +3223,7 @@ export class AgentManager {
 			// 或压缩后继续 queued follow-up。最终空闲必须等 agent_settled，避免中途误判 idle。
 			if (runtime) {
 				this.activeAssistantMessageIds.delete(agentId);
-				this.streamingAgents.delete(agentId);
+				this.setStreamingAgent(agentId, false);
 				this.toolMessageIds.delete(agentId);
 				this.textEmitter.cancel(agentId);
 				this.streamingText.delete(agentId);
@@ -3252,11 +3271,11 @@ export class AgentManager {
 						"running",
 					);
 				}
-				// 重试中保持 running，不能误置为 idle/error，否则宠物聚合状态会提前转 done/failed
+				// 重试中保持 running，避免侧栏和会话状态提前显示为完成或失败。
 				if (runtime) runtime.tab.status = "running";
 			} else if (errorMsg) {
 				this.addDetailedErrorMessage(agentId, String(errorMsg));
-				// 有错误且不会重试 → Agent 进入 error 态，宠物聚合为 failed（行5），
+				// 有错误且不会重试时，Agent 才进入 error 态，
 				// 否则会被误置为 idle 触发"所有任务完成"通知
 				if (runtime) runtime.tab.status = "error";
 			} else if (
@@ -3274,9 +3293,10 @@ export class AgentManager {
 			// 兜底：如果 Pi 由于某些边缘情况未发送 agent_settled，
 			// 定时查询 get_state 确认是否已无工作可做，避免 UI 动画永久卡住。
 			// agent_settled 正常触发时 markIdleIfPiReportsNoWork 会因 status!=="running" 提前返回。
+			const rustSettledFallback = this.rustRuntimeAgents.has(agentId);
 			const settledTimer = setTimeout(() => {
 				void this.markIdleIfPiReportsNoWork(agentId);
-			}, AgentManager.AGENT_SETTLED_TIMEOUT_MS);
+			}, rustSettledFallback ? AgentManager.RUST_AGENT_SETTLED_TIMEOUT_MS : AgentManager.AGENT_SETTLED_TIMEOUT_MS);
 			settledTimer.unref?.();
 		}
 
@@ -3303,7 +3323,7 @@ export class AgentManager {
 				this.trimRuntimeCache(agentId);
 				this.finishThinkingChannel(agentId);
 				this.activeAssistantMessageIds.delete(agentId);
-				this.streamingAgents.delete(agentId);
+				this.setStreamingAgent(agentId, false);
 				this.toolMessageIds.delete(agentId);
 				this.textEmitter.cancel(agentId);
 				this.streamingText.delete(agentId);
@@ -3320,8 +3340,6 @@ export class AgentManager {
 				if (lastMessage?.role === "assistant" && !isAbortSettled) {
 					this.notifySessionEnd(agentId, runtime.tab.title);
 				}
-				// 成功空闲（settled）后才算完成：通知宠物等内部模块携带标题，供「{title} 已完成」气泡使用。
-				if (!isAbortSettled) this.notifyAgentSettled(agentId, runtime.tab.title);
 			}
 		}
 
@@ -3354,7 +3372,7 @@ export class AgentManager {
 			// 结算性能指标（幂等：message_update done 先结算则 map 已删，直接返回）
 			this.settleMessagePerf(agentId, typed.message);
 			// 终结 Live 正文通道（顶层 message_end 不经 handleAssistantMessageEvent）
-			this.streamingAgents.delete(agentId);
+			this.setStreamingAgent(agentId, false);
 			const finalText = this.streamingText.get(agentId);
 			if (finalText !== undefined) {
 				this.textEmitter.flush(agentId);
@@ -3362,7 +3380,6 @@ export class AgentManager {
 			}
 			this.textEmitter.cancel(agentId);
 			this.streamingText.delete(agentId);
-			this.emitStreamingStatePatch(agentId);
 		}
 
 		if (typed.type === "tool_execution_start") {
@@ -3713,7 +3730,7 @@ export class AgentManager {
 
 		if (eventType === "start" || eventType === "message_start") {
 			this.beginAssistantMessage(agentId);
-			this.streamingAgents.add(agentId);
+			this.setStreamingAgent(agentId, true);
 			// 性能计时起表（幂等：顶层 message_start 先到则不重置）
 			this.ensurePerfTimer(agentId);
 			// 允许空正文骨架：Live 正文走独立通道，TurnRow 需要 History 挂载点。
@@ -3723,14 +3740,14 @@ export class AgentManager {
 		}
 
 		if (eventType === "text_start" || eventType === "text_end") {
-			this.streamingAgents.add(agentId);
+			this.setStreamingAgent(agentId, true);
 			// 仅在已有骨架上同步 partial；空文本不新建、不刷 timeline。
 			this.upsertAssistantMessage(agentId, partialMessage);
 			return;
 		}
 
 		if (eventType === "text_delta") {
-			this.streamingAgents.add(agentId);
+			this.setStreamingAgent(agentId, true);
 			this.markFirstDelta(agentId);
 			this.markFirstText(agentId);
 			const delta = String(assistantEvent.delta ?? "");
@@ -3754,7 +3771,7 @@ export class AgentManager {
 			const next = prev + delta;
 			this.streamingThinking.set(agentId, next);
 			this.thinkingEmitter.push(agentId, stripAnsi(next));
-			this.streamingAgents.add(agentId);
+			this.setStreamingAgent(agentId, true);
 			// Live 思考唯一热路径：不 upsert messages，避免 50ms timeline 重组。
 			return;
 		}
@@ -3782,7 +3799,7 @@ export class AgentManager {
 			this.flushMessageEmit(agentId);
 			this.finishThinkingChannel(agentId);
 			this.activeAssistantMessageIds.delete(agentId);
-			this.streamingAgents.delete(agentId);
+			this.setStreamingAgent(agentId, false);
 			// 独立流式正文通道终止：推一次最终累积文本后清缓冲（渲染层由历史消息接管）
 			const finalText = this.streamingText.get(agentId);
 			if (finalText !== undefined) {
@@ -4632,8 +4649,6 @@ export class AgentManager {
 		this.streamingText.delete(agentId);
 		this.emitState();
 		void this.emitRuntimeState(agentId);
-		// 兜底确认无工作也算成功空闲：与 agent_settled 一样通知完成（PetStateBridge 侧有去重冷却）。
-		this.notifyAgentSettled(agentId, runtime.tab.title);
 	}
 
 	private requireRuntime(agentId: string) {
@@ -4722,7 +4737,7 @@ export class AgentManager {
 
 	/**
 	 * 聚焦主窗口并让渲染进程切换到指定会话。
-	 * 复用 pet:focus-agent-target 通道（renderer 的 workspace chrome 监听后切到对应 project + session tab）；
+	 * 通过通用会话聚焦通道通知 renderer 切到对应 project + session tab；
 	 * sessionId 缺省（运行时尚未绑定会话）时只聚焦窗口，不做跳转。
 	 */
 	private focusMainWindowForSession(sessionId?: string) {
@@ -4736,7 +4751,7 @@ export class AgentManager {
 			if (!win.isVisible()) win.show();
 			win.focus();
 			if (sessionId) {
-				win.webContents.send(ipcChannels.petFocusAgentTarget, { sessionId });
+				win.webContents.send(ipcChannels.appFocusSessionTarget, { sessionId });
 			}
 		} catch (error) {
 			// 聚焦失败不影响主流程，静默处理
@@ -4942,9 +4957,18 @@ export class AgentManager {
 			}
 		}
 		this.emit(ipcChannels.agentsMessage, payload);
-		// 消息 flush 时顺带同步本地流式标志：text_delta 置位 streamingAgents 后，
-		// 渲染进程必须及时拿到 isStreaming=true 才会走逐字渐显；此路径 50ms 节流、
-		// 无 RPC（不发 get_state），不会像 emitRuntimeState 那样在高频 delta 下过重。
+	}
+
+	/** 只在 isStreaming 边沿写 Set 并推轻量补丁；热路径重复 add/delete 不再打 runtime。 */
+	private setStreamingAgent(agentId: string, streaming: boolean) {
+		const wasStreaming = this.streamingAgents.has(agentId);
+		if (streaming) {
+			if (wasStreaming) return;
+			this.streamingAgents.add(agentId);
+		} else {
+			if (!wasStreaming) return;
+			this.streamingAgents.delete(agentId);
+		}
 		this.emitStreamingStatePatch(agentId);
 	}
 
@@ -5054,20 +5078,14 @@ export class AgentManager {
 
 	/** 推送独立流式正文通道（agents:text-stream），渲染层写入 streamingTextByIdAtom。
 	 *  done=true 表示本轮回答结束（message_end），渲染层据此把 streaming 置 false。
-	 *  顺带同步 isStreaming 补丁：text_delta 走独立通道后不再触发 flushMessageEmit，
-	 *  若仍只在 flush 里推 patch，渲染层拿不到 isStreaming=true，气泡不会渲染。 */
+	 *  热路径不再附带 runtime patch：isStreaming 只在 setStreamingAgent 边沿推送。 */
 	private emitTextStreamNow(agentId: string, text: string, done = false) {
 		this.emit(ipcChannels.agentsTextStream, { agentId, text, done });
-		this.emitStreamingStatePatch(agentId);
 	}
 
 	private emitState() {
 		const tabs = this.list();
 		this.emit(ipcChannels.agentsState, tabs);
-		// 同步通知主进程内部状态订阅者（PetStateBridge），使宠物窗能拿到聚合状态。
-		// 设计文档原拟用 ipcMain.on("agents:state") 桥接是错的：webContents.send 是
-		// 主进程→渲染层单向通道，ipcMain 收不到主进程自己发出的消息，故改用本钩子。
-		this.notifyStateListeners(tabs);
 	}
 
 	private emit(channel: string, payload: unknown) {

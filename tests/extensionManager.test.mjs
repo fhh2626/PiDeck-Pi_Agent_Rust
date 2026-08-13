@@ -40,6 +40,9 @@ function loadExtensionManagerModule() {
       if (specifier === "../logging/sharedLogger") {
         return { getAppLogger: () => null };
       }
+      if (specifier === "../../shared/piCompatibility") {
+        return nodeRequire("../src/shared/piCompatibility.ts");
+      }
       return nodeRequire(specifier);
     },
     Promise,
@@ -85,6 +88,20 @@ test("a stale lightweight extension scan cannot overwrite a newer force refresh"
   assert.equal(await lightweightResult, fresh);
   assert.equal(await manager.list(false), fresh);
   assert.equal(await manager.list(true), fresh);
+});
+
+test("an explicit extension refresh bypasses a version-enriched cache", async () => {
+  const { ExtensionManager } = loadExtensionManagerModule();
+  const manager = new ExtensionManager({}, () => ({}));
+  let scans = 0;
+  manager.loadList = async (includeVersionInfo) => ({
+    extensions: [],
+    raw: `${includeVersionInfo}:${++scans}`,
+  });
+
+  assert.equal((await manager.list(true)).raw, "true:1");
+  assert.equal((await manager.list(false)).raw, "true:1");
+  assert.equal((await manager.list(true)).raw, "true:2");
 });
 
 test("uninstall removes a local extension and clears its stale disable entry", async () => {

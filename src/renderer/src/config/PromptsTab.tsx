@@ -32,6 +32,10 @@ export function PromptsTab(props: {
 	editSaving: boolean;
 	onRefresh: () => void;
 	onOpenRoot: () => void;
+	/** 是否存在可恢复的已删除内置模板 */
+	canRestoreBuiltins: boolean;
+	restoringBuiltins: boolean;
+	onRestoreBuiltins: () => void;
 	onChangeNewName: (value: string) => void;
 	onChangeNewDescription: (value: string) => void;
 	onCreate: () => void;
@@ -135,6 +139,14 @@ export function PromptsTab(props: {
 					</Button>
 					<Button variant="secondary" size="sm" onClick={props.onOpenRoot}>
 						{t("config.openFolder")}
+					</Button>
+					<Button
+						variant="secondary"
+						size="sm"
+						onClick={props.onRestoreBuiltins}
+						disabled={!props.canRestoreBuiltins || props.restoringBuiltins}
+					>
+						{props.restoringBuiltins ? t("common.loading") : t("config.restoreBuiltinPrompts")}
 					</Button>
 				</div>
 			</div>

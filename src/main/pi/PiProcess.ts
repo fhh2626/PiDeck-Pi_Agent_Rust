@@ -10,6 +10,7 @@ import {
   type ParkedExtension,
 } from "./piExtensionFilter";
 import type { AppSettings } from "../../shared/types";
+import { detectPiRuntimeKind, type PiRuntimeKind } from "../../shared/piCompatibility";
 import { toWindowsHostPath, toWslLinuxPath } from "../wsl/WslPaths";
 import { appendBuiltInExtensionArgs } from "../extensions/builtInExtensions";
 import { getAppLogger } from "../logging/sharedLogger";
@@ -20,6 +21,10 @@ type PiProcessSettings = Pick<
   | "piProxyUrl"
   | "piProxyBypass"
   | "customPiPath"
+  | "piInstall"
+  | "piRuntimePreference"
+  | "piTypescriptPath"
+  | "piRustPath"
   | "wslEnabled"
   | "wslDistro"
   | "wslUser"
@@ -53,14 +58,6 @@ type PiProcessOptions = {
    */
   securitySessionId?: string;
   /**
-   * 当前会话是否已绑定飞书（PIDECK_FEISHU_LINKED=1）。
-   * pi-deck-ask-question 扩展据此把 ask_question 换成禁用提示版：
-   * 飞书端交互卡片体验差（按钮截断/选项上限），agent 应把问题直接写进回复。
-   * 进程级标记，绑定发生在 runtime 启动前（FeishuBridge 先建 binding 再 activateRuntime），
-   * 因此 spawn 时判断可靠；绑定后已运行的会话需重启才生效（解绑后同样持续到重启）。
-   */
-  feishuLinked?: boolean;
-  /**
    * spawn pi 前对会话文件的预检/修复回调（如剔除旧版 PiDeck 私有 sessionName 头行，
    * 该行会让 pi 报 "Session file is not a valid pi session" 并 exit 1）。
    * 返回是否发生修复；抛错或未注入都不阻塞启动（pi 自身的加载错误更接近事实，留日志即可）。
@@ -70,7 +67,7 @@ type PiProcessOptions = {
 
 type VersionCacheEntry =
   | { status: "pending"; promise: Promise<boolean> }
-  | { status: "done"; ok: boolean; minorVersion: number | null };
+  | { status: "done"; ok: boolean; minorVersion: number | null; version?: string };
 
 export class PiProcess extends EventEmitter {
   private proc?: ChildProcessWithoutNullStreams;
@@ -88,8 +85,9 @@ export class PiProcess extends EventEmitter {
    * 检查次版本号是否 >= 79（当前 pi 版本为 0.x.y，次版本号对应第二段）。
    * 未来 pi 升级到 1.x+ 后需要同步更新此检查。
    */
-  private static versionSupportsTrustFlags(minorVersion: number | null): boolean {
+  private static versionSupportsTrustFlags(minorVersion: number | null, version?: string): boolean {
     if (minorVersion === null) return false;
+    if (version && detectPiRuntimeKind(version) === "rust") return false;
     return minorVersion >= 79;
   }
 
@@ -106,6 +104,9 @@ export class PiProcess extends EventEmitter {
       settings?.wslEnabled,
       settings?.wslDistro,
       settings?.wslUser,
+      settings?.piRuntimePreference,
+      settings?.piTypescriptPath,
+      settings?.piRustPath,
     );
     // 复用实例方法的缓存逻辑：构造临时实例只为调用 ensureVersionCheck。
     const probe = new PiProcess(process.cwd(), settings, locator);
@@ -213,11 +214,36 @@ export class PiProcess extends EventEmitter {
 
     // 信任确认由桌面端 AgentManager.ensureProjectTrust 在启动 pi 前完成，不再静默 --approve。
     // pi 在 RPC 模式下 project_trust 事件 hasUI 恒为 false，故信任弹窗由桌面端自行处理。
+    // 先解析命令，才能按已探测到的实现决定是否附加 TypeScript Pi 专有参数。
+    const command = this.locator.resolveCommand(
+      this.settings?.customPiPath,
+      this.settings?.wslEnabled,
+      this.settings?.wslDistro,
+      this.settings?.wslUser,
+      this.settings?.piRuntimePreference,
+      this.settings?.piTypescriptPath,
+      this.settings?.piRustPath,
+    );
+    const runtimeKind = await this.resolveRuntimeKind(command);
+    const requestedRuntime = this.settings?.piRuntimePreference;
+    if (
+      requestedRuntime &&
+      requestedRuntime !== "auto" &&
+      runtimeKind !== "unknown" &&
+      runtimeKind !== requestedRuntime
+    ) {
+      throw new Error(
+        `Selected Pi runtime is ${requestedRuntime}, but the resolved command is ${runtimeKind}. Configure the matching runtime path in Settings.`,
+      );
+    }
     const args = ["--mode", "rpc"];
     // RPC 无 TUI，不需要主题发现/加载；跳过可少扫用户/项目/package themes，加快冷启动。
     args.push("--no-themes");
-    // 桌面端模型列表来自本地 models.json；默认 --offline 跳过 pi 启动期模型目录网络刷新。
-    if (this.settings?.piRpcOffline !== false) args.push("--offline");
+    // 桌面端模型列表来自本地 models.json；TypeScript Pi 默认 --offline 跳过启动期网络刷新。
+    // pi_agent_rust 没有这个 CLI 参数；未知实现也走中立参数，避免误传导致启动失败。
+    if (this.settings?.piRpcOffline !== false && runtimeKind !== "rust" && runtimeKind !== "unknown") {
+      args.push("--offline");
+    }
     // 诊断开关：坏扩展/技能有时会拖垮 RPC 初始化；用户可在开发设置临时关闭后重试。
     if (this.settings?.piRpcNoExtensions) args.push("--no-extensions");
     if (this.settings?.piRpcNoSkills) args.push("--no-skills");
@@ -256,9 +282,6 @@ export class PiProcess extends EventEmitter {
     if (noSession) finalPiArgs.push("--no-session");
     if (sessionPath) finalPiArgs.push("--session", sessionPath);
 
-    // 用户手动指定的 pi 路径优先于自动检测，解决 npm global、nvm 等路径未在 PATH 中的问题
-    const command = this.locator.resolveCommand(this.settings?.customPiPath, this.settings?.wslEnabled, this.settings?.wslDistro, this.settings?.wslUser);
-
     // 信任覆盖：用 --approve/--no-approve 覆盖 pi 的 trustStore 决策（本次生效，不落盘）。
     // trust-session 用 --approve 让 pi 本次加载项目资源；deny 用 --no-approve 以不信任模式启动。
     // --approve/--no-approve 从 pi 0.79.0 开始支持。对老版本 pi 不传递这些参数，
@@ -266,7 +289,7 @@ export class PiProcess extends EventEmitter {
     if (trustOverride) {
       await this.ensureVersionCheck(command);
       const cached = PiProcess.versionCache.get(command);
-      if (cached?.status === "done" && PiProcess.versionSupportsTrustFlags(cached.minorVersion)) {
+      if (cached?.status === "done" && PiProcess.versionSupportsTrustFlags(cached.minorVersion, cached.version)) {
         if (trustOverride === "approve") finalPiArgs.push("--approve");
         else if (trustOverride === "no-approve") finalPiArgs.push("--no-approve");
       }
@@ -345,11 +368,6 @@ export class PiProcess extends EventEmitter {
         ? toWslLinuxPath(this.options.securitySessionId, { distro: this.settings?.wslDistro ?? "" })
         : this.options.securitySessionId;
     }
-    // 飞书绑定会话：ask_question 换成禁用提示版（扩展读取此标记，纯标志位无需路径转换）
-    if (this.options.feishuLinked) {
-      env.PIDECK_FEISHU_LINKED = "1";
-    }
-
     // 每个 agent 绑定独立 cwd，确保 pi 自己发现项目级 AGENTS.md、settings 和 session 分组。
     // 打包后的 Electron 不一定继承用户终端 PATH；这里补齐跨平台 Node 工具链常见 bin 目录，尽量让已安装 pi 的用户开箱即用。
     // Windows 下通过 PiLocator.createInvocation 显式包裹含空格的 npm shim 路径，避免 cmd 拆分路径导致 agent 启动失败。
@@ -470,7 +488,7 @@ export class PiProcess extends EventEmitter {
       }, (error, stdout) => {
         const ok = !error;
         const minorVersion = ok ? this.parseMinorVersion(stdout.trim()) : 0;
-        PiProcess.versionCache.set(command, { status: "done", ok, minorVersion });
+        PiProcess.versionCache.set(command, { status: "done", ok, minorVersion, version: stdout.trim() });
         this.piMinorVersion = minorVersion;
         if (this.diagnostics?.command === command) this.diagnostics.versionCheck = ok;
         this.emit("version-check", { ok, minorVersion });
@@ -479,6 +497,37 @@ export class PiProcess extends EventEmitter {
     });
     PiProcess.versionCache.set(command, { status: "pending", promise });
     return promise;
+  }
+
+  /**
+   * 返回当前 command 的实现类型。
+   * 自动模式没有缓存时使用中立参数以保持快速启动；显式选择某个实现时，
+   * 必须先完成一次 --version 探测，防止两个实现都叫 `pi` 时静默启动错误版本。
+   */
+  private async resolveRuntimeKind(command: string): Promise<PiRuntimeKind> {
+    const cached = PiProcess.versionCache.get(command);
+    if (cached?.status === "done" && cached.version) {
+      return detectPiRuntimeKind(cached.version);
+    }
+
+    const persisted = this.settings?.piInstall;
+    const wslParts = command.match(/^wsl:\/\/([^/]+)\/([^/]+)\/(.+)$/);
+    const expectedWslCommand = wslParts
+      ? `wsl -d ${wslParts[1]} -u ${wslParts[2]} ${wslParts[3]}`
+      : undefined;
+    const sameWslCommand = Boolean(expectedWslCommand && persisted?.command === expectedWslCommand);
+    if ((persisted?.command === command || sameWslCommand) && persisted?.runtimeKind) {
+      return persisted.runtimeKind;
+    }
+
+    if (this.settings?.piRuntimePreference && this.settings.piRuntimePreference !== "auto") {
+      await this.ensureVersionCheck(command);
+      const detected = PiProcess.versionCache.get(command);
+      if (detected?.status === "done" && detected.version) {
+        return detectPiRuntimeKind(detected.version);
+      }
+    }
+    return "unknown";
   }
 
   /**

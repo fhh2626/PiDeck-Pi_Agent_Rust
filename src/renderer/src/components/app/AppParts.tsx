@@ -458,12 +458,11 @@ export { PiLogoCanvas } from "./PiLogoCanvas";
 /** Brand lockup: pi 图标 + 全大写粗字标，沿用参考 Logo 的简洁无衬线视觉。 */
 export function BrandLockup(props: { replayToken?: number } = {}) {
 	return (
-		<div className="brand-lockup flex h-full min-w-0 items-center gap-2" aria-label="PiDeck">
+		<div className="brand-lockup flex h-full min-w-0 items-center gap-2" aria-label="PiDeck-Q">
 			<PiLogoCanvas size={28} autoPlay playOnClick replayToken={props.replayToken} />
 			{/* 视觉变形只作用于字标本身，品牌语义仍由外层 aria-label 保留。 */}
-			<span className="brand-wordmark translate-x-0.5 truncate text-[18px] font-[PiDeckDepartureMono] font-normal uppercase leading-none text-zinc-950 dark:text-white" aria-hidden="true">PiDeck</span>
+			<span className="brand-wordmark translate-x-0.5 truncate text-[18px] font-[PiDeckDepartureMono] font-normal uppercase leading-none text-zinc-950 dark:text-white" aria-hidden="true">PiDeck-Q</span>
 		</div>
 	);
 }
-
 

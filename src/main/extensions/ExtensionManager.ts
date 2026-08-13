@@ -9,6 +9,7 @@ import type { PiLocator } from "../pi/PiLocator";
 import { toWindowsHostPath, type WslEnvironment } from "../wsl/WslPaths";
 import type { MainProcessTranslationKey } from "../../shared/i18n/mainProcessCopy";
 import { BUILT_IN_EXTENSIONS } from "./builtInExtensions";
+import { detectPiRuntimeKind } from "../../shared/piCompatibility";
 
 export { BUILT_IN_EXTENSIONS } from "./builtInExtensions";
 
@@ -69,7 +70,10 @@ export class ExtensionManager {
 
 	/** 缓存的 pi 版本号，用于条件性传递 --no-approve。 */
 	private piVersion: string | null = null;
+	/** Pi 路径/运行时切换后，不能复用旧命令的版本判断。 */
+	private piVersionSettingsKey: string | null = null;
 	private piVersionPromise: Promise<string | null> | null = null;
+	private piVersionPromiseSettingsKey: string | null = null;
 
 	/**
 	 * 安装/卸载/开关后主动清缓存。
@@ -90,8 +94,9 @@ export class ExtensionManager {
 	 * - forceRefresh=true：强制重新 `pi list`，并补充 npm 版本信息。
 	 */
 	async list(forceRefresh = false): Promise<PiExtensionListResult> {
-		// 有缓存且（非强制刷新，或缓存已含版本信息）时直接返回。
-		if (this.listCache && (!forceRefresh || this.listCacheHasVersionInfo)) {
+		// 轻量读取优先复用缓存；显式强制刷新必须真正重扫并查询版本，
+		// 否则用户连续点击“刷新”只会反复看到旧的 npm 版本信息。
+		if (this.listCache && !forceRefresh) {
 			return this.listCache;
 		}
 		// 已有同级或更强请求在飞时复用，避免并发打爆 pi/npm。
@@ -163,11 +168,15 @@ export class ExtensionManager {
 			}
 		}
 
-		// 通过 PiDeck 桌面设置标记内置扩展移除状态（与 pi disabledExtensions 分离）。
+		// 普通扩展沿用 Pi 的 disabledExtensions；内置扩展由 PiDeck 自己的移除清单控制。
+		// 两种状态都汇总到 enabled，渲染层无需理解各自的持久化细节。
+		const disabledExtensions = await this.getDisabledExtensions();
 		// 必须在冲突检测前初始化：后续逻辑会写回 removedBuiltInExtensions 并删磁盘文件。
 		const removedBuiltIn = new Set(this.getPiDeckSettings().removedBuiltInExtensions ?? []);
 		for (const ext of merged) {
-			ext.enabled = !(ext.builtIn && removedBuiltIn.has(ext.source));
+			ext.enabled = ext.builtIn
+				? !removedBuiltIn.has(ext.source)
+				: !disabledExtensions.has(ext.source);
 		}
 
 		// 仅检测 todo / plan / ask 固定冲突：三方包名含对应关键词时自动禁用内置版。
@@ -400,8 +409,24 @@ export class ExtensionManager {
 
 	async checkPiUpdate(): Promise<PiUpdateCheckResult> {
 		try {
-			const status = await this.locator.check(this.getSettings().customPiPath);
+			const settings = this.getSettings();
+			const status = await this.locator.check(
+				settings.customPiPath,
+				settings.wslEnabled,
+				settings.wslDistro,
+				settings.wslUser,
+				settings.piRuntimePreference,
+				settings.piTypescriptPath,
+				settings.piRustPath,
+			);
 			if (!status.installed) return { hasUpdate: false, error: this.translate("mainExtension.piNotInstalled") };
+			if (status.runtimeKind === "rust") {
+				return {
+					hasUpdate: false,
+					currentVersion: status.version,
+					error: this.translate("mainExtension.rustUpdateUnsupported"),
+				};
+			}
 			const latestVersion = await this.npmViewVersion("@earendil-works/pi-coding-agent");
 			return {
 				currentVersion: status.version,
@@ -551,6 +576,7 @@ export class ExtensionManager {
 	private async noApproveSupported(): Promise<boolean> {
 		const version = await this.getPiVersion();
 		if (!version) return false;
+		if (detectPiRuntimeKind(version) === "rust") return false;
 		const match = version.match(/^(\d+)\.(\d+)/);
 		if (!match) return false;
 		const major = parseInt(match[1], 10);
@@ -560,21 +586,56 @@ export class ExtensionManager {
 	}
 
 	private async getPiVersion(): Promise<string | null> {
-		if (this.piVersion) return this.piVersion;
-		if (this.piVersionPromise) return this.piVersionPromise;
-		this.piVersionPromise = this.detectPiVersion();
+		const settingsKey = this.getPiVersionSettingsKey();
+		if (this.piVersion && this.piVersionSettingsKey === settingsKey) return this.piVersion;
+		if (this.piVersionPromise && this.piVersionPromiseSettingsKey === settingsKey) return this.piVersionPromise;
+		this.piVersionPromise = this.detectPiVersion(settingsKey);
+		this.piVersionPromiseSettingsKey = settingsKey;
 		return this.piVersionPromise;
 	}
 
-	private async detectPiVersion(): Promise<string | null> {
+	private getPiVersionSettingsKey(): string {
+		const settings = this.getSettings();
+		return JSON.stringify([
+			settings.customPiPath ?? "",
+			settings.wslEnabled ? "1" : "0",
+			settings.wslDistro ?? "",
+			settings.wslUser ?? "",
+			settings.piRuntimePreference ?? "auto",
+			settings.piTypescriptPath ?? "",
+			settings.piRustPath ?? "",
+		]);
+	}
+
+	private async detectPiVersion(settingsKey: string): Promise<string | null> {
 		try {
-			const status = await this.locator.check(this.getSettings().customPiPath);
+			const settings = this.getSettings();
+			const status = await this.locator.check(
+				settings.customPiPath,
+				settings.wslEnabled,
+				settings.wslDistro,
+				settings.wslUser,
+				settings.piRuntimePreference,
+				settings.piTypescriptPath,
+				settings.piRustPath,
+			);
 			if (status.installed && status.version) {
-				this.piVersion = status.version;
-				return status.version;
+				// A settings change can race an in-flight probe. Only publish a
+				// result if it still belongs to the active runtime selection.
+				if (this.getPiVersionSettingsKey() === settingsKey) {
+					this.piVersion = status.version;
+					this.piVersionSettingsKey = settingsKey;
+					return status.version;
+				}
+				return null;
 			}
 		} catch {
 			// 版本检测失败时静默处理，后续调用方会 fallback 为不支持 --no-approve
+		} finally {
+			if (this.piVersionPromiseSettingsKey === settingsKey) {
+				this.piVersionPromise = null;
+				this.piVersionPromiseSettingsKey = null;
+			}
 		}
 		return null;
 	}
@@ -582,16 +643,34 @@ export class ExtensionManager {
 	private async runPi(args: string[], timeout: number, options: { offline?: boolean } = {}): Promise<string> {
 		// --no-approve 在 pi 0.79+ 才支持，老版本需要跳过以避免 unknown option 错误。
 		const finalArgs = [...args];
-		if (await this.noApproveSupported()) {
+		const runtimePreference = this.getSettings().piRuntimePreference;
+		if (runtimePreference !== "rust" && await this.noApproveSupported()) {
 			finalArgs.push("--no-approve");
 		}
 		const settings = this.getSettings();
-		const command = this.locator.resolveCommand(settings.customPiPath, settings.wslEnabled, settings.wslDistro, settings.wslUser);
+		const command = this.locator.resolveCommand(
+			settings.customPiPath,
+			settings.wslEnabled,
+			settings.wslDistro,
+			settings.wslUser,
+			settings.piRuntimePreference,
+			settings.piTypescriptPath,
+			settings.piRustPath,
+		);
 		const invocation = this.locator.createInvocation(command, finalArgs);
 		const env = this.locator.createProcessEnv(settings, invocation.pathPrefix, invocation.wsl);
+		const detectedRuntime = detectPiRuntimeKind(this.piVersion ?? "");
+		const runtimeKind = detectedRuntime !== "unknown"
+			? detectedRuntime
+			: settings.piRuntimePreference === "typescript"
+				? "typescript"
+				: settings.piRuntimePreference === "rust"
+					? "rust"
+					: "unknown";
 		// list/remove/install 使用离线模式避免配置页被网络和包管理器输出拖慢；update 必须允许联网，
 		// 否则 pi 只会返回简化的 Updated packages，无法真正走 npm 更新流程。
-		if (options.offline !== false) env.PI_OFFLINE = "1";
+		// PI_OFFLINE 是 TypeScript Pi 的环境变量；Rust 版不读取它，保持环境中立。
+		if (options.offline !== false && runtimeKind !== "rust") env.PI_OFFLINE = "1";
 		return new Promise<string>((resolve, reject) => {
 			execFile(
 				invocation.command,

@@ -1,7 +1,7 @@
 {
   "name": "pi-desktop",
-  "version": "0.7.0-beta",
-  "description": "PiDeck is an open-source desktop workbench supporting the original Pi Agent and Pi_Agent_Rust across local project folders with session history, Git integration, terminal, and config management.",
+  "version": "0.1.0",
+  "description": "PiDeck-Q is an open-source desktop workbench supporting the original Pi Agent and Pi_Agent_Rust across local project folders with session history, Git integration, terminal, and config management.",
   "private": true,
   "license": "MIT",
   "author": {
@@ -71,7 +71,6 @@
     "postinstall": "node scripts/fix-pty-permissions.js",
     "typecheck": "tsc --noEmit",
     "make-icon": "node scripts/make-icon.js",
-    "compile-exe": "node scripts/compile-exe.js",
     "test:e2e": "npm run build:fast && playwright test",
     "e2e": "playwright test",
     "verify": "npm run typecheck && npm test && npm run test:e2e",
@@ -79,7 +78,6 @@
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
-    "@larksuiteoapi/node-sdk": "^1.67.0",
     "@tiptap/core": "^3.29.2",
     "@tiptap/pm": "^3.29.2",
     "@tiptap/react": "^3.29.2",
@@ -94,10 +92,10 @@
   },
   "build": {
     "appId": "com.ayuayue.pi-desktop",
-    "productName": "PiDeck",
+    "productName": "PiDeck-Q",
     "protocols": [
       {
-        "name": "PiDeck Agent Link",
+        "name": "PiDeck-Q Agent Link",
         "schemes": [
           "pideck"
         ]
@@ -142,13 +140,6 @@
       {
         "from": "resources/model-specs.db",
         "to": "model-specs.db"
-      },
-      {
-        "from": "build/pets",
-        "to": "pets",
-        "filter": [
-          "**/*"
-        ]
       }
     ],
     "extraMetadata": {
@@ -158,7 +149,6 @@
       "icon": "build/icon.ico",
       "target": [
         "nsis",
-        "portable",
         "zip"
       ]
     },

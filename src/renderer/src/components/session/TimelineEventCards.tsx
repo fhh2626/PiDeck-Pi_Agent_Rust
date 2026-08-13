@@ -12,7 +12,6 @@ import { MarkdownStream } from "./MarkdownStream";
 import { ShimmerText } from "./ShimmerText";
 import { ReasoningText } from "../agents/loading-states/reasoning-text";
 import { Loader } from "../motion/loader";
-import { useSmoothStream } from "../../utils/useSmoothStream";
 
 // Button 收口状态（P0）：本文件按钮全部保留原生——
 // compaction-card-header / thinking-card-trigger 是折叠触发器 + 内容排版容器（内部 span/small/em 结构）；
@@ -331,13 +330,7 @@ export const ThinkingBlock = memo(
 	useEffect(() => {
 		if (props.endedAt) setExpanded(false);
 	}, [props.endedAt]);
-	// 流式思考走打字机，避免大块 thinking_delta 一次糊上屏幕（「咔」一下）
-	// 折叠态 disabled：内容不可见，不启动 rAF 打字机、不订阅流式增量，展开时全文立现。
-	const { displayedContent } = useSmoothStream({
-		content: props.text,
-		isStreaming: Boolean(props.isStreaming),
-		disabled: !expanded,
-	});
+	// 打字机只放在 MarkdownStream 内；折叠态不挂全文，避免双重逐字。
 	// 折叠态溢出判断：字符阈值替代 scrollHeight 检测（折叠轻渲染后无全文 DOM 可量）。
 	// 200 字符 ≈ 4.5 行 × ~45 字/行的宽松上限；流式期间 text 增长天然触发重渲染 → 按钮实时出现。
 	const PREVIEW_CHARS = 200;
@@ -384,7 +377,7 @@ export const ThinkingBlock = memo(
 						className={`markdown-body px-3 pt-2 pb-1 text-text-tertiary ${expanded ? "" : "max-h-[calc(var(--font-size-chat)*7.56)] overflow-hidden"}`}
 					>
 						<MarkdownStream
-							text={displayedContent}
+							text={props.text}
 							isStreaming={props.isStreaming}
 							onOpenExternal={props.onOpenExternal}
 							onOpenFile={props.onOpenFile}
@@ -443,25 +436,6 @@ export const ThinkingBlock = memo(
 /** 每种状态对应的轮播短语组（i18n；waiting 单条即不轮播）。 */
 type RespondingKind = "starting" | "executing" | "responding" | "waiting";
 
-const RESPONDING_PHRASES: Record<RespondingKind, string[]> = {
-	starting: [
-		t("agent.loading.starting1"),
-		t("agent.loading.starting2"),
-		t("agent.loading.starting3"),
-	],
-	executing: [
-		t("agent.loading.executing1"),
-		t("agent.loading.executing2"),
-		t("agent.loading.executing3"),
-	],
-	responding: [
-		t("agent.loading.responding1"),
-		t("agent.loading.responding2"),
-		t("agent.loading.responding3"),
-	],
-	waiting: [t("agent.loading.waiting")],
-};
-
 export function RespondingIndicator(props: {
 	thinking?: string;
 	showThinking?: boolean;
@@ -485,6 +459,27 @@ export function RespondingIndicator(props: {
 		kind = "waiting";
 	}
 
+	// 必须在渲染期翻译：模块加载时应用设置尚未完成初始化，顶层调用 t()
+	// 会把系统语言固化进数组，导致显式选择的界面语言无法作用于临时状态。
+	const phrases: Record<RespondingKind, string[]> = {
+		starting: [
+			t("agent.loading.starting1"),
+			t("agent.loading.starting2"),
+			t("agent.loading.starting3"),
+		],
+		executing: [
+			t("agent.loading.executing1"),
+			t("agent.loading.executing2"),
+			t("agent.loading.executing3"),
+		],
+		responding: [
+			t("agent.loading.responding1"),
+			t("agent.loading.responding2"),
+			t("agent.loading.responding3"),
+		],
+		waiting: [t("agent.loading.waiting")],
+	};
+
 	return (
 		<div className="responding-indicator" data-kind={kind}>
 			{/* key=kind：状态切换时从该组短语第一条重新轮播，避免旧组下标错位；
@@ -492,7 +487,7 @@ export function RespondingIndicator(props: {
 			   不用官方默认的 ascii 终端字符；文字放大到 text-base */}
 			<ReasoningText
 				key={kind}
-				phrases={RESPONDING_PHRASES[kind]}
+				phrases={phrases[kind]}
 				variant="swap"
 				interval={1800}
 				indicator={
@@ -508,7 +503,3 @@ export function RespondingIndicator(props: {
 		</div>
 	);
 }
-
-/** 宠物选择预览：给定宠物清单项，用 <canvas> 解码其 spritesheet 并循环播放
- *  对应 mode 行（默认 idle）的网格帧，让用户在选择宠物时即时看到动画效果，
- *  不必切换真实宠物窗。失败时降级为空占位，不阻塞设置面板。 */

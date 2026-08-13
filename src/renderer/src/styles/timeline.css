@@ -75,7 +75,7 @@
   padding-left: 26px;
   color: var(--color-text-primary);
   font-size: var(--font-size-chat);
-  line-height: 1.68;
+  line-height: 1.35;
 }
 
 /* 会话生命周期状态：节点与内容使用同一条节奏，运行中只保留轻微呼吸感，
@@ -312,7 +312,7 @@
   overflow-x: clip;
   color: var(--color-text-primary);
   font-size: var(--font-size-chat);
-  line-height: 1.68;
+  line-height: 1.35;
 }
 
 /* ---------- 诊断卡片：错误 / RPC / 系统状态 ---------- */
@@ -1491,22 +1491,22 @@ body.ask-dialog-open .ask-question-card.pending {
   overflow-x: clip;
 }
 .markdown-body p {
-  margin: 0 0 11px;
-  /* 与 .assistant-text 容器声明（1.68）统一：此前容器 1.68 被 p 的 1.65 覆盖，
+  margin: 0 0 4px;
+  /* 与 .assistant-text 容器声明（1.35）统一：此前容器 1.68 被 p 的 1.65 覆盖，
      实际段落行高与声明不一致；统一后思考/回答/中间回复行距完全一致。 */
-  line-height: 1.68;
+  line-height: 1.35;
   white-space: pre-wrap;
 }
 .markdown-body ul,
 .markdown-body ol {
   box-sizing: border-box;
-  margin: 8px 0 13px;
+  margin: 4px 0 6px;
   padding-left: 1.45em;
   list-style-position: outside;
 }
 .markdown-body li {
   padding-left: 0.2em;
-  margin: 4px 0;
+  margin: 3px 0;
 }
 .markdown-body li > p {
   margin: 0;
@@ -1716,7 +1716,7 @@ body.ask-dialog-open .ask-question-card.pending {
   padding-block: 0;
   min-width: 0;
   margin-bottom: 10px;
-  /* 飞书 Bot 弹框从 toolbar 向上展开，外层不能裁剪浮层。 */
+  /* 命令面板从 toolbar 向上展开，外层不能裁剪浮层。 */
   overflow: visible;
   display: flex;
   flex-direction: column;
@@ -2187,9 +2187,6 @@ body.ask-dialog-open .ask-question-card.pending {
     overflow-x: auto;
     padding-bottom: 1px;
   }
-  .composer-bottom-left .feishu-link-indicator {
-    max-width: min(132px, 38cqi);
-  }
   .composer-bar-branch {
     width: min(112px, 32cqi);
   }
@@ -2207,9 +2204,6 @@ body.ask-dialog-open .ask-question-card.pending {
     width: 28px;
     padding: 0;
     justify-content: center;
-  }
-  .composer-bottom-left .feishu-link-indicator {
-    display: none;
   }
 }
 .send-behavior-menu {

@@ -247,3 +247,132 @@ test("late events from runtime A cannot revive its inventory or capabilities aft
   assert.equal(store.get(atoms.runtimeCapabilityByAgentIdAtomFamily("agent-a")), undefined);
   assert.equal(store.get(atoms.runtimeCapabilityByAgentIdAtomFamily("agent-b")).modelName, "B");
 });
+
+test("identical runtime-state patches keep the session runtime object identity", () => {
+  const store = createStore();
+  store.set(atoms.replaceProjectSessionsAtom, {
+    projectId: "project-a",
+    sessions: [session("session-a", "project-a")],
+  });
+  store.set(atoms.replaceSessionRuntimesAtom, [
+    runtime("session-a", "agent-a", "project-a"),
+  ]);
+  store.set(atoms.applySessionRuntimeEventAtom, runtimeEvent(
+    "session-a",
+    "agent-a",
+    1,
+    "agents:runtime-state",
+    { agentId: "agent-a", state: { modelName: "Model A", isStreaming: true } },
+  ));
+  const before = store.get(atoms.sessionRuntimeByIdAtom)["session-a"];
+  store.set(atoms.applySessionRuntimeEventAtom, runtimeEvent(
+    "session-a",
+    "agent-a",
+    1,
+    "agents:runtime-state",
+    { agentId: "agent-a", state: { modelName: "Model A", isStreaming: true } },
+  ));
+  assert.equal(store.get(atoms.sessionRuntimeByIdAtom)["session-a"], before);
+});
+
+test("session runtime family and sidebar stay quiet when another session streams", () => {
+  const store = createStore();
+  store.set(atoms.replaceProjectSessionsAtom, {
+    projectId: "project-a",
+    sessions: [session("session-a", "project-a"), session("session-b", "project-a")],
+  });
+  store.set(atoms.replaceSessionRuntimesAtom, [
+    runtime("session-a", "agent-a", "project-a"),
+    runtime("session-b", "agent-b", "project-a"),
+  ]);
+  store.set(atoms.applySessionRuntimeEventAtom, runtimeEvent(
+    "session-a",
+    "agent-a",
+    1,
+    "agents:runtime-state",
+    { agentId: "agent-a", state: { modelName: "A", isStreaming: false } },
+  ));
+  const sessionAAtom = atoms.sessionRuntimeBySessionIdAtomFamily("session-a");
+  const beforeRuntime = store.get(sessionAAtom);
+  const beforeSidebar = store.get(atoms.sidebarRuntimeAtom);
+  let runtimeNotifications = 0;
+  let sidebarNotifications = 0;
+  const unsubRuntime = store.sub(sessionAAtom, () => { runtimeNotifications += 1; });
+  const unsubSidebar = store.sub(atoms.sidebarRuntimeAtom, () => { sidebarNotifications += 1; });
+
+  store.set(atoms.applySessionRuntimeEventAtom, runtimeEvent(
+    "session-b",
+    "agent-b",
+    1,
+    "agents:runtime-state",
+    { agentId: "agent-b", state: { isStreaming: true } },
+  ));
+  assert.equal(store.get(sessionAAtom), beforeRuntime);
+  assert.equal(runtimeNotifications, 0);
+  assert.equal(store.get(atoms.sidebarRuntimeAtom), beforeSidebar);
+  assert.equal(sidebarNotifications, 0);
+
+  store.set(atoms.applySessionRuntimeEventAtom, runtimeEvent(
+    "session-a",
+    "agent-a",
+    1,
+    "agents:state",
+    { id: "agent-a", status: "running" },
+  ));
+  assert.notEqual(store.get(atoms.sidebarRuntimeAtom), beforeSidebar);
+  assert.equal(sidebarNotifications, 1);
+  unsubRuntime();
+  unsubSidebar();
+});
+
+test("identical runtime-state still records a new cache-hit snapshot", () => {
+  const store = createStore();
+  store.set(atoms.replaceProjectSessionsAtom, {
+    projectId: "project-a",
+    sessions: [session("session-a", "project-a")],
+  });
+  store.set(atoms.replaceSessionRuntimesAtom, [
+    runtime("session-a", "agent-a", "project-a"),
+  ]);
+  store.set(atoms.applySessionRuntimeEventAtom, runtimeEvent(
+    "session-a",
+    "agent-a",
+    1,
+    "agents:runtime-state",
+    { agentId: "agent-a", state: { modelName: "Model A", isStreaming: true, cacheHitPercent: 42 } },
+  ));
+  const beforeRuntime = store.get(atoms.sessionRuntimeByIdAtom)["session-a"];
+  const firstHistory = store.get(atoms.sessionCacheStatsAtom)["session-a"]?.cacheHitHistory;
+  assert.equal(firstHistory?.length, 1);
+  assert.equal(firstHistory?.[0], 42);
+  // 模拟统计被清掉、但 runtime state 已含同一 cacheHitPercent：旧 early-return 会丢掉这次入列。
+  store.set(atoms.sessionCacheStatsAtom, {});
+  let statsNotifications = 0;
+  const unsubStats = store.sub(atoms.sessionCacheStatsAtom, () => { statsNotifications += 1; });
+
+  store.set(atoms.applySessionRuntimeEventAtom, runtimeEvent(
+    "session-a",
+    "agent-a",
+    1,
+    "agents:runtime-state",
+    { agentId: "agent-a", state: { modelName: "Model A", isStreaming: true, cacheHitPercent: 42 } },
+  ));
+  assert.equal(store.get(atoms.sessionRuntimeByIdAtom)["session-a"], beforeRuntime);
+  const restoredHistory = store.get(atoms.sessionCacheStatsAtom)["session-a"]?.cacheHitHistory;
+  assert.equal(restoredHistory?.length, 1);
+  assert.equal(restoredHistory?.[0], 42);
+  assert.equal(statsNotifications, 1);
+
+  store.set(atoms.applySessionRuntimeEventAtom, runtimeEvent(
+    "session-a",
+    "agent-a",
+    1,
+    "agents:runtime-state",
+    { agentId: "agent-a", state: { modelName: "Model A", isStreaming: true, cacheHitPercent: 42 } },
+  ));
+  assert.equal(store.get(atoms.sessionRuntimeByIdAtom)["session-a"], beforeRuntime);
+  const unchangedHistory = store.get(atoms.sessionCacheStatsAtom)["session-a"]?.cacheHitHistory;
+  assert.equal(unchangedHistory, restoredHistory);
+  assert.equal(statsNotifications, 1);
+  unsubStats();
+});

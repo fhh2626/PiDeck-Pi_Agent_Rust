@@ -11,6 +11,9 @@ import type {
 } from "../../shared/types";
 import type { WslEnvironment } from "../wsl/WslPaths";
 import type { MainProcessTranslationKey } from "../../shared/i18n/mainProcessCopy";
+type PromptSettingsSlice = {
+	hiddenBuiltinPromptNames?: string[];
+};
 
 type PromptCopy = (
 	key: MainProcessTranslationKey,
@@ -182,6 +185,8 @@ export class PromptManager {
 	constructor(
 		home?: string,
 		private readonly translate: PromptCopy = () => "Prompt operation failed.",
+		private readonly getSettings: () => PromptSettingsSlice = () => ({ hiddenBuiltinPromptNames: [] }),
+		private readonly patchSettings: (patch: PromptSettingsSlice) => Promise<unknown> = async () => undefined,
 	) {
 		this.promptsDir = join(home ?? homedir(), ".pi", "agent", "prompts");
 	}
@@ -221,10 +226,11 @@ export class PromptManager {
 			});
 		}
 
-		// 合并内置推荐模板（同名不覆盖用户已有模板）
+		// 合并内置推荐模板（同名不覆盖用户已有模板；已删除的内置项不再补回）
 		const userNames = new Set(templates.map((t) => t.name));
+		const hiddenNames = new Set(this.getHiddenBuiltinNames());
 		for (const builtin of BUILTIN_TEMPLATES) {
-			if (!userNames.has(builtin.name)) {
+			if (!userNames.has(builtin.name) && !hiddenNames.has(builtin.name)) {
 				templates.push(builtin);
 			}
 		}
@@ -232,7 +238,11 @@ export class PromptManager {
 		// 按 name 排序
 		templates.sort((a, b) => a.name.localeCompare(b.name));
 
-		return { templates, globalDir: this.promptsDir };
+		return {
+			templates,
+			globalDir: this.promptsDir,
+			hasHiddenBuiltins: this.hasHiddenBuiltins(),
+		};
 	}
 
 	async create(input: CreatePiPromptTemplateInput): Promise<PiPromptTemplateSummary> {
@@ -258,6 +268,11 @@ export class PromptManager {
 	}
 
 	async delete(filePath: string): Promise<void> {
+		// 内置模板没有磁盘文件：记下删除标记，后续 list 不再补回。
+		if (filePath.startsWith("builtin://")) {
+			await this.hideBuiltin(filePath.slice("builtin://".length));
+			return;
+		}
 		if (!filePath.startsWith(this.promptsDir)) {
 			throw new Error(this.translate("mainPrompt.globalDeleteOnly"));
 		}
@@ -266,6 +281,46 @@ export class PromptManager {
 		}
 		// 提示词模板是用户内容：删除走系统回收站（可恢复）；回收站不可用时抛错，拒绝硬删。
 		await trashPath(filePath, { source: "prompts:delete" });
+	}
+
+	/** 是否还有被用户删除、可被「找回默认模板」恢复的内置项。 */
+	hasHiddenBuiltins(): boolean {
+		return this.getHiddenBuiltinNames().length > 0;
+	}
+
+	/**
+	 * 清空内置模板删除标记，使全部默认模板重新出现在列表和斜杠补全中。
+	 * 用户已创建的同名文件仍优先，不会被内置内容覆盖。
+	 */
+	async restoreHiddenBuiltins(): Promise<void> {
+		if (!this.hasHiddenBuiltins()) return;
+		await this.patchSettings({ hiddenBuiltinPromptNames: [] });
+	}
+
+	private getHiddenBuiltinNames(): string[] {
+		const raw = this.getSettings().hiddenBuiltinPromptNames ?? [];
+		const known = new Set(BUILTIN_TEMPLATES.map((template) => template.name));
+		const names: string[] = [];
+		const seen = new Set<string>();
+		for (const value of raw) {
+			if (typeof value !== "string") continue;
+			const name = value.trim();
+			if (!name || !known.has(name) || seen.has(name)) continue;
+			seen.add(name);
+			names.push(name);
+		}
+		return names;
+	}
+
+	private async hideBuiltin(rawName: string): Promise<void> {
+		const name = rawName.trim();
+		const known = BUILTIN_TEMPLATES.some((template) => template.name === name);
+		if (!known) {
+			throw new Error(this.translate("mainPrompt.fileNotFound"));
+		}
+		const current = this.getHiddenBuiltinNames();
+		if (current.includes(name)) return;
+		await this.patchSettings({ hiddenBuiltinPromptNames: [...current, name] });
 	}
 
 	/** 扫描项目 .pi/prompts/ 目录下的模板 */
@@ -293,7 +348,8 @@ export class PromptManager {
 			});
 		}
 		templates.sort((a, b) => a.name.localeCompare(b.name));
-		return { templates, globalDir: projectPromptsDir };
+		// 项目级模板没有内置推荐项，找回默认模板只作用于全局列表。
+		return { templates, globalDir: projectPromptsDir, hasHiddenBuiltins: false };
 	}
 
 	/** 在项目 .pi/prompts/ 下创建模板 */

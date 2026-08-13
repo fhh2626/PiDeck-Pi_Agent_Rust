@@ -63,9 +63,10 @@ function loadSessionScanner(homePath) {
 		},
 	});
 	const codexMeta = loadCodexMetaModule();
+	const piCompatibility = loadTranspiledModule("src/shared/piCompatibility.ts");
 	const messageContent = loadTranspiledModule(
 		"src/main/pi/messageContent.ts",
-		new Map([["../feishu/docActions", { stripFeishuDocActionHint: (text) => text }]]),
+		new Map([["./hostInstruction", { stripHostInstruction: (text) => text }]]),
 	);
 	const fsRetry = loadTranspiledModule("src/main/utils/fsRetry.ts");
 	const sessionSummaryCache = loadTranspiledModule(
@@ -94,6 +95,7 @@ function loadSessionScanner(homePath) {
 				};
 			}
 			if (id === "../../shared/codexSessionMeta") return codexMeta;
+			if (id === "../../shared/piCompatibility") return piCompatibility;
 			if (id === "../pi/messageContent") return messageContent;
 			if (id === "./sessionSummaryCache") return sessionSummaryCache;
 			if (id === "../wsl/WslPaths") return wslPaths;

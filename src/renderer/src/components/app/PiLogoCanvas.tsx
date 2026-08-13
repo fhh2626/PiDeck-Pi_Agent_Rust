@@ -667,7 +667,7 @@ export type PiDeckWordmarkCanvasProps = {
  */
 export function PiDeckWordmarkCanvas(props: PiDeckWordmarkCanvasProps) {
 	const cellSize = props.cellSize ?? 5;
-	const text = props.text ?? "PiDeck";
+	const text = props.text ?? "PiDeck-Q";
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 
 	const paint = useCallback(() => {

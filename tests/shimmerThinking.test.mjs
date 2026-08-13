@@ -38,23 +38,18 @@ test("shimmer-sweep keyframes 定义在 timeline.css（规则允许 keyframes）
 });
 
 test("RespondingIndicator 使用 beUI ReasoningText（swap）轮播状态短语", () => {
-	// 短语组常量与函数体分开截取（中间隔着 export type）
-	const phrasesStart = cardsSource.indexOf("const RESPONDING_PHRASES");
-	const phrases = cardsSource.slice(
-		phrasesStart,
-		cardsSource.indexOf("\n};", phrasesStart) + 3,
-	);
 	const fnStart = cardsSource.indexOf("export function RespondingIndicator");
 	const fn = cardsSource.slice(
 		fnStart,
 		cardsSource.indexOf("\nexport ", fnStart + 10) || undefined,
 	);
 	assert.ok(fn, "RespondingIndicator must exist");
-	// 四种状态各有 i18n 短语组（waiting 单条 = 不轮播）
-	assert.match(phrases, /agent\.loading\.starting1/);
-	assert.match(phrases, /agent\.loading\.executing1/);
-	assert.match(phrases, /agent\.loading\.responding1/);
-	assert.match(phrases, /agent\.loading\.waiting/);
+	// 四种状态在渲染期翻译，不能在模块初始化时把系统语言固化成字符串。
+	assert.doesNotMatch(cardsSource, /const RESPONDING_PHRASES/);
+	assert.match(fn, /agent\.loading\.starting1/);
+	assert.match(fn, /agent\.loading\.executing1/);
+	assert.match(fn, /agent\.loading\.responding1/);
+	assert.match(fn, /agent\.loading\.waiting/);
 	// 组件使用 beUI ReasoningText + swap 变体；状态切换 key 重建从第一条重新轮播
 	assert.match(fn, /ReasoningText/);
 	assert.match(fn, /variant="swap"/);

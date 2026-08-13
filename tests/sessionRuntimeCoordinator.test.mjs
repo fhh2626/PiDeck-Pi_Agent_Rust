@@ -89,6 +89,7 @@ function createHarness(options = {}) {
     setModel: 0,
     setThinking: 0,
     publishRuntimeState: 0,
+	refreshSessionIdentity: 0,
 	update: 0,
     attach: 0,
     send: 0,
@@ -198,10 +199,22 @@ function createHarness(options = {}) {
     },
     setThinking: async () => {
       calls.setThinking += 1;
+      if (options.thinkingError) throw new Error(options.thinkingError);
+      return options.thinkingState ?? options.runtimeState ?? { isStreaming: false };
     },
     publishRuntimeState: async () => {
       calls.publishRuntimeState += 1;
     },
+	refreshSessionIdentity: async (agentId) => {
+	  calls.refreshSessionIdentity += 1;
+	  const tab = tabs.find((candidate) => candidate.id === agentId);
+	  if (!tab) throw new Error("Agent not found");
+	  if (options.refreshedSessionPath) {
+		tab.sessionPath = options.refreshedSessionPath;
+		tab.sessionId = options.refreshedPiSessionId ?? tab.sessionId;
+	  }
+	  return tab;
+	},
     sendUIResponse: async () => {
       calls.uiResponse += 1;
     },
@@ -343,6 +356,38 @@ test("serializes activation but delivers distinct requests once each", async () 
   assert.equal(harness.calls.setModel, 1);
   assert.equal(harness.calls.setThinking, 1);
   assert.equal(harness.calls.send, 2);
+});
+
+test("attaches a delayed session identity after the first accepted prompt", async () => {
+	const { SessionRuntimeCoordinator } = loadCoordinator();
+	const sessionPath = "C:/sessions/rust-delayed.jsonl";
+	const harness = createHarness({
+		createdTab: {
+			id: "agent-rust",
+			projectId: "project-1",
+			cwd: "C:/project",
+			title: "Chat agent",
+			status: "idle",
+			sessionId: "pi-rust-session",
+			sessionEnvironment: "native",
+			sessionSource: "pi",
+			createdAt: 1,
+		},
+		refreshedSessionPath: sessionPath,
+	});
+	const coordinator = new SessionRuntimeCoordinator(
+		harness.catalog,
+		harness.agents,
+		harness.sender,
+	);
+
+	const result = await coordinator.send(prompt());
+	await new Promise((resolve) => setImmediate(resolve));
+
+	assert.equal(result.accepted, true);
+	assert.equal(harness.calls.refreshSessionIdentity, 1);
+	assert.equal(harness.calls.attach, 1);
+	assert.equal(harness.entry.filePath, sessionPath);
 });
 
 test("dispatch lease blocks restart, direct bind, and catalog scan until send settles", async () => {
@@ -951,6 +996,47 @@ test("runtime message snapshots fail closed when the runtime is replaced during 
 
   assert.equal(coordinator.getRuntimeMessages("session-1"), undefined);
   assert.equal(coordinator.getTarget("session-1").agentId, "agent-b");
+});
+
+test("runtime thinking persists the level actually accepted by Pi", async () => {
+  const { SessionRuntimeCoordinator } = loadCoordinator();
+  const harness = createHarness({
+    tabs: [{ id: "agent-a", status: "idle", createdAt: 1 }],
+    thinkingState: { isStreaming: false, thinkingLevel: "high" },
+  });
+  const coordinator = new SessionRuntimeCoordinator(harness.catalog, harness.agents, harness.sender);
+  const runtimeGeneration = coordinator.bindExistingAgent("session-1", "agent-a");
+
+  const result = await coordinator.setRuntimeThinking(
+    { sessionId: "session-1", agentId: "agent-a", runtimeGeneration },
+    "max",
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.value.value.thinkingLevel, "high");
+  assert.equal(harness.entry.thinkingLevel, "high");
+  assert.equal(harness.calls.setThinking, 1);
+  assert.equal(harness.calls.update, 1);
+});
+
+test("runtime thinking failure does not persist an unsupported requested level", async () => {
+  const { SessionRuntimeCoordinator } = loadCoordinator();
+  const harness = createHarness({
+    entry: { thinkingLevel: "medium" },
+    tabs: [{ id: "agent-a", status: "idle", createdAt: 1 }],
+    thinkingError: "thinking apply failed",
+  });
+  const coordinator = new SessionRuntimeCoordinator(harness.catalog, harness.agents, harness.sender);
+  const runtimeGeneration = coordinator.bindExistingAgent("session-1", "agent-a");
+
+  const result = await coordinator.setRuntimeThinking(
+    { sessionId: "session-1", agentId: "agent-a", runtimeGeneration },
+    "max",
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(harness.entry.thinkingLevel, "medium");
+  assert.equal(harness.calls.update, 0);
 });
 
 test("runtime model preference is persisted before AgentManager failure", async () => {

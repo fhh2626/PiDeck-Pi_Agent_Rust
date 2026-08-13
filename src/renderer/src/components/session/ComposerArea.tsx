@@ -21,7 +21,6 @@ import { SecurityLevelMenu } from "./SecurityLevelMenu";
 import { useAskPanel } from "../../hooks/useAskPanel";
 import { setSessionDraftAtom, thinkingLevelPendingByIdAtom } from "../../atoms/composer-atoms";
 import { sessionRecordByIdAtomFamily } from "../../atoms";
-import { ComposerRuntimeIntegrations } from "./ComposerRuntimeIntegrations";
 import { useSessionPaneServices } from "./SessionPaneServices";
 import { desktopApi } from "../../desktopApi";
 import { COMPOSER_DEFAULT_HEIGHT } from "../../rendererUtils";
@@ -201,8 +200,6 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
   };
 
   return (
-    <ComposerRuntimeIntegrations sessionId={props.sessionId}>
-      {({ feishuIndicator }) => (
         <>
           {/* overflow-hidden：面板到 minSize 时禁止整块 footer 再出滚动条；
               文本区自身仍可在 RichInput 内滚动，底栏 shrink-0 始终可见 */}
@@ -310,7 +307,6 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
                 composerAgentMode={composer.mode}
                 gitInfo={props.gitInfo}
                 record={composer.record}
-                feishuIndicator={feishuIndicator}
                 securityControl={
                   /* 安全级别切换是策略快照热更新（安全门每次工具调用重读），运行中即时生效，
                      无需等下一轮生成；因此只保留 Agent 启动中禁用（与思考按钮一致） */
@@ -368,7 +364,5 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
             />
           ) : null}
         </>
-      )}
-    </ComposerRuntimeIntegrations>
   );
 });
