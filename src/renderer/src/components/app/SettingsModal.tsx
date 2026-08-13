@@ -15,7 +15,6 @@ import {
 	Plus,
 	ChartColumnBig,
 	Activity,
-	MessageSquare,
 } from "lucide-react";
 import { t } from "../../i18n";
 import { desktopApi } from "../../desktopApi";
@@ -59,7 +58,6 @@ import { SettingsSection, StorageTab } from "./settings/SettingsStorageTab";
 import { SettingBox, SettingRow, SettingSwitchRow, SettingTextarea } from "./settings/SettingRows";
 import { ExternalEditorsSection } from "./settings/ExternalEditorsSection";
 import { ProcessMetricsTab } from "./settings/ProcessMetricsTab";
-import { ImTab } from "./settings/ImTab";
 import { VisionBridgeSettingsTab, useVisionBridgeDraft } from "./settings/VisionBridgeSettingsTab";
 import { ModelPicker } from "../session/ComposerComponents";
 import type { AppSettings, AppInfo, AvailableModel, PiInstallStatus, PiUpdateCheckResult, PiCliUpdateResult, PetManifest, WebNetworkAddress } from "../../../shared/types";
@@ -71,7 +69,7 @@ const ZOOM_FACTOR_MAX = 1.5;
 const ZOOM_FACTOR_STEP = 0.05;
 
 
-type SettingsTabId = "common" | "appearance" | "proxy" | "dev" | "im" | "pet" | "storage" | "usage" | "process" | "vision";
+type SettingsTabId = "common" | "appearance" | "proxy" | "dev" | "pet" | "storage" | "usage" | "process" | "vision";
 
 // 注意：修改 SettingsTabId 枚举时需同步更新 SETTINGS_TAB_IDS 校验数组
 
@@ -80,7 +78,7 @@ const SETTINGS_LAST_TAB_KEY = "pideck-settings-last-tab";
 
 /** 全部合法 tab id，用于校验持久化值（避免版本更新后残留旧值导致无高亮）。 */
 const SETTINGS_TAB_IDS: readonly SettingsTabId[] = [
-	"common", "appearance", "proxy", "dev", "im", "pet", "storage", "usage", "process", "vision",
+	"common", "appearance", "proxy", "dev", "pet", "storage", "usage", "process", "vision",
 ];
 
 /**
@@ -516,11 +514,6 @@ function SettingsModalContent(props: SettingsModalProps) {
 			id: "dev",
 			label: t("settings.tabs.dev"),
 			icon: <Wrench size={16} />,
-		},
-		{
-			id: "im",
-			label: t("settings.tabs.im"),
-			icon: <MessageSquare size={16} />,
 		},
 		{
 			id: "pet",
@@ -1891,10 +1884,6 @@ function SettingsModalContent(props: SettingsModalProps) {
 							</>
 						</TabsContent>
 
-						{/* ── 外部连接 tab（飞书机器人，由 Pi 管理界面迁入） ── */}
-						<TabsContent value="im" className="settings-panel min-w-0">
-							<ImTab />
-						</TabsContent>
 						{/* ── 桌面宠物 tab ── */}
 																		<TabsContent value="pet" className="settings-panel min-w-0">
 							<>

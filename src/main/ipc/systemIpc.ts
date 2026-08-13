@@ -85,10 +85,6 @@ export type SystemIpcDeps = {
 	/** Session scanner WSL config */
 	configureSessionScannerWsl?: (env: import("../wsl/WslPaths").WslEnvironment) => Promise<void>;
 	clearSessionScannerWsl?: () => void;
-	/** Set feishu locale */
-	setFeishuLocale?: (locale: unknown) => void;
-	/** Set default bot name */
-	setFeishuConfigDefaultBotName?: (name: string) => void;
 	/** Refresh tray context menu */
 	refreshTrayContextMenu?: () => void;
 	/** Notify title bar change */
@@ -149,8 +145,6 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 		reactToPetSettings,
 		configureSessionScannerWsl,
 		clearSessionScannerWsl,
-		setFeishuLocale,
-		setFeishuConfigDefaultBotName,
 		refreshTrayContextMenu,
 		notifyTitleBarChange,
 		applyNativeThemeSource,
@@ -681,8 +675,6 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 			if (applyNativeThemeSource) applyNativeThemeSource(settings);
 		}
 		if ("language" in patch) {
-			if (setFeishuLocale) setFeishuLocale(undefined);
-			if (setFeishuConfigDefaultBotName) setFeishuConfigDefaultBotName("");
 			if (refreshTrayContextMenu) refreshTrayContextMenu();
 		}
 		if ("useNativeTitleBar" in patch) {

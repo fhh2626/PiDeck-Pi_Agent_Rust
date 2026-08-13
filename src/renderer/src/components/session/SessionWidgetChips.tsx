@@ -15,7 +15,7 @@ import {
 import {
 	isCoherentComposerRuntimeUi,
 	type RuntimeHandle,
-} from "./ComposerRuntimeIntegrations";
+} from "./runtimeUiCoherence";
 import { widgetDisplayTitle } from "./ComposerComponents";
 import { TodoList } from "../agents/todo-list";
 import { parseAgentTodoItems } from "./agentTodoParser";

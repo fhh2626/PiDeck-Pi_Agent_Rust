@@ -172,7 +172,7 @@ export type SendPromptInput = {
 	/** 仅发给 Agent 的内部提示，不显示在聊天 UI 中。 */
 	agentMessage?: string;
 	/** 提示的简短描述/摘要，发给 pi agent 用于标识本次 prompt 的意图。
-	 *  从模板 description、用户输入首行自动提取；飞书/WebService 等外部来源可不传。 */
+	 *  从模板 description、用户输入首行自动提取；WebService 等外部来源可不传。 */
 	description?: string;
 	/** 发送请求的上层 requestId，用于跨 Session/runtime/AgentManager 对齐性能日志。 */
 	requestId?: string;

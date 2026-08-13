@@ -30,8 +30,8 @@ function compile(filePath, stubs = {}) {
 
 const sendSource = () => readFileSync("src/renderer/src/hooks/useSessionSend.ts", "utf8");
 const areaSource = () => readFileSync("src/renderer/src/components/session/ComposerArea.tsx", "utf8");
-const runtimeSource = () => readFileSync(
-  "src/renderer/src/components/session/ComposerRuntimeIntegrations.tsx",
+const runtimeUiCoherenceSource = () => readFileSync(
+  "src/renderer/src/components/session/runtimeUiCoherence.ts",
   "utf8",
 );
 
@@ -330,38 +330,14 @@ test("first send publishes activating feedback before Session promotion", () => 
 });
 
 test("runtime widgets require the current Session binding generation", () => {
-  const { sameRuntimeHandle, isCoherentComposerRuntimeUi } = compile(
-    "src/renderer/src/components/session/ComposerRuntimeIntegrations.tsx",
-    {
-      react: {},
-      jotai: {},
-    },
+  const { isCoherentComposerRuntimeUi } = compile(
+    "src/renderer/src/components/session/runtimeUiCoherence.ts",
   );
-  assert.equal(sameRuntimeHandle({ agentId: "a", runtimeGeneration: 2 }, { agentId: "a", runtimeGeneration: 2 }), true);
-  assert.equal(sameRuntimeHandle({ agentId: "a", runtimeGeneration: 2 }, { agentId: "a", runtimeGeneration: 1 }), false);
   assert.equal(isCoherentComposerRuntimeUi({ agentId: "a", runtimeGeneration: 2 }, { agentId: "a", runtimeGeneration: 1 }), false);
+  assert.equal(isCoherentComposerRuntimeUi({ agentId: "a", runtimeGeneration: 2 }, { agentId: "a", runtimeGeneration: 2 }), true);
   assert.equal(isCoherentComposerRuntimeUi(undefined, { agentId: "a", runtimeGeneration: 2 }), false);
-  assert.match(runtimeSource(), /runtimeUi\.agentId === runtime\.agentId/);
-  assert.match(runtimeSource(), /runtimeUi\.runtimeGeneration === runtime\.runtimeGeneration/);
-  assert.match(runtimeSource(), /const sequence = \+\+botRequestSequenceRef\.current/);
-  assert.match(runtimeSource(), /getSessionBot\(props\.sessionId\)/);
-  assert.match(runtimeSource(), /activeSessionId=\{props\.sessionId\}/);
-  assert.doesNotMatch(runtimeSource(), /getSessionBot\(expected\.agentId\)/);
-});
-
-// 回归（打开历史会话点飞书连接不启动 Agent）：setRuntimeBot 不得在无 runtime 时拦截请求——
-// 主进程 feishuSessionBotSet 会自动启动 runtime 并绑定；只有请求期间 runtime 被替换才丢弃结果。
-test("setRuntimeBot forwards Feishu binding even without a runtime handle", () => {
-  const src = runtimeSource();
-  const block = src.match(/async function setRuntimeBot[\s\S]*?return result;\n  \}/)?.[0] ?? "";
-  assert.ok(block, "setRuntimeBot must exist");
-  // 不再有无 runtime 即 return 的守卫
-  assert.doesNotMatch(block, /if \(!expected\) return;/);
-  assert.doesNotMatch(block, /if \(!expected\) \{?\s*return/);
-  // 请求始终发往主进程
-  assert.match(block, /feishu\.setSessionBot\(sessionId, botId\)/);
-  // 无 expected 时结果必须生效；有 expected 时仍防 A→B 替换竞态
-  assert.match(block, /if \(!expected \|\| sameRuntimeHandle\(runtimeHandleRef\.current, expected\)\) \{/);
+  assert.match(runtimeUiCoherenceSource(), /runtimeUi\.agentId === runtime\.agentId/);
+  assert.match(runtimeUiCoherenceSource(), /runtimeUi\.runtimeGeneration === runtime\.runtimeGeneration/);
 });
 
 test("a delayed same-generation editor command cannot overwrite a user edit", () => {

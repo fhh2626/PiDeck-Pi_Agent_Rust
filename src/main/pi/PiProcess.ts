@@ -58,14 +58,6 @@ type PiProcessOptions = {
    */
   securitySessionId?: string;
   /**
-   * 当前会话是否已绑定飞书（PIDECK_FEISHU_LINKED=1）。
-   * pi-deck-ask-question 扩展据此把 ask_question 换成禁用提示版：
-   * 飞书端交互卡片体验差（按钮截断/选项上限），agent 应把问题直接写进回复。
-   * 进程级标记，绑定发生在 runtime 启动前（FeishuBridge 先建 binding 再 activateRuntime），
-   * 因此 spawn 时判断可靠；绑定后已运行的会话需重启才生效（解绑后同样持续到重启）。
-   */
-  feishuLinked?: boolean;
-  /**
    * spawn pi 前对会话文件的预检/修复回调（如剔除旧版 PiDeck 私有 sessionName 头行，
    * 该行会让 pi 报 "Session file is not a valid pi session" 并 exit 1）。
    * 返回是否发生修复；抛错或未注入都不阻塞启动（pi 自身的加载错误更接近事实，留日志即可）。
@@ -376,11 +368,6 @@ export class PiProcess extends EventEmitter {
         ? toWslLinuxPath(this.options.securitySessionId, { distro: this.settings?.wslDistro ?? "" })
         : this.options.securitySessionId;
     }
-    // 飞书绑定会话：ask_question 换成禁用提示版（扩展读取此标记，纯标志位无需路径转换）
-    if (this.options.feishuLinked) {
-      env.PIDECK_FEISHU_LINKED = "1";
-    }
-
     // 每个 agent 绑定独立 cwd，确保 pi 自己发现项目级 AGENTS.md、settings 和 session 分组。
     // 打包后的 Electron 不一定继承用户终端 PATH；这里补齐跨平台 Node 工具链常见 bin 目录，尽量让已安装 pi 的用户开箱即用。
     // Windows 下通过 PiLocator.createInvocation 显式包裹含空格的 npm shim 路径，避免 cmd 拆分路径导致 agent 启动失败。

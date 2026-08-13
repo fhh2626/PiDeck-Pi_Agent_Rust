@@ -212,7 +212,7 @@ export class AgentManager {
 	 * 若完整存入 ChatMessage.meta 并随流式 emit 反复全量传输，会显著放大 IPC payload
 	 * 并推高渲染进程内存，是大会话白屏的重要诱因。超长结果保留首尾各一部分，中间省略。
 	 */
-	/** 本地事件监听器（用于 FeishuBridge 等主进程内部订阅） */
+	/** 本地事件监听器（用于 Web SSE 等主进程内部订阅） */
 	private readonly localEventListeners = new Set<(agentId: string, event: unknown) => void>();
 	/** 状态变更监听器（用于 PetStateBridge 等主进程内部模块订阅 AgentTab[] 聚合状态） */
 	private readonly stateListeners = new Set<(tabs: AgentTab[]) => void>();
@@ -332,12 +332,6 @@ export class AgentManager {
 		 * 该行会让 pi 拒绝加载会话并 exit 1，见 #114）。由 main/index.ts 装配 SessionScanner 实现。
 		 */
 		private readonly repairSessionFile?: (sessionPath: string) => Promise<boolean>,
-		/**
-		 * 会话是否已绑定飞书（key = SessionRecord.id）。
-		 * 由 main/index.ts 注入 FeishuBridge.hasSessionBinding 查询；
-		 * 命中时 PiProcess 注入 PIDECK_FEISHU_LINKED，ask_question 扩展切换为禁用提示版。
-		 */
-		private readonly isFeishuSession?: (sessionKey: string | undefined) => boolean,
 	) {
 		this.messageProjector = new AgentMessageProjector({
 			translate: this.translate,
@@ -387,9 +381,6 @@ export class AgentManager {
 			// 会话身份 = PiDeck 会话 key（SessionRecord.id，UUID 或旧版文件路径），扩展按它解析等级覆盖；
 			// 匿名会话（noSession）无 key，扩展仅用全局默认等级。
 			securitySessionId: securitySessionKey ?? sessionPath,
-			// 飞书绑定会话：ask_question 禁用（扩展读 PIDECK_FEISHU_LINKED）。
-			// 查询用与 securitySessionId 相同的会话 key，保证与 FeishuBridge 的 sessionId 索引一致。
-			feishuLinked: this.isFeishuSession?.(securitySessionKey ?? sessionPath) ?? false,
 			securitySnapshotPath: this.securityStore?.getSnapshotPath(),
 			// 预检修复：全部 spawn 路径（create/reattach/withTemporarySession）都在 start() 内生效。
 			repairSessionFileBeforeStart: this.repairSessionFile,
@@ -2730,7 +2721,7 @@ export class AgentManager {
 		this.emitState();
 	}
 
-	/** 注册本地事件监听器（供 FeishuBridge 等主进程内部模块使用） */
+	/** 注册本地事件监听器（供 Web SSE 等主进程内部模块使用） */
 	addLocalEventListener(listener: (agentId: string, event: unknown) => void): () => void {
 		this.localEventListeners.add(listener);
 		return () => { this.localEventListeners.delete(listener); };
@@ -3131,7 +3122,7 @@ export class AgentManager {
 	}
 
 	private handlePiEvent(agentId: string, event: unknown) {
-		// 通知本地监听器（FeishuBridge 等主进程内部订阅）
+		// 通知本地监听器（Web SSE 等主进程内部订阅）
 		for (const listener of this.localEventListeners) {
 			try { listener(agentId, event); } catch {}
 		}

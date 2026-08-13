@@ -1716,7 +1716,7 @@ body.ask-dialog-open .ask-question-card.pending {
   padding-block: 0;
   min-width: 0;
   margin-bottom: 10px;
-  /* 飞书 Bot 弹框从 toolbar 向上展开，外层不能裁剪浮层。 */
+  /* 命令面板从 toolbar 向上展开，外层不能裁剪浮层。 */
   overflow: visible;
   display: flex;
   flex-direction: column;
@@ -2187,9 +2187,6 @@ body.ask-dialog-open .ask-question-card.pending {
     overflow-x: auto;
     padding-bottom: 1px;
   }
-  .composer-bottom-left .feishu-link-indicator {
-    max-width: min(132px, 38cqi);
-  }
   .composer-bar-branch {
     width: min(112px, 32cqi);
   }
@@ -2207,9 +2204,6 @@ body.ask-dialog-open .ask-question-card.pending {
     width: 28px;
     padding: 0;
     justify-content: center;
-  }
-  .composer-bottom-left .feishu-link-indicator {
-    display: none;
   }
 }
 .send-behavior-menu {

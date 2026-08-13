@@ -317,38 +317,18 @@ async function askBatch(
 }
 
 export default function (pi: ExtensionAPI) {
-	// 飞书绑定会话（PiDeck spawn 时注入 PIDECK_FEISHU_LINKED=1，见 PiProcess.ts）：
-	// 飞书端交互卡片体验差（按钮 4/行、最多 20 选项、文本 18 字符截断），
-	// 因此注册「禁用提示版」——agent 调用时得到明确指引把问题直接写进回复，
-	// 用户以飞书消息作答，而不是静默丢失提问能力。
-	const feishuLinked = process.env.PIDECK_FEISHU_LINKED === "1";
-
 	pi.registerTool({
 		name: "ask_question",
 		label: "Ask Question",
-		description: feishuLinked
-			? [
-				"UNAVAILABLE in this session: it is linked to Feishu, where interactive ask cards are not usable.",
-				"Do NOT call this tool. Write your question directly in the reply text instead;",
-				"the user answers with a Feishu message.",
-			].join(" ")
-			: [
+		description: [
 				"Ask the user to provide input, make a selection, or confirm an action.",
 				"The tool blocks until the user responds through the desktop UI.",
 				"Single question: use type/question/options/placeholder/prefill.",
 				"Multiple questions: use questions:[{id,type,question,options,allowOther,...}] to ask all at once in a tabbed batch UI.",
 				"For batch mode, set review:true to require a Submit/review tab before final submit.",
 			].join(" "),
-		promptSnippet: feishuLinked
-			? "Ask the user a question directly in the reply text (Feishu session: ask_question is disabled)"
-			: "Ask the user a question (or a batch of questions) and wait for responses",
-		promptGuidelines: feishuLinked
-			? [
-				"IMPORTANT: This session is linked to Feishu; the interactive ask_question tool is disabled.",
-				"When you need input from the user, write the question directly in the reply text — the user answers with a Feishu message.",
-				"Do NOT call ask_question; if you do, it returns an explanation instead of a real answer.",
-			]
-			: [
+		promptSnippet: "Ask the user a question (or a batch of questions) and wait for responses",
+		promptGuidelines: [
 				"IMPORTANT RULE: Whenever you need ANY input from the user (a choice, confirmation, text, or multi-line content), you MUST use the ask_question tool. Do NOT write questions in plain text — that forces the user to type free-form replies and breaks the desktop UI interaction flow.",
 				"Use type:select with options when the user should pick from predefined choices. Options may be strings or {label, value?, description?} objects; use description to explain long options.",
 				"Use type:confirm when you need a yes/no decision before proceeding (e.g. destructive operations, irreversible changes).",
@@ -363,23 +343,6 @@ export default function (pi: ExtensionAPI) {
 			const record = params as Record<string, unknown>;
 			const isBatch = Array.isArray(record.questions) && (record.questions as unknown[]).length > 0;
 			const questions = toQuestions(record);
-
-			// 飞书绑定会话：不弹交互卡片，直接返回指引（agent 会把问题写进回复转述给用户）
-			if (feishuLinked) {
-				const msg = "ask_question 已禁用：当前会话连接了飞书，交互式提问卡片不可用。请把问题直接写入回复文本，用户会以飞书消息回答。";
-				return isBatch
-					? batchResult(questions, [], true)
-					: {
-							content: [{ type: "text" as const, text: msg }],
-							details: {
-								question: questions[0].question,
-								type: questions[0].type,
-								answer: null,
-								answered: false,
-							},
-						};
-				}
-
 
 
 			// 非交互模式（headless）：不阻塞直接返回

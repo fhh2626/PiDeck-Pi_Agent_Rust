@@ -304,36 +304,6 @@ export const ipcChannels = {
 	terminalExit: "terminal:exit",
 	terminalShells: "terminal:shells",
 
-	// ===== 飞书桥接 =====
-	feishuConnect: "feishu:connect",
-	/** 临时连接（不保存 bot 配置），用于首次添加 Bot 时先验证后保存 */
-	feishuConnectTemp: "feishu:connect-temp",
-	feishuDisconnect: "feishu:disconnect",
-	feishuStatus: "feishu:status",
-	feishuStatusRequest: "feishu:status-request",
-	feishuBotsList: "feishu:bots-list",
-	feishuBotAdd: "feishu:bot-add",
-	feishuBotRemove: "feishu:bot-remove",
-	feishuBotConfig: "feishu:bot-config",
-	feishuBotSecret: "feishu:bot-secret",
-	feishuTestConnection: "feishu:test-connection",
-	feishuBindingsList: "feishu:bindings-list",
-	feishuBindingRemove: "feishu:binding-remove",
-	feishuBindingUpdate: "feishu:binding-update",
-	feishuBindingsChanged: "feishu:bindings-changed",
-	feishuBotsChanged: "feishu:bots-changed",
-	feishuMessages: "feishu:messages",
-	feishuQrCode: "feishu:qr-code",
-	feishuConnectByBot: "feishu:connect-by-bot",
-	/** Pi 创建会话时触发飞书自动拉群 */
-	feishuAutoGroup: "feishu:auto-group",
-	/** 获取指定稳定 Session 绑定的飞书 Bot ID */
-	feishuSessionBotGet: "feishu:session-bot-get",
-	/** 设置指定稳定 Session 使用的飞书 Bot ID */
-	feishuSessionBotSet: "feishu:session-bot-set",
-	/** 飞书 /whoami 结果推回前端 */
-	feishuWhoamiResult: "feishu:whoami-result",
-
 	// ===== 桌面宠物（全局聚合单宠） =====
 	/** 主进程 → 宠物窗：推送聚合状态 */
 	petState: "pet:state",

@@ -285,8 +285,4 @@ test("main-process user surfaces use stable copy and keep caught details in logs
   assert.doesNotMatch(petSystem, /text:\s*"(?:Agent 出错了|任务完成，记得 Review)"/);
   assert.doesNotMatch(petSystem, /label:\s*"(?:切换宠物|关闭宠物)"/);
   assert.doesNotMatch(petBridge, /text:\s*`?\$\{errored\.title\} 出错了/);
-
-  const feishuConfig = readFileSync("src/main/feishu/FeishuConfig.ts", "utf8");
-  assert.match(feishuConfig, /name: parsed\.name \|\| defaultBotName/);
-  assert.doesNotMatch(feishuConfig, /parsed\.name \|\| "默认机器人"/);
 });

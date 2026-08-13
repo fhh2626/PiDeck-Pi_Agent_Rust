@@ -1,4 +1,4 @@
-import { stripFeishuDocActionHint, stripHostInstruction } from "../feishu/docActions";
+import { stripHostInstruction } from "./hostInstruction";
 
 function stripCpaCompletionMarker(text: string): string {
 	// CPA uses this final-line sentinel for transport completion; it is not user-visible content.
@@ -13,9 +13,9 @@ function stripCpaCompletionMarker(text: string): string {
  */
 export function extractMessageText(content: unknown): string {
 	if (typeof content === "string") {
-		// 宿主指令 / 飞书能力提示只给模型看，UI 与历史展示前剥离。
+		// 宿主指令只给模型看，UI 与历史展示前剥离。
 		return stripCpaCompletionMarker(
-			stripHostInstruction(stripFeishuDocActionHint(content)),
+			stripHostInstruction(content),
 		);
 	}
 	if (!Array.isArray(content)) return "";
@@ -45,7 +45,7 @@ export function extractMessageText(content: unknown): string {
 	}
 
 	return stripCpaCompletionMarker(
-		stripHostInstruction(stripFeishuDocActionHint(text)),
+		stripHostInstruction(text),
 	);
 }
 

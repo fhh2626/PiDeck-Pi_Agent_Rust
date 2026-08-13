@@ -66,7 +66,7 @@ function loadSessionScanner(homePath) {
 	const piCompatibility = loadTranspiledModule("src/shared/piCompatibility.ts");
 	const messageContent = loadTranspiledModule(
 		"src/main/pi/messageContent.ts",
-		new Map([["../feishu/docActions", { stripFeishuDocActionHint: (text) => text }]]),
+		new Map([["./hostInstruction", { stripHostInstruction: (text) => text }]]),
 	);
 	const fsRetry = loadTranspiledModule("src/main/utils/fsRetry.ts");
 	const sessionSummaryCache = loadTranspiledModule(

@@ -35,7 +35,7 @@ Rust 源码明确实现了 PiDeck 依赖的 `prompt`、`abort`、`get_state`、`
 
 | PiDeck 功能 | 风险 | 原因/处理 |
 |---|---|---|
-| PiDeck 内置扩展 | 高 | Rust 有 QuickJS/扩展兼容层，但扩展依赖 Node API、包解析、事件细节时可能不同。`-e` 注入路径能启动不代表行为完全相同；Rust 的 `--no-extensions` / `--no-skills` 等开关存在，但 `--no-context-files` 不是两者共同契约。应逐个验证安全门、提问、计划、todo、视觉和飞书相关扩展。 |
+| PiDeck 内置扩展 | 高 | Rust 有 QuickJS/扩展兼容层，但扩展依赖 Node API、包解析、事件细节时可能不同。`-e` 注入路径能启动不代表行为完全相同；Rust 的 `--no-extensions` / `--no-skills` 等开关存在，但 `--no-context-files` 不是两者共同契约。应逐个验证安全门、提问、计划、todo 和视觉扩展。 |
 | 扩展 UI 交互 | 中高 | RPC 事件名和 payload 大体相近，但 UI request 的队列、取消、字段完整性需要真实运行验证。 |
 | 第三方 npm 扩展 | 高 | Rust 不是 Node runtime；依赖 Node 内置模块或 npm 原生包的扩展不能假设可用。 |
 | `/settings`、`/share`、`/login` 等 TUI 命令 | 中 | 这些不是 PiDeck 的主协议面；Rust 的交互命令矩阵仍有 `?`，PiDeck 不应依赖其存在。 |
@@ -81,6 +81,6 @@ Rust 原生 subagent 本身通过 `--no-session` 运行临时 child。若未来 
 
 - 用至少一个 Anthropic/OpenAI/Gemini provider 分别验证文本、图片、reasoning、切换模型和上下文统计。
 - 验证 abort、自动 retry、自动 compact、follow-up/steer 的状态时序。
-- 验证 PiDeck 内置扩展：安全策略、ask question、plan/todo、视觉、飞书桥接。
+- 验证 PiDeck 内置扩展：安全策略、ask question、plan/todo 和视觉。
 - 验证 Rust `subagent` 开启方式（默认工具列表不一定包含它）以及并发/链式 child 的输出是否只作为父 Agent 的 tool 结果展示。
 - 验证从 TypeScript Pi 创建的 session、从 Rust Pi 创建的 session 以及跨实现 resume/fork。

@@ -183,11 +183,7 @@ exports.default = async function (context) {
 
   let totalRemoved = 0;
 
-  // --- 3a. 保留 @larksuiteoapi 的 CJS 运行时入口 ---
-  // node-sdk 的 package.json 将 main 指向 ./lib/index.js，且未声明 exports。
-  // Node.js 的动态 import() 仍会按 main 解析，所以不能删除 lib/；否则打包版会找不到 SDK。
-
-  // --- 3b. 删除所有 node_modules 中的 source map、文档、测试文件 ---
+  // --- 3a. 删除所有 node_modules 中的 source map、文档、测试文件 ---
   const nmExtractDir = path.join(extractDir, "node_modules");
   if (fs.existsSync(nmExtractDir)) {
     async function cleanNodeModules(dir) {

@@ -78,7 +78,6 @@
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
-    "@larksuiteoapi/node-sdk": "^1.67.0",
     "@tiptap/core": "^3.29.2",
     "@tiptap/pm": "^3.29.2",
     "@tiptap/react": "^3.29.2",
