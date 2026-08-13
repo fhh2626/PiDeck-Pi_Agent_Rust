@@ -1476,7 +1476,9 @@ async function createWindow() {
 		height: startupBounds.height,
 		minWidth: 880,
 		minHeight: 640,
-		title: "",
+		// Windows 任务栏/Alt-Tab 显示这个标题。自定义无框标题栏时 UI 自己画标题，
+		// 但 OS 任务栏仍读 BrowserWindow.title；空字符串会变成“只有图标、没有软件名”。
+		title: "PiDeck",
 		icon: iconPath,
 		frame: windowOptions.frame,
 		titleBarStyle: windowOptions.titleBarStyle,
@@ -2723,6 +2725,29 @@ app.whenReady().then(async () => {
 		}
 	});
 
+	await appLogger.info("app", "Application started", {
+		version: app.getVersion(),
+		platform: process.platform,
+		arch: process.arch,
+		installationType: settingsStore.get().installationType,
+	});
+	await applyDesktopProxy(settingsStore.get());
+	registerIpc();
+	registerFeishuIpc();
+
+	// 内存分析模式（PIDECK_MEMORY_PROFILE=1）：尽早开始采样，覆盖窗口创建/加载全过程。
+	// 采样失败不阻塞启动（诊断工具降级为不可用）。
+	if (isMemoryProfileEnabled()) {
+		memoryProfileHandle = await startMemoryProfile(() => agentManager.hasActiveStreaming()).catch((error) => {
+			console.error("Failed to start memory profile:", error);
+			return null;
+		});
+	}
+	// 窗口先于 WSL 探测 / pi settings 修补 / Web 服务启动创建：
+	// 那几步可能各花数秒（wsl.exe printenv 最多 8s），Typora/VS Code 不会在首窗前做这些事。
+	await createWindow();
+	setupTray();
+
 	// 根据已加载的 WSL 设置配置会话扫描器，使其能同时扫描 WSL 中的 pi 会话目录
 	const syncWslConfig = async () => {
 		const { wslEnabled, wslDistro, wslUser } = settingsStore.get();
@@ -2746,49 +2771,26 @@ app.whenReady().then(async () => {
 			if (xuePromptManager) xuePromptManager.configureWsl(null);
 		}
 	};
-	await syncWslConfig();
-
-	// 内置扩展改为 RPC -e 注入（见 PiProcess/AgentManager），不再复制到用户扩展目录。
-	// 启动时清理历史版本部署的 pi-deck-* 与已下线扩展，避免 CLI/RPC 双加载。
-	await migrateLegacyBuiltInExtensions().catch((error) => {
+	// 这些启动修补不挡住首窗；失败只记日志，用户已经能看到 boot overlay。
+	void syncWslConfig().catch((error) => {
+		console.error("Failed to sync WSL config:", error);
+	});
+	void migrateLegacyBuiltInExtensions().catch((error) => {
 		console.error("Failed to migrate legacy built-in extensions:", error);
 	});
-
-	// 补齐 pi settings.json 缺失的默认配置项，新安装或精简配置的用户无需手动添加。
-	await ensureAllPiSettingsDefaults().catch((error) => {
+	void ensureAllPiSettingsDefaults().catch((error) => {
 		console.error("Failed to ensure pi settings defaults:", error);
 	});
-
-	await appLogger.info("app", "Application started", {
-		version: app.getVersion(),
-		platform: process.platform,
-		arch: process.arch,
-		installationType: settingsStore.get().installationType,
-	});
-	await applyDesktopProxy(settingsStore.get());
-	await webServiceManager.applySettings(settingsStore.get()).catch((error) => {
+	void webServiceManager.applySettings(settingsStore.get()).catch((error) => {
 		console.error("Failed to start web service:", error);
 		void appLogger.warn("web", "Web service disabled after apply failure", {
 			error: error instanceof Error ? error.message : String(error),
 		});
 		void settingsStore.update({ webServiceEnabled: false });
 	});
-	registerIpc();
-	registerFeishuIpc();
 
 	// 🆕 自动连接：如果已有 Bot 配置，自动启动飞书连接
 	autoConnectFeishu();
-
-	// 内存分析模式（PIDECK_MEMORY_PROFILE=1）：尽早开始采样，覆盖窗口创建/加载全过程。
-	// 采样失败不阻塞启动（诊断工具降级为不可用）。
-	if (isMemoryProfileEnabled()) {
-		memoryProfileHandle = await startMemoryProfile(() => agentManager.hasActiveStreaming()).catch((error) => {
-			console.error("Failed to start memory profile:", error);
-			return null;
-		});
-	}
-	await createWindow();
-	setupTray();
 
 	// 冷启动通知唤起：应用未运行时点击系统通知，本进程即为唯一实例（无次实例 .focus 流转），
 	// argv 携带 pideck:// URL，窗口就绪后直接向 renderer 发送跳转目标。

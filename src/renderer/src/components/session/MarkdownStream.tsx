@@ -21,13 +21,23 @@ const mathPlugin = createMathPlugin({ singleDollarTextMath: true });
 /**
  * 流式超长兜底阈值（字符数，UTF-16 code unit）。
  *
- * marked 解析成本随当前累积文本线性增长：实测（marked 17，200 轮平均）
- * 30K 字符约 2.3ms/帧（帧预算 14%）、60K 约 5.1ms（31%）。
- * pi 的典型回答（含代码）在 10K 字符以内；超过该阈值时流式期间回退纯文本，
- * 保住 60fps 与打字机节奏（rAF 掉帧 → queue 积压 → 流式滞后），settle 后
- * 自动切回全量渲染。正文与思考共用此兜底。
+ * 流式主路径已是纯文本节点；该阈值只防「误走 parse」或异常超长累积。
+ * 超过后仍保持纯文本，settle 后再切回全量 Streamdown。正文与思考共用。
  */
-export const STREAM_LIGHT_MAX_CHARS = 40_000;
+export const STREAM_LIGHT_MAX_CHARS = 8_000;
+
+function lastOpenFenceIndex(text: string): number {
+	const matches = [...text.matchAll(/```|~~~/g)];
+	if (matches.length % 2 === 0) return -1;
+	return matches[matches.length - 1]?.index ?? -1;
+}
+
+/** 流式未闭合围栏只截到围栏前，避免半截代码/mermaid 触发重解析。 */
+function streamingDisplayText(text: string): string {
+	const openAt = lastOpenFenceIndex(text);
+	if (openAt < 0) return text;
+	return text.slice(0, openAt).trimEnd();
+}
 
 /**
  * Streamdown 渲染管线（唯一 markdown 引擎）。
@@ -65,7 +75,7 @@ export const MarkdownStream = memo(function MarkdownStream(props: {
 }) {
 	const isDark = typeof document !== "undefined" &&
 		document.documentElement.dataset.theme === "dark";
-	// 逐字打字机：默认参数见 useSmoothStream（约 8ms / 每帧最多 6 字）。
+	// 逐字打字机：默认约 24ms / 每帧最多 3 个语素，避免 120Hz 全量 parse。
 	const { displayedContent } = useSmoothStream({
 		content: props.text,
 		isStreaming: Boolean(props.isStreaming),
@@ -75,29 +85,26 @@ export const MarkdownStream = memo(function MarkdownStream(props: {
 	// 流式超长兜底：长度单调递增，一旦超过阈值保持纯文本到 settle，不会反复横跳。
 	const streamPlain =
 		isStreamingNow && displayText.length > STREAM_LIGHT_MAX_CHARS;
-	// 流式期间走轻量渲染：跳过代码高亮/mermaid/数学等重插件，只跑 marked 核心解析，
-	// 否则 30fps 逐字渲染会让插件管线（每帧全量树遍历）占满主线程，React concurrent
-	// 把多帧 setState 合并提交 → DOM 一帧蹦多字（学 Proma：流式期间 react-markdown 轻渲染）。
-	// 流结束 isStreaming 变 false 后自动切回全量（含高亮/mermaid/表格）。
-	const effectiveLight = props.light || Boolean(props.isStreaming);
-	// 流式中精简插件：gfm/codeMeta/linkifyPaths 与 math 等插件都留到静态渲染；
-	// 外部显式传入的插件（FileDiffViewer 等场景）不受流式精简影响。
-	const resolvedRemarkPlugins = isStreamingNow
+	const streamLive = isStreamingNow;
+	const liveText = streamLive && !streamPlain
+		? streamingDisplayText(displayText)
+		: displayText;
+	// 静态场景仍可主动 light（更新日志等）；流式不再挂半套 Streamdown。
+	const effectiveLight = props.light || streamLive;
+	const resolvedRemarkPlugins = streamLive
 		? []
 		: (props.remarkPlugins ?? [
 				defaultRemarkPlugins.gfm,
 				defaultRemarkPlugins.codeMeta,
 				remarkLinkifyPaths,
 			]);
-	const resolvedRehypePlugins = isStreamingNow
+	const resolvedRehypePlugins = streamLive
 		? []
 		: (props.rehypePlugins ?? [defaultRehypePlugins.raw]);
 	// 显式 Components 标注：让 a 的 props 走上下文类型推断（streamdown 的
 	// Components 是「具名槽位 | 索引签名」联合，直接内联会触发索引签名分支的类型不兼容）
 	// useMemo 依赖回调 props：回调引用变化时 components 重建，streamElement 随之重建，
 	// 闭包不会捕获过期回调（比裸对象 + eslint-disable 的做法依赖链完整）。
-	// 公式复制不再走 p 层拦截：rehype-katex 产物不进组件 map，p 层只能覆盖
-	// “单个行内公式独占一段”的罕见场景；改为 FormulaCopyLayer 事件委托浮层。
 	const components: Components = useMemo(
 		() =>
 			props.components ?? {
@@ -111,22 +118,14 @@ export const MarkdownStream = memo(function MarkdownStream(props: {
 			},
 		[props.components, props.onOpenExternal, props.onOpenFile],
 	);
-	// 节流窗口内 displayText 不变时，useMemo 返回同一 element 引用，
-	// React 直接 bailout，Streamdown 子树（含 marked 解析）完全跳过。
 	const streamElement = useMemo(
 		() =>
-			streamPlain ? (
-				// 超长兜底：流式期间纯文本节点（主线程只做字符串切片），
-				// 排版交给容器 markdown-body（pre-wrap 语义由此处补上）。
-				<div className="whitespace-pre-wrap break-words">{displayText}</div>
+			streamLive ? (
+				<div className="whitespace-pre-wrap break-words">{liveText}</div>
 			) : (
 				<Streamdown
-				// 学 Proma：流式期间也用 static 模式（同步渲染）。streamdown 的 streaming 模式
-				// 内部用 useTransition 低优先级更新块，React 会把多帧 transition 合并提交 →
-				// DOM 一帧跳多帧步进（视觉蹦字）；static 模式与 Proma 的 react-markdown 同为
-				// 同步提交，每帧独立渲染，DOM 增量 = useSmoothStream 每帧步进。
 				mode="static"
-				isAnimating={props.isStreaming}
+				isAnimating={false}
 				remarkPlugins={resolvedRemarkPlugins}
 				rehypePlugins={resolvedRehypePlugins}
 				urlTransform={props.urlTransform ?? markdownUrlTransform}
@@ -150,12 +149,12 @@ export const MarkdownStream = memo(function MarkdownStream(props: {
 				{displayText}
 			</Streamdown>
 			),
-		// 依赖链完整：displayText 变化（节流窗口到点）或组件配置变化时才重建 element。
 		[
 			displayText,
 			streamPlain,
+			streamLive,
+			liveText,
 			components,
-			props.isStreaming,
 			effectiveLight,
 			resolvedRemarkPlugins,
 			resolvedRehypePlugins,

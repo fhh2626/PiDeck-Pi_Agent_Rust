@@ -5,6 +5,10 @@
  */
 const { execSync } = require("node:child_process");
 const path = require("node:path");
+const {
+  applyPortableUnpackCacheTemplate,
+  restorePortableUnpackCacheTemplate,
+} = require("./apply-portable-unpack-cache");
 
 const root = path.resolve(__dirname, "..");
 
@@ -12,9 +16,14 @@ console.log("[1/2] 打包代码（跳过类型检查）…");
 execSync("npx electron-vite build", { cwd: root, stdio: "inherit" });
 
 console.log("\n[2/2] 编译便携单 exe（不压缩 ASAR）…");
-execSync(
-  "npx electron-builder --win portable -c.compression=store",
-  { cwd: root, stdio: "inherit" },
-);
+applyPortableUnpackCacheTemplate();
+try {
+  execSync(
+    "npx electron-builder --win portable -c.compression=store",
+    { cwd: root, stdio: "inherit" },
+  );
+} finally {
+  restorePortableUnpackCacheTemplate();
+}
 
 console.log("\n✅ 完成！便携 exe 在 release/ 目录下");

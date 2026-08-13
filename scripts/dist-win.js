@@ -10,6 +10,10 @@
  */
 const { execSync } = require("node:child_process");
 const path = require("node:path");
+const {
+  applyPortableUnpackCacheTemplate,
+  restorePortableUnpackCacheTemplate,
+} = require("./apply-portable-unpack-cache");
 
 const root = path.resolve(__dirname, "..");
 
@@ -23,10 +27,15 @@ console.log(`[1/2] 打包代码…`);
 execSync("npm run build", { cwd: root, stdio: "inherit", shell: true });
 
 console.log(`\n[2/2] electron-builder --win ${formats} …`);
-execSync(`npx electron-builder --win ${formats}`, {
-  cwd: root,
-  stdio: "inherit",
-  shell: true,
-});
+applyPortableUnpackCacheTemplate();
+try {
+  execSync(`npx electron-builder --win ${formats}`, {
+    cwd: root,
+    stdio: "inherit",
+    shell: true,
+  });
+} finally {
+  restorePortableUnpackCacheTemplate();
+}
 
 console.log(`\n✅ 完成！产物在 release/ 目录下`);

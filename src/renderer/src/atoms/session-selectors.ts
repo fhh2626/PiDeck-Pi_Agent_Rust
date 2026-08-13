@@ -1,7 +1,8 @@
 import { atom } from "jotai";
-import { atomFamily } from "jotai/utils";
+import { atomFamily, selectAtom } from "jotai/utils";
 import type { SessionRecord, SessionSummary } from "../../../shared/types";
 import {
+  sameSessionRuntimeView,
   sessionIdsByProjectAtom,
   sessionRecordsAtom,
   sessionRuntimeByIdAtom,
@@ -52,7 +53,7 @@ export const sessionSummariesByProjectIdAtomFamily = atomFamily((projectId: stri
 );
 
 export const sessionRuntimeBySessionIdAtomFamily = atomFamily((sessionId: string) =>
-  atom((get) => get(sessionRuntimeByIdAtom)[sessionId]),
+  selectAtom(sessionRuntimeByIdAtom, (map) => map[sessionId], sameSessionRuntimeView),
 );
 
 // A moved runtime can leave an older Session projection behind; the newest binding wins.

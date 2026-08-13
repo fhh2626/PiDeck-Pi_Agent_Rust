@@ -34,7 +34,7 @@ test("main process: top-level message_start creates empty skeleton", () => {
   const block = agentManager.slice(topStart, autoRetry);
   assert.match(block, /allowEmpty:\s*true/);
   assert.match(block, /flushMessageEmit/);
-  assert.match(block, /streamingAgents\.add/);
+  assert.match(block, /this\.setStreamingAgent\(agentId, true\)/);
 
   // text_delta 分支内不得调用 upsertAssistantMessage
   const textDeltaIdx = agentManager.indexOf('if (eventType === "text_delta")');

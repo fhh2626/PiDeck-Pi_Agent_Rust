@@ -40,6 +40,45 @@ export type SessionRuntimeViewState = {
   noSession?: boolean;
 };
 
+/** per-session runtime 比较：updatedAt 不计入，避免同值 patch 只换时间戳就戳醒订阅者。 */
+export function sameSessionRuntimeView(
+  a: SessionRuntimeViewState | undefined,
+  b: SessionRuntimeViewState | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.agentId === b.agentId &&
+    a.runtimeGeneration === b.runtimeGeneration &&
+    a.status === b.status &&
+    a.state === b.state &&
+    a.projectId === b.projectId &&
+    a.cwd === b.cwd &&
+    a.title === b.title &&
+    a.piSessionId === b.piSessionId &&
+    a.sessionPath === b.sessionPath &&
+    a.createdAt === b.createdAt &&
+    a.compactionCount === b.compactionCount &&
+    a.noSession === b.noSession
+  );
+}
+
+function sameSidebarRuntimeMap(
+  prev: Record<string, { agentId?: string; status: string }>,
+  next: Record<string, { agentId?: string; status: string }>,
+): boolean {
+  if (prev === next) return true;
+  const prevKeys = Object.keys(prev);
+  const nextKeys = Object.keys(next);
+  if (prevKeys.length !== nextKeys.length) return false;
+  for (const id of nextKeys) {
+    const left = prev[id];
+    const right = next[id];
+    if (!left || left.agentId !== right.agentId || left.status !== right.status) return false;
+  }
+  return true;
+}
+
 /** Live 思考段（按稳定 id 索引，与 History msg-thinking-* 同一身份）。 */
 export type StreamingThinkingEntry = {
   sessionId: string;
@@ -125,6 +164,7 @@ export const sidebarRuntimeAtom = selectAtom(
     }
     return slim;
   },
+  sameSidebarRuntimeMap,
 );
 export const sessionRuntimeUiByIdAtom = atom<Record<string, SessionRuntimeUiState>>({});
 /**
@@ -1060,6 +1100,12 @@ export const applySessionRuntimeEventAtom = atom(
             [event.sessionId]: { cacheHitHistory: nextHistory },
           });
         }
+      }
+      // 同值 runtime-state（含仅刷新 updatedAt）不写 map，避免所有 session family 被父对象换新戳醒。
+      // cache-hit 统计必须先入列：sameSessionRuntimeView 故意忽略 updatedAt，
+      // 若先 return 会把「state 未变、但 cacheHitPercent 首次/变化」一并丢掉。
+      if (!bindingChanged && sameSessionRuntimeView(currentRuntime, nextRuntime)) {
+        return;
       }
     } else if (event.sourceChannel === "agents:thinking" && payload) {
       // Live 思考：只更新 streamingThinkingByIdAtom / liveThinkingIdBySessionAtom。

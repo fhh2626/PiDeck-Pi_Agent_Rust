@@ -168,6 +168,9 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     },
+    "portable": {
+      "unpackDirName": "PiDeck-portable-0.7.0-beta"
+    },
     "mac": {
       "icon": "build/icon.icns",
       "target": [

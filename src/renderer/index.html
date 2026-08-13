@@ -7,7 +7,8 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob: pideck-bg: https://cloudcache.tencent-cloud.com https://skillhub-1388575217.cos.accelerate.myqcloud.com; font-src 'self' data:; frame-src 'self' file: blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* https://api.skillhub.cn"
     />
-    <title></title>
+    <!-- Windows 任务栏/Alt-Tab 读这个标题；留空时只剩图标、没有软件名。 -->
+    <title>PiDeck</title>
     <style>
       /* 启动画面：独立于 #root，React 挂载后淡出移除；不依赖外部字体/图片，保证首帧极快。 */
       /* 注意：reset 必须限定在 boot-overlay 内——全局 * 规则是无层级的，

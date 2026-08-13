@@ -43,7 +43,7 @@ test("streamdown pipeline delegates to official plugins (code/mermaid/math) and 
   // 自定义 pre/span 覆盖移除：mermaid 由插件渲染、公式由 math 插件
   assert.doesNotMatch(stream, /pre: \(preProps\) => <CodeBlock/);
   assert.doesNotMatch(stream, /span: \(spanProps\) => <MathSpan/);
-  // 流式也走 static：streaming 模式的 useTransition 会合并帧导致蹦字
+  // settle 后走 static：streaming 模式的 useTransition 会合并帧导致蹦字
   assert.match(stream, /mode="static"/);
   assert.doesNotMatch(stream, /mode=\{props\.isStreaming \? "streaming" : "static"\}/);
   // mermaid 主题跟随明暗
@@ -124,20 +124,23 @@ test("static markdown scenes share the Streamdown engine", () => {
 
 test("streaming overlong guard: plain-text fallback above STREAM_LIGHT_MAX_CHARS", () => {
   const stream = readFileSync("src/renderer/src/components/session/MarkdownStream.tsx", "utf8");
-  // 阈值常量导出（字符数）：marked 解析随文本线性涨，超长时流式回退纯文本
-  assert.match(stream, /export const STREAM_LIGHT_MAX_CHARS = 40_000/);
+  // 阈值常量导出（字符数）：流式主路径已是纯文本，阈值只做超长硬顶
+  assert.match(stream, /export const STREAM_LIGHT_MAX_CHARS = 8_000/);
   assert.match(stream, /streamPlain =\s*\n?\s*isStreamingNow && displayText\.length > STREAM_LIGHT_MAX_CHARS/);
   // 回退节点：纯文本 + pre-wrap（排版由容器 markdown-body 接管）
   assert.match(stream, /whitespace-pre-wrap break-words/);
-  // 回退必须发生在 Streamdown 之外（不建解析树），且依赖链含 streamPlain
-  assert.match(stream, /streamPlain \? \(/);
-  assert.match(stream, /streamPlain,\n\s*components,/);
+  // 流式主路径不建 Streamdown 树；settle 后再挂全量管线
+  assert.match(stream, /streamLive \? \(/);
+  assert.match(stream, /streamLive,/);
+  assert.match(stream, /liveText/);
+  assert.match(stream, /streamingDisplayText/);
   // 超长兜底对思考同样生效（ThinkingBlock 走同一 MarkdownStream），无需额外开关
   const thinking = readFileSync("src/renderer/src/components/session/TimelineEventCards.tsx", "utf8");
   assert.match(thinking, /<MarkdownStream/);
-  // 流式轻渲染契约不回退：static 模式 + 流式精简插件仍是默认
+  assert.doesNotMatch(thinking, /from "\.\.\/\.\.\/utils\/useSmoothStream"/);
+  assert.match(thinking, /text=\{props\.text\}/);
   assert.match(stream, /mode="static"/);
-  assert.match(stream, /resolvedRemarkPlugins = isStreamingNow\s*\n\s*\?\s*\[\]/);
+  assert.match(stream, /resolvedRemarkPlugins = streamLive\s*\n\s*\?\s*\[\]/);
 });
 
 test("AnswerOutput live path renders through MarkdownStream (no dual typewriter)", () => {

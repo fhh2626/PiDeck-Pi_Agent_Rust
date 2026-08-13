@@ -1630,7 +1630,7 @@ export class AgentManager {
 		this.flushMessageEmit(agentId);
 		this.finishThinkingChannel(agentId);
 		this.activeAssistantMessageIds.delete(agentId);
-		this.streamingAgents.delete(agentId);
+		this.setStreamingAgent(agentId, false);
 		this.textEmitter.cancel(agentId);
 		this.streamingText.delete(agentId);
 		const hadActiveTool = Boolean(
@@ -1643,7 +1643,7 @@ export class AgentManager {
 		// abort 直接清本地工具状态时必须同步发送 false 边沿，
 		// 否则 renderer 可能只收到 idle，却继续保留旧的工具 spinner。
 		if (hadActiveTool) this.emitToolRuntimeTransition(agentId, false);
-		// 同步清除 streaming 标志，避免停止后“正在工具调用/正在回应”延迟到 settled 才消失。
+		// 工具边沿不含 isStreaming；abort 后必须再发一次关边沿，避免 spinner 残。
 		this.emitStreamingStatePatch(agentId);
 		// 取消节流中的 message 推送，避免 abort 后还有 pending flush 把旧内容刷回 UI。
 		this.cancelMessageEmit(agentId);
@@ -2414,7 +2414,7 @@ export class AgentManager {
 	private clearAgentState(agentId: string) {
 		this.streamingThinking.delete(agentId);
 		this.thinkingSegmentByAgent.delete(agentId);
-		this.streamingAgents.delete(agentId);
+		this.setStreamingAgent(agentId, false);
 		this.activeAssistantMessageIds.delete(agentId);
 		this.toolMessageIds.delete(agentId);
 		this.retryStatusMessageIds.delete(agentId);
@@ -3180,7 +3180,7 @@ export class AgentManager {
 				return;
 			}
 			this.beginAssistantMessage(agentId);
-			this.streamingAgents.add(agentId);
+			this.setStreamingAgent(agentId, true);
 			// 性能计时起表（幂等：message_update start 先到则不重置）。
 			// 顶层 message_start 是 mock/pi 均走的确定路径，不能只依赖 delta 事件。
 			this.ensurePerfTimer(agentId);
@@ -3264,7 +3264,7 @@ export class AgentManager {
 			// 或压缩后继续 queued follow-up。最终空闲必须等 agent_settled，避免中途误判 idle。
 			if (runtime) {
 				this.activeAssistantMessageIds.delete(agentId);
-				this.streamingAgents.delete(agentId);
+				this.setStreamingAgent(agentId, false);
 				this.toolMessageIds.delete(agentId);
 				this.textEmitter.cancel(agentId);
 				this.streamingText.delete(agentId);
@@ -3364,7 +3364,7 @@ export class AgentManager {
 				this.trimRuntimeCache(agentId);
 				this.finishThinkingChannel(agentId);
 				this.activeAssistantMessageIds.delete(agentId);
-				this.streamingAgents.delete(agentId);
+				this.setStreamingAgent(agentId, false);
 				this.toolMessageIds.delete(agentId);
 				this.textEmitter.cancel(agentId);
 				this.streamingText.delete(agentId);
@@ -3415,7 +3415,7 @@ export class AgentManager {
 			// 结算性能指标（幂等：message_update done 先结算则 map 已删，直接返回）
 			this.settleMessagePerf(agentId, typed.message);
 			// 终结 Live 正文通道（顶层 message_end 不经 handleAssistantMessageEvent）
-			this.streamingAgents.delete(agentId);
+			this.setStreamingAgent(agentId, false);
 			const finalText = this.streamingText.get(agentId);
 			if (finalText !== undefined) {
 				this.textEmitter.flush(agentId);
@@ -3423,7 +3423,6 @@ export class AgentManager {
 			}
 			this.textEmitter.cancel(agentId);
 			this.streamingText.delete(agentId);
-			this.emitStreamingStatePatch(agentId);
 		}
 
 		if (typed.type === "tool_execution_start") {
@@ -3774,7 +3773,7 @@ export class AgentManager {
 
 		if (eventType === "start" || eventType === "message_start") {
 			this.beginAssistantMessage(agentId);
-			this.streamingAgents.add(agentId);
+			this.setStreamingAgent(agentId, true);
 			// 性能计时起表（幂等：顶层 message_start 先到则不重置）
 			this.ensurePerfTimer(agentId);
 			// 允许空正文骨架：Live 正文走独立通道，TurnRow 需要 History 挂载点。
@@ -3784,14 +3783,14 @@ export class AgentManager {
 		}
 
 		if (eventType === "text_start" || eventType === "text_end") {
-			this.streamingAgents.add(agentId);
+			this.setStreamingAgent(agentId, true);
 			// 仅在已有骨架上同步 partial；空文本不新建、不刷 timeline。
 			this.upsertAssistantMessage(agentId, partialMessage);
 			return;
 		}
 
 		if (eventType === "text_delta") {
-			this.streamingAgents.add(agentId);
+			this.setStreamingAgent(agentId, true);
 			this.markFirstDelta(agentId);
 			this.markFirstText(agentId);
 			const delta = String(assistantEvent.delta ?? "");
@@ -3815,7 +3814,7 @@ export class AgentManager {
 			const next = prev + delta;
 			this.streamingThinking.set(agentId, next);
 			this.thinkingEmitter.push(agentId, stripAnsi(next));
-			this.streamingAgents.add(agentId);
+			this.setStreamingAgent(agentId, true);
 			// Live 思考唯一热路径：不 upsert messages，避免 50ms timeline 重组。
 			return;
 		}
@@ -3843,7 +3842,7 @@ export class AgentManager {
 			this.flushMessageEmit(agentId);
 			this.finishThinkingChannel(agentId);
 			this.activeAssistantMessageIds.delete(agentId);
-			this.streamingAgents.delete(agentId);
+			this.setStreamingAgent(agentId, false);
 			// 独立流式正文通道终止：推一次最终累积文本后清缓冲（渲染层由历史消息接管）
 			const finalText = this.streamingText.get(agentId);
 			if (finalText !== undefined) {
@@ -5003,9 +5002,18 @@ export class AgentManager {
 			}
 		}
 		this.emit(ipcChannels.agentsMessage, payload);
-		// 消息 flush 时顺带同步本地流式标志：text_delta 置位 streamingAgents 后，
-		// 渲染进程必须及时拿到 isStreaming=true 才会走逐字渐显；此路径 50ms 节流、
-		// 无 RPC（不发 get_state），不会像 emitRuntimeState 那样在高频 delta 下过重。
+	}
+
+	/** 只在 isStreaming 边沿写 Set 并推轻量补丁；热路径重复 add/delete 不再打 runtime。 */
+	private setStreamingAgent(agentId: string, streaming: boolean) {
+		const wasStreaming = this.streamingAgents.has(agentId);
+		if (streaming) {
+			if (wasStreaming) return;
+			this.streamingAgents.add(agentId);
+		} else {
+			if (!wasStreaming) return;
+			this.streamingAgents.delete(agentId);
+		}
 		this.emitStreamingStatePatch(agentId);
 	}
 
@@ -5115,11 +5123,9 @@ export class AgentManager {
 
 	/** 推送独立流式正文通道（agents:text-stream），渲染层写入 streamingTextByIdAtom。
 	 *  done=true 表示本轮回答结束（message_end），渲染层据此把 streaming 置 false。
-	 *  顺带同步 isStreaming 补丁：text_delta 走独立通道后不再触发 flushMessageEmit，
-	 *  若仍只在 flush 里推 patch，渲染层拿不到 isStreaming=true，气泡不会渲染。 */
+	 *  热路径不再附带 runtime patch：isStreaming 只在 setStreamingAgent 边沿推送。 */
 	private emitTextStreamNow(agentId: string, text: string, done = false) {
 		this.emit(ipcChannels.agentsTextStream, { agentId, text, done });
-		this.emitStreamingStatePatch(agentId);
 	}
 
 	private emitState() {

@@ -30,7 +30,7 @@ interface UseSmoothStreamOptions {
 	 * 折叠态内容不可见，逐字推进是纯浪费；展开瞬间以全文呈现（与打字机追平后的观感一致）。
 	 */
 	disabled?: boolean;
-	/** ???????ms???? 8ms?~120Hz ??????? 16ms ??? */
+	/** 最小帧间隔（ms）。默认 24ms，避免 8ms/120Hz 把主线程打满。 */
 	minDelay?: number;
 	/** ??????????? / divisor = ???????????? */
 	streamingDivisor?: number;
@@ -60,11 +60,11 @@ export function useSmoothStream({
 	content,
 	isStreaming,
 	disabled = false,
-	minDelay = 8,
-	streamingDivisor = 5,
+	minDelay = 24,
+	streamingDivisor = 4,
 	drainDivisor = 3,
-	maxStepPerFrame = 6,
-	maxDrainStepPerFrame = 12,
+	maxStepPerFrame = 3,
+	maxDrainStepPerFrame = 8,
 }: UseSmoothStreamOptions): UseSmoothStreamReturn {
 	const [displayedContent, setDisplayedContent] = useState(content);
 
