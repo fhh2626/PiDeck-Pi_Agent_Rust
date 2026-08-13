@@ -255,7 +255,7 @@ export class WebServiceManager {
 			if (url.pathname === "/api/health") {
 				this.sendJson(response, {
 					ok: true,
-					service: "PiDeck",
+					service: "PiDeck-Q",
 					host,
 					port: this.getPort(server, port),
 				});
@@ -590,7 +590,7 @@ export class WebServiceManager {
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
-	<title>PiDeck Web Service</title>
+	<title>PiDeck-Q Web Service</title>
 	<style>
 		:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 		body { margin: 0; background: #f4f6f8; color: #252a31; }
@@ -644,7 +644,7 @@ export class WebServiceManager {
 <body>
 	<div class="app">
 		<aside>
-			<h1>PiDeck</h1>
+			<h1>PiDeck-Q</h1>
 			<div id="projects-title" class="section-title"></div>
 			<div id="projects" class="list"></div>
 			<div id="sessions-title" class="section-title"></div>

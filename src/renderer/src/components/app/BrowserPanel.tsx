@@ -76,7 +76,7 @@ export const moduleState: { tabs: TabEntry[]; activeTabId: string | null; device
 function ensureInitialTab() {
 	if (moduleState.tabs.length > 0) return;
 	const id = genTabId();
-	moduleState.tabs = [{ id, title: "PiDeck", url: DEFAULT_HOME }];
+	moduleState.tabs = [{ id, title: "PiDeck-Q", url: DEFAULT_HOME }];
 	moduleState.activeTabId = id;
 }
 

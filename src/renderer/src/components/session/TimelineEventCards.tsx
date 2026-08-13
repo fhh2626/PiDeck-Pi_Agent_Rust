@@ -436,25 +436,6 @@ export const ThinkingBlock = memo(
 /** 每种状态对应的轮播短语组（i18n；waiting 单条即不轮播）。 */
 type RespondingKind = "starting" | "executing" | "responding" | "waiting";
 
-const RESPONDING_PHRASES: Record<RespondingKind, string[]> = {
-	starting: [
-		t("agent.loading.starting1"),
-		t("agent.loading.starting2"),
-		t("agent.loading.starting3"),
-	],
-	executing: [
-		t("agent.loading.executing1"),
-		t("agent.loading.executing2"),
-		t("agent.loading.executing3"),
-	],
-	responding: [
-		t("agent.loading.responding1"),
-		t("agent.loading.responding2"),
-		t("agent.loading.responding3"),
-	],
-	waiting: [t("agent.loading.waiting")],
-};
-
 export function RespondingIndicator(props: {
 	thinking?: string;
 	showThinking?: boolean;
@@ -478,6 +459,27 @@ export function RespondingIndicator(props: {
 		kind = "waiting";
 	}
 
+	// 必须在渲染期翻译：模块加载时应用设置尚未完成初始化，顶层调用 t()
+	// 会把系统语言固化进数组，导致显式选择的界面语言无法作用于临时状态。
+	const phrases: Record<RespondingKind, string[]> = {
+		starting: [
+			t("agent.loading.starting1"),
+			t("agent.loading.starting2"),
+			t("agent.loading.starting3"),
+		],
+		executing: [
+			t("agent.loading.executing1"),
+			t("agent.loading.executing2"),
+			t("agent.loading.executing3"),
+		],
+		responding: [
+			t("agent.loading.responding1"),
+			t("agent.loading.responding2"),
+			t("agent.loading.responding3"),
+		],
+		waiting: [t("agent.loading.waiting")],
+	};
+
 	return (
 		<div className="responding-indicator" data-kind={kind}>
 			{/* key=kind：状态切换时从该组短语第一条重新轮播，避免旧组下标错位；
@@ -485,7 +487,7 @@ export function RespondingIndicator(props: {
 			   不用官方默认的 ascii 终端字符；文字放大到 text-base */}
 			<ReasoningText
 				key={kind}
-				phrases={RESPONDING_PHRASES[kind]}
+				phrases={phrases[kind]}
 				variant="swap"
 				interval={1800}
 				indicator={

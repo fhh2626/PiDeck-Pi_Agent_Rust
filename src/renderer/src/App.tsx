@@ -184,7 +184,7 @@ export function App() {
             <path fill="url(#root-loading-logo-silver)" d="M517.36 400H634.72V634.72H517.36Z" />
           </svg>
         </div>
-        <strong>PiDeck</strong>
+        <strong>PiDeck-Q</strong>
         <span>{t("app.preloadMissing")}</span>
       </div>
     );

@@ -1051,7 +1051,7 @@ function setupTray() {
 	// iconPath 由 electron-vite 的 ?asset 后缀自动解析，打包后也能正确定位
 	const icon = nativeImage.createFromPath(iconPath);
 	tray = new Tray(icon.resize({ width: 16, height: 16 }));
-	tray.setToolTip("PiDeck");
+	tray.setToolTip("PiDeck-Q");
 
 	// 双击托盘图标恢复窗口（Windows 常见交互）
 	tray.on("double-click", () => {
@@ -1112,7 +1112,7 @@ function printStartupInfo() {
 			"color: #8b5cf6; font-weight: bold;"
 		);
 		console.log(
-			"%c│                      PiDeck Desktop                      │",
+			"%c│                     PiDeck-Q Desktop                     │",
 			"color: #8b5cf6; font-weight: bold; font-size: 16px;"
 		);
 		console.log(
@@ -1295,7 +1295,7 @@ async function createWindow() {
 		minHeight: 640,
 		// Windows 任务栏/Alt-Tab 显示这个标题。自定义无框标题栏时 UI 自己画标题，
 		// 但 OS 任务栏仍读 BrowserWindow.title；空字符串会变成“只有图标、没有软件名”。
-		title: "PiDeck",
+		title: "PiDeck-Q",
 		icon: iconPath,
 		frame: windowOptions.frame,
 		titleBarStyle: windowOptions.titleBarStyle,
