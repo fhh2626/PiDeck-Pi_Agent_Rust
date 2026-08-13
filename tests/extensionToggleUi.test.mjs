@@ -11,3 +11,13 @@ test("extension menu exposes enable and disable actions beside uninstall", () =>
 	assert.match(source, /CircleOff/);
 	assert.match(source, /CircleCheck/);
 });
+
+test("extension menu uses lightweight refresh on entry and after toggles", () => {
+	const modal = readFileSync("src/renderer/src/ConfigModal.tsx", "utf8");
+	const tab = readFileSync("src/renderer/src/config/ExtensionsTab.tsx", "utf8");
+
+	assert.match(modal, /section === "extensions"[\s\S]*?refreshExtensions\(false\)/);
+	assert.match(modal, /onReload=\{\(\) => void refreshExtensions\(false\)\}/);
+	assert.match(modal, /onRefresh=\{\(\) => void refreshExtensions\(true\)\}/);
+	assert.match(tab, /getExtensionsApi\(\)\.toggle\(extension\.source, enabled\)[\s\S]*?props\.onReload\(\)/);
+});

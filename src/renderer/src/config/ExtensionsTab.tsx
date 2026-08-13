@@ -136,6 +136,9 @@ export function ExtensionsTab(props: {
 	data: PiExtensionListResult;
 	loading: boolean;
 	uninstallingSource: string | null;
+	/** 数据变更后的轻量重载：不查询 npm 最新版本。 */
+	onReload: () => void;
+	/** 用户显式刷新：重新扫描并查询 npm 最新版本。 */
 	onRefresh: () => void;
 	onUninstall: (extension: PiExtensionSummary) => void;
 }) {
@@ -164,7 +167,7 @@ export function ExtensionsTab(props: {
 		setRemovingBuiltIn(extension.source);
 		try {
 			await getExtensionsApi().removeBuiltIn(extension.source);
-			props.onRefresh();
+			props.onReload();
 		} catch (e) {
 			showNotice(
 				t("config.extensionOperationFailed", { error: formatExtensionError(e) }),
@@ -181,7 +184,7 @@ export function ExtensionsTab(props: {
 		setRestoringBuiltIn(extension.source);
 		try {
 			await getExtensionsApi().restoreBuiltIn(extension.source);
-			props.onRefresh();
+			props.onReload();
 		} catch (e) {
 			showNotice(
 				t("config.extensionOperationFailed", { error: formatExtensionError(e) }),
@@ -199,7 +202,7 @@ export function ExtensionsTab(props: {
 		setTogglingSource(extension.source);
 		try {
 			await getExtensionsApi().toggle(extension.source, enabled);
-			props.onRefresh();
+			props.onReload();
 			showNotice(t(enabled ? "config.extensionEnabledToast" : "config.extensionDisabledToast", {
 				name: shortName(extension.source),
 			}), 3000);
@@ -229,7 +232,7 @@ export function ExtensionsTab(props: {
 			} else {
 				await getExtensionsApi().install(pkg.installCmd);
 			}
-			props.onRefresh();
+			props.onReload();
 		} catch (e) {
 			showNotice(
 				t("config.extensionOperationFailed", { error: formatExtensionError(e) }),
@@ -269,7 +272,7 @@ export function ExtensionsTab(props: {
 		setUpdatingOne(extension.source);
 		try {
 			await getExtensionsApi().updateOne(extension.source);
-			props.onRefresh();
+			props.onReload();
 			showNotice(t("config.extensionUpdatedToast", { name: shortName(extension.source) }), 3000);
 		} catch (e) {
 			showNotice(
@@ -299,7 +302,7 @@ export function ExtensionsTab(props: {
 							<Button variant="ghost" size="icon-sm" className="size-7"
 								onClick={() => {
 									setShowUpdateDialog(false);
-									props.onRefresh();
+									props.onReload();
 								}}
 								disabled={Boolean(updating)}
 							>
@@ -317,7 +320,7 @@ export function ExtensionsTab(props: {
 								size="sm"
 								onClick={() => {
 									setShowUpdateDialog(false);
-									props.onRefresh();
+									props.onReload();
 								}}
 								disabled={Boolean(updating)}
 							>

@@ -94,8 +94,9 @@ export class ExtensionManager {
 	 * - forceRefresh=true：强制重新 `pi list`，并补充 npm 版本信息。
 	 */
 	async list(forceRefresh = false): Promise<PiExtensionListResult> {
-		// 有缓存且（非强制刷新，或缓存已含版本信息）时直接返回。
-		if (this.listCache && (!forceRefresh || this.listCacheHasVersionInfo)) {
+		// 轻量读取优先复用缓存；显式强制刷新必须真正重扫并查询版本，
+		// 否则用户连续点击“刷新”只会反复看到旧的 npm 版本信息。
+		if (this.listCache && !forceRefresh) {
 			return this.listCache;
 		}
 		// 已有同级或更强请求在飞时复用，避免并发打爆 pi/npm。
