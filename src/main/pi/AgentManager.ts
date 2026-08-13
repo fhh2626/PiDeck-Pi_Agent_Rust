@@ -85,6 +85,8 @@ import {
 /** 项目信任确认弹窗的用户选择 */
 export type ProjectTrustChoice = "trust-remember" | "trust-session" | "deny";
 
+const SESSION_IDENTITY_RETRY_DELAYS_MS: readonly number[] = [0, 50, 100, 200];
+
 /** 从 RPC 返回的未知 ask 记录中安全读取字段，避免批量答案转换扩散 any 强转。 */
 function readAskField(input: unknown, key: string): unknown {
 	if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
@@ -449,6 +451,50 @@ export class AgentManager {
 
 	getMessages(agentId: string) {
 		return this.messages.get(agentId) ?? [];
+	}
+
+	/**
+	 * 补取 Pi 延迟创建的持久会话身份。
+	 *
+	 * 原版 Pi 通常在进程启动后的首个 get_state 就返回 sessionFile；部分兼容实现
+	 * 会在首条 prompt 被接受后才异步创建 JSONL。这里使用同一条 stdio RPC 通道做
+	 * 短时、有界重试，让上层能把草稿 Session 绑定到实际文件并复用目录去重逻辑。
+	 */
+	async refreshSessionIdentity(agentId: string): Promise<AgentTab> {
+		const runtime = this.requireRuntime(agentId);
+		if (runtime.tab.noSession || runtime.tab.sessionPath) return runtime.tab;
+
+		for (const delayMs of SESSION_IDENTITY_RETRY_DELAYS_MS) {
+			if (delayMs > 0) {
+				await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+			}
+			if (this.agents.get(agentId) !== runtime || !runtime.process.isRunning()) break;
+
+			const response = await runtime.process.client
+				.request({ type: "get_state" }, Math.min(this.rpcTimeoutMs, 2_000))
+				.catch(() => ({ success: false, data: undefined }));
+			if (!response.success) continue;
+			const data = response.data as
+				| { sessionId?: string; sessionFile?: string; sessionName?: string }
+				| undefined;
+			const sessionPath = this.normalizeSessionPathFromPi(
+				data?.sessionFile,
+				this.getProject(runtime.tab.projectId)?.path ?? runtime.tab.cwd,
+				runtime.tab.sessionEnvironment ?? "native",
+			);
+			runtime.tab.sessionId = data?.sessionId ?? runtime.tab.sessionId;
+			if (data?.sessionName) runtime.tab.title = data.sessionName;
+			if (!sessionPath) continue;
+
+			runtime.tab.sessionPath = sessionPath;
+			this.emitState();
+			void this.appLogger?.info("agent", "Delayed session identity resolved", {
+				agentId,
+				sessionPath,
+			});
+			break;
+		}
+		return runtime.tab;
 	}
 
 	/**
@@ -2102,12 +2148,15 @@ export class AgentManager {
 		return this.getRuntimeState(agentId);
 	}
 
-	async setThinking(agentId: string, level: string) {
+	async setThinking(agentId: string, level: string): Promise<AgentRuntimeState> {
 		const runtime = this.requireRuntime(agentId);
-		await runtime.process.client.request(
+		const response = await runtime.process.client.request(
 			{ type: "set_thinking_level", level },
 			60_000,
 		);
+		if (!response.success) {
+			throw new Error(response.error ?? `Failed to set thinking level: ${level}`);
+		}
 		this.emitState();
 		return this.getRuntimeState(agentId);
 	}

@@ -201,3 +201,82 @@ test("rebindInFlightMessages：运行中工具消息重载后按 toolCallId 重�
 
 	assert.equal(runningTool.get("tc-9"), projectedTool.id, "工具身份映射重定向到投影版");
 });
+
+test("refreshSessionIdentity retries until a delayed sessionFile is available", async () => {
+	const manager = new AgentManager(
+		() => ({ id: "project-1", name: "Project", path: "C:/project" }),
+		() => null,
+		{ get: () => ({ rpcTimeout: 60_000 }) },
+		{},
+	);
+	let requestCount = 0;
+	const runtime = {
+		tab: {
+			id: "agent-delayed",
+			projectId: "project-1",
+			cwd: "C:/project",
+			title: "Chat agent",
+			status: "running",
+			sessionEnvironment: "native",
+			sessionSource: "pi",
+			createdAt: 1,
+		},
+		process: {
+			isRunning: () => true,
+			client: {
+				request: async () => {
+					requestCount += 1;
+					return requestCount < 3
+						? { success: true, data: { sessionId: "pi-session-delayed" } }
+						: {
+							success: true,
+							data: {
+								sessionId: "pi-session-delayed",
+								sessionFile: "C:/sessions/delayed.jsonl",
+								sessionName: "你好",
+							},
+						};
+				},
+			},
+		},
+	};
+	manager.agents.set("agent-delayed", runtime);
+
+	const tab = await manager.refreshSessionIdentity("agent-delayed");
+
+	assert.equal(requestCount, 3);
+	assert.equal(tab.sessionPath, "C:/sessions/delayed.jsonl");
+	assert.equal(tab.sessionId, "pi-session-delayed");
+	assert.equal(tab.title, "你好");
+});
+
+test("setThinking surfaces an RPC rejection instead of reporting success", async () => {
+	const manager = new AgentManager(
+		() => ({ id: "project-1", name: "Project", path: "C:/project" }),
+		() => null,
+		{ get: () => ({ rpcTimeout: 60_000 }) },
+		{},
+	);
+	manager.agents.set("agent-thinking", {
+		tab: {
+			id: "agent-thinking",
+			projectId: "project-1",
+			cwd: "C:/project",
+			title: "Session",
+			status: "idle",
+			sessionEnvironment: "native",
+			sessionSource: "pi",
+			createdAt: 1,
+		},
+		process: {
+			client: {
+				request: async () => ({ success: false, error: "unsupported thinking level" }),
+			},
+		},
+	});
+
+	await assert.rejects(
+		manager.setThinking("agent-thinking", "max"),
+		/unsupported thinking level/,
+	);
+});
