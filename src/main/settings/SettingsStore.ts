@@ -169,6 +169,8 @@ Gitmoji 对应关系：
   // ── 扩展管理 ──
   /** 用户手动移除的内置扩展，启动时跳过自动部署 */
   removedBuiltInExtensions: [],
+  /** 用户删除的内置 Prompt 模板名称；找回默认模板时清空 */
+  hiddenBuiltinPromptNames: [],
 
   // ── 更新检测：默认正常检测，用户可手动关闭忽略更新 ──
   disableUpdateCheck: false,

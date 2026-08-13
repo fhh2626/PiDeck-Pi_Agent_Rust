@@ -2488,7 +2488,12 @@ app.whenReady().then(async () => {
 	worktreeService = new WorktreeService(mainCopy);
 	piLocator = new PiLocator(mainCopy);
 	configManager = new ConfigManager(undefined, mainCopy);
-	promptManager = new PromptManager(undefined, mainCopy);
+	promptManager = new PromptManager(
+		undefined,
+		mainCopy,
+		() => settingsStore.get(),
+		(patch) => settingsStore.update(patch),
+	);
 	xuePromptManager = new XuePromptManager();
 	skillManager = new SkillManager(undefined, mainCopy);
 	extensionManager = new ExtensionManager(

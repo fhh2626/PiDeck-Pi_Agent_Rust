@@ -557,6 +557,7 @@ export function App() {
     fontFamilyMono: "system-mono",
     fontFamilyMonoCustom: "",
     removedBuiltInExtensions: [],
+    hiddenBuiltinPromptNames: [],
     disableUpdateCheck: false,
     piRpcOffline: true,
     piRpcNoExtensions: false,

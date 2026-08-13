@@ -252,6 +252,12 @@ export type StartupWindowMode =
 	 */
 	removedBuiltInExtensions: string[];
 
+	/**
+	 * 用户从设置页删除的内置 Prompt 模板名称（如 commit、review）。
+	 * 仅隐藏内置推荐项，不删除磁盘文件；找回默认模板时清空此列表。
+	 */
+	hiddenBuiltinPromptNames: string[];
+
 	// ── 安全管理 ──
 	/**
 	 * 安全管理配置（等级/工具动作/目录边界/会话覆盖）。

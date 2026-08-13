@@ -105,6 +105,7 @@ export const ipcChannels = {
 	promptsCreate: "prompts:create",
 	promptsDelete: "prompts:delete",
 	promptsOpenFolder: "prompts:open-folder",
+	promptsRestoreBuiltins: "prompts:restore-builtins",
 	promptsEdit: "prompts:edit",
 	promptsListByProject: "prompts:list-by-project",
 	promptsCreateInProject: "prompts:create-in-project",

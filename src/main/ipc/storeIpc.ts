@@ -48,6 +48,10 @@ export function registerStoreIpc({
 		void appLogger.info("prompt", "Prompt template deleted", { filePath });
 	});
 	ipcMain.handle(ipcChannels.promptsOpenFolder, () => promptManager.openFolder());
+	ipcMain.handle(ipcChannels.promptsRestoreBuiltins, async () => {
+		await promptManager.restoreHiddenBuiltins();
+		void appLogger.info("prompt", "Built-in prompt templates restored");
+	});
 	ipcMain.handle(ipcChannels.promptsEdit, async (_event, filePath: string, content?: string) => {
 		if (content !== undefined) {
 			await promptManager.writeContent(filePath, content);

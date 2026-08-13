@@ -151,6 +151,7 @@ let previewSettings: AppSettings = {
 	fontFamilyMono: "system-mono",
 	fontFamilyMonoCustom: "",
 	removedBuiltInExtensions: [],
+	hiddenBuiltinPromptNames: [],
 	disableUpdateCheck: false,
 	piRpcOffline: true,
 	piRpcNoExtensions: false,
@@ -755,7 +756,7 @@ export function createPreviewApi(): PiDesktopApi {
 			}),
 		},
 		prompts: {
-			list: async () => ({ templates: [], globalDir: "C:/Users/preview/.pi/agent/prompts" }),
+			list: async () => ({ templates: [], globalDir: "C:/Users/preview/.pi/agent/prompts", hasHiddenBuiltins: false }),
 			create: async (input) => ({
 				name: input.name,
 				path: `C:/Users/preview/.pi/agent/prompts/${input.name}.md`,
@@ -765,8 +766,9 @@ export function createPreviewApi(): PiDesktopApi {
 			}),
 			delete: async () => undefined,
 			openFolder: async () => undefined,
+			restoreBuiltins: async () => undefined,
 			edit: async (_filePath, _content?) => "---\ndescription: Preview\n---\n\nPreview content",
-			listByProject: async () => ({ templates: [], globalDir: "" }),
+			listByProject: async () => ({ templates: [], globalDir: "", hasHiddenBuiltins: false }),
 			createInProject: async (_projectPath, input) => ({
 				name: input.name,
 				path: `project://${_projectPath}/.pi/prompts/${input.name}.md`,

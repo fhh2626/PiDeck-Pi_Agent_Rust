@@ -954,6 +954,8 @@ const api = {
 			ipcRenderer.invoke(ipcChannels.promptsDelete, filePath) as Promise<void>,
 		openFolder: () =>
 			ipcRenderer.invoke(ipcChannels.promptsOpenFolder) as Promise<void>,
+		restoreBuiltins: () =>
+			ipcRenderer.invoke(ipcChannels.promptsRestoreBuiltins) as Promise<void>,
 		edit: (filePath: string, content?: string) =>
 			ipcRenderer.invoke(ipcChannels.promptsEdit, filePath, content) as Promise<string | void>,
 		listByProject: (projectPath: string) =>
