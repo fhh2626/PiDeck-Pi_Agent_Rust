@@ -2063,7 +2063,6 @@ export const enUS: Record<TranslationKey, string> = {
   "settings.piProxy": "pi agent proxy",
   "settings.piProxyDesc":
     "Injected only into newly started pi agent child processes",
-  "settings.privacy": "Privacy",
   "settings.proxyBypass": "Proxy bypass",
   "settings.proxyBypassDesc": "Maps to NO_PROXY. Separate entries with commas.",
   "settings.proxySection": "Proxy",
@@ -2101,9 +2100,6 @@ export const enUS: Record<TranslationKey, string> = {
     "Changes take effect for newly created or restarted agents",
   "settings.showNativeMenu": "Show native menu",
 
-  "settings.telemetry": "Anonymous usage stats",
-  "settings.telemetryDesc":
-    "Helps understand version distribution, platform compatibility, and active installs. Project paths, code, message content, and file names are never collected.",
   "settings.testProxy": "Test proxy",
   "settings.testingProxy": "Testing...",
   "settings.toggle": "Toggle",

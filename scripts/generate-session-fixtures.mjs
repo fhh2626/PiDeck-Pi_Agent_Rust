@@ -441,11 +441,11 @@ export async function generateSessionFixtures({ outputDir, sha, wslDistro, wslUs
 		catalogEntry({ id: "fixture-native-case-folded", projectId: "fixture-project-native", title: "Native case identity", source: "pi", environment: "native", filePath: nativeUpperPath, messageCount: 2, originKey: nativeCaseOrigin }),
 		catalogEntry({ id: "fixture-codex-import", projectId: "fixture-project-native", title: "Imported source identity", source: "codex", environment: "native", filePath: importedTargetPath, messageCount: 2, originKey: importedOrigin, importedSourceId }),
 	];
-	const nativeUserData = await writeUserDataTemplate(join(output, "user-data", "native"), { settings: { language: "en", wslEnabled: false, wslDistro: "Ubuntu", wslUser: "root", telemetryEnabled: false, showDevTools: false }, projects: [{ id: "fixture-project-native", name: "PiDeck validation native", path: nativeProject, lastOpenedAt: Date.parse(FIXED_TIME), sortOrder: 0, environment: "windows" }], sessions: nativeSessions });
+	const nativeUserData = await writeUserDataTemplate(join(output, "user-data", "native"), { settings: { language: "en", wslEnabled: false, wslDistro: "Ubuntu", wslUser: "root", showDevTools: false }, projects: [{ id: "fixture-project-native", name: "PiDeck validation native", path: nativeProject, lastOpenedAt: Date.parse(FIXED_TIME), sortOrder: 0, environment: "windows" }], sessions: nativeSessions });
 	let wslUserData = null;
 	if (wslIdentity) {
 		const wslSessions = wslIdentity.paths.map((filePath, index) => catalogEntry({ id: `fixture-wsl-${index ? "lower" : "upper"}`, projectId: "fixture-project-wsl", title: `WSL ${index ? "case" : "Case"}.jsonl`, source: "pi", environment: "wsl", filePath, messageCount: 2, originKey: originKey({ source: "pi", environment: "wsl", filePath, distro: wslDistro, user: wslUser }), wslDistro, wslUser }));
-		wslUserData = await writeUserDataTemplate(join(output, "user-data", "wsl"), { settings: { language: "en", wslEnabled: true, wslDistro, wslUser, telemetryEnabled: false, showDevTools: false }, projects: [{ id: "fixture-project-wsl", name: "PiDeck validation WSL", path: wslIdentity.projectCwd, lastOpenedAt: Date.parse(FIXED_TIME), sortOrder: 0, environment: "wsl" }], sessions: wslSessions });
+		wslUserData = await writeUserDataTemplate(join(output, "user-data", "wsl"), { settings: { language: "en", wslEnabled: true, wslDistro, wslUser, showDevTools: false }, projects: [{ id: "fixture-project-wsl", name: "PiDeck validation WSL", path: wslIdentity.projectCwd, lastOpenedAt: Date.parse(FIXED_TIME), sortOrder: 0, environment: "wsl" }], sessions: wslSessions });
 	}
 	const largeStats = await stat(largeFile);
 	const manifest = {

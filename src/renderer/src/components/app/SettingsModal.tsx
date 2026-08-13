@@ -1888,17 +1888,6 @@ function SettingsModalContent(props: SettingsModalProps) {
 									</SettingRow>
 								</SettingsSection>
 
-								{/* 隐私 */}
-								<SettingsSection title={t("settings.privacy")}>
-									<SettingSwitchRow
-										title={t("settings.telemetry")}
-										description={t("settings.telemetryDesc")}
-										checked={draftSettings.telemetryEnabled}
-										onChange={(checked) =>
-											updateDraft({ telemetryEnabled: checked })
-										}
-									/>
-								</SettingsSection>
 							</>
 						</TabsContent>
 

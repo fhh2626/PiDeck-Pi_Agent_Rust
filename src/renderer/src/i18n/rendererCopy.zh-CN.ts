@@ -2033,7 +2033,6 @@ export const zhCN = {
   "settings.piMissing": "未检测到 pi CLI",
   "settings.piProxy": "pi agent 代理",
   "settings.piProxyDesc": "只注入给新启动的 pi agent 子进程",
-  "settings.privacy": "隐私",
   "settings.proxyBypass": "绕过代理",
   "settings.proxyBypassDesc": "对应 NO_PROXY，多个条目用英文逗号分隔",
   "settings.proxySection": "代理设置",
@@ -2068,9 +2067,6 @@ export const zhCN = {
     "设置变更后，新建或重启 agent 才会生效",
   "settings.showNativeMenu": "显示原生菜单",
 
-  "settings.telemetry": "匿名使用统计",
-  "settings.telemetryDesc":
-    "帮助了解版本分布、平台兼容性和活跃安装数量。不会收集项目路径、代码、消息内容或文件名。",
   "settings.testProxy": "检测代理",
   "settings.testingProxy": "检测中...",
   "settings.toggle": "打开/关闭",

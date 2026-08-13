@@ -210,7 +210,6 @@ import { GitService } from "./git/GitService";
 import { WorktreeService } from "./git/WorktreeService";
 import { ConfigManager } from "./config/ConfigManager";
 import { TerminalSessionManager } from "./terminal/TerminalSessionManager";
-import { TelemetryService } from "./telemetry/TelemetryService";
 import { PromptManager } from "./prompts/PromptManager";
 import { XuePromptManager } from "./prompts/XuePromptManager";
 import { SkillManager } from "./skills/SkillManager";
@@ -813,10 +812,6 @@ function applyNativeThemeSource(settings: AppSettings) {
 const RELEASES_URL = "https://github.com/ayuayue/pi-desktop/releases";
 const LATEST_RELEASE_API =
 	"https://api.github.com/repos/ayuayue/pi-desktop/releases/latest";
-const POSTHOG_PROJECT_KEY =
-	process.env.POSTHOG_PROJECT_KEY ??
-	"phc_xgJ8gFUMgExZEEPzZ7VRa7698ENcaDRquWZVGYb2dCFK";
-const POSTHOG_HOST = process.env.POSTHOG_HOST ?? "https://us.i.posthog.com";
 
 type GitHubReleaseAsset = {
 	name: string;
@@ -2412,34 +2407,6 @@ function registerIpc() {
 	});
 }
 
-function sendTelemetryHeartbeat() {
-	const telemetry = new TelemetryService({
-		settingsStore,
-		config: {
-			projectKey: POSTHOG_PROJECT_KEY,
-			host: POSTHOG_HOST,
-		},
-		metadata: {
-			appVersion: app.getVersion(),
-			platform: process.platform,
-			arch: process.arch,
-			packaged: app.isPackaged,
-		},
-		capture: async (request) => {
-			const response = await net.fetch(request.url, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(request.body),
-			});
-			if (!response.ok) {
-				throw new Error(`Telemetry request failed: ${response.status}`);
-			}
-		},
-	});
-
-	void telemetry.sendHeartbeat().catch(() => undefined);
-}
-
 async function detectExternalEditorsOnFirstLaunch() {
 	const current = settingsStore.get().externalEditors;
 	if (Object.values(current).some((editor) => editor.command)) return;
@@ -2811,8 +2778,6 @@ app.whenReady().then(async () => {
 
 	// 🆕 自动连接：如果已有 Bot 配置，自动启动飞书连接
 	autoConnectFeishu();
-
-	sendTelemetryHeartbeat();
 
 	// 内存分析模式（PIDECK_MEMORY_PROFILE=1）：尽早开始采样，覆盖窗口创建/加载全过程。
 	// 采样失败不阻塞启动（诊断工具降级为不可用）。

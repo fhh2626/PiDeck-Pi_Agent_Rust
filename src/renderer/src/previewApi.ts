@@ -120,7 +120,6 @@ let previewSettings: AppSettings = {
 	wslEnabled: false,
 	wslDistro: "Ubuntu",
 	wslUser: "root",
-	telemetryEnabled: true,
 	webServiceEnabled: false,
 	webServiceHost: "0.0.0.0",
 	webServicePort: 8765,
