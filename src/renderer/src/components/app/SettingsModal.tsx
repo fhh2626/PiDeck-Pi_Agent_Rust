@@ -6,7 +6,6 @@ import {
 	Settings2,
 	Network,
 	Wrench,
-	PawPrint,
 	Trash2,
 	RotateCw,
 	Brush,
@@ -60,8 +59,7 @@ import { ExternalEditorsSection } from "./settings/ExternalEditorsSection";
 import { ProcessMetricsTab } from "./settings/ProcessMetricsTab";
 import { VisionBridgeSettingsTab, useVisionBridgeDraft } from "./settings/VisionBridgeSettingsTab";
 import { ModelPicker } from "../session/ComposerComponents";
-import type { AppSettings, AppInfo, AvailableModel, PiInstallStatus, PiUpdateCheckResult, PiCliUpdateResult, PetManifest, WebNetworkAddress } from "../../../shared/types";
-import { GRID_COLS, CELL_W, CELL_H, MODE_ROW, MODE_FRAMES } from "../../pet/PetSpriteSheet";
+import type { AppSettings, AppInfo, AvailableModel, PiInstallStatus, PiUpdateCheckResult, PiCliUpdateResult, WebNetworkAddress } from "../../../shared/types";
 import { Label } from "../../components/ui-shadcn/label";
 
 const ZOOM_FACTOR_MIN = 0.8;
@@ -69,7 +67,7 @@ const ZOOM_FACTOR_MAX = 1.5;
 const ZOOM_FACTOR_STEP = 0.05;
 
 
-type SettingsTabId = "common" | "appearance" | "proxy" | "dev" | "pet" | "storage" | "usage" | "process" | "vision";
+type SettingsTabId = "common" | "appearance" | "proxy" | "dev" | "storage" | "usage" | "process" | "vision";
 
 // 注意：修改 SettingsTabId 枚举时需同步更新 SETTINGS_TAB_IDS 校验数组
 
@@ -78,7 +76,7 @@ const SETTINGS_LAST_TAB_KEY = "pideck-settings-last-tab";
 
 /** 全部合法 tab id，用于校验持久化值（避免版本更新后残留旧值导致无高亮）。 */
 const SETTINGS_TAB_IDS: readonly SettingsTabId[] = [
-	"common", "appearance", "proxy", "dev", "pet", "storage", "usage", "process", "vision",
+	"common", "appearance", "proxy", "dev", "storage", "usage", "process", "vision",
 ];
 
 /**
@@ -265,8 +263,6 @@ function SettingsModalContent(props: SettingsModalProps) {
 		setDraftSettings({ ...baseSnapshotRef.current });
 		setDirtyFields(new Set());
 		visionDraft.reset();
-		setPetPreviewMode("__auto");
-		void window.piDesktop.pet.setPreviewMode("");
 		setWslValidation(null);
 		setWslUserInput(baseSnapshotRef.current.wslUser);
 		setPerAreaFontSize(
@@ -410,22 +406,8 @@ function SettingsModalContent(props: SettingsModalProps) {
 		};
 	}, []);
 
-	// 宠物包列表
-	const [petOptions, setPetOptions] = useState<{ value: string; label: string }[]>([]);
-	const [petList, setPetList] = useState<PetManifest[]>([]);
-	useEffect(() => {
-		window.piDesktop.pet
-			.list()
-			.then((pets) => { setPetList(pets); setPetOptions(pets.map((p) => ({ value: p.id, label: p.displayName }))); })
-			.catch(() => undefined);
-	}, []);
 	// 开发设置 tab 不自动检测 pi：检测结果缓存在 settings.piInstall（打开时直接显示），
 	// 只有用户手动点「检测环境」才重新 spawn 探测（曾因自动检测在打开设置时触发双弹窗）。
-	const [petPreviewMode, setPetPreviewMode] = useState("__auto");
-	// 预览只属于设置弹框生命周期；关闭后必须让真实 Agent 状态重新接管宠物。
-	useEffect(() => () => {
-		void window.piDesktop.pet.setPreviewMode("");
-	}, []);
 
 	const applyWebPortDraft = () => {
 		const port = Number(webPortDraft);
@@ -514,11 +496,6 @@ function SettingsModalContent(props: SettingsModalProps) {
 			id: "dev",
 			label: t("settings.tabs.dev"),
 			icon: <Wrench size={16} />,
-		},
-		{
-			id: "pet",
-			label: t("settings.tabs.pet"),
-			icon: <PawPrint size={16} />,
 		},
 		{
 			id: "storage",
@@ -1884,161 +1861,6 @@ function SettingsModalContent(props: SettingsModalProps) {
 							</>
 						</TabsContent>
 
-						{/* ── 桌面宠物 tab ── */}
-																		<TabsContent value="pet" className="settings-panel min-w-0">
-							<>
-								<SettingsSection title={t("settings.pet.title")} description={t("settings.pet.sectionDesc")}>
-									<SettingSwitchRow
-										title={t("settings.pet.enable")}
-										description={t("settings.pet.enableDesc")}
-										checked={draftSettings.petEnabled}
-										onChange={(value) => updateDraft({ petEnabled: value })}
-									/>
-									<SettingSwitchRow
-										title={t("settings.pet.alwaysOnTop")}
-										description={t("settings.pet.alwaysOnTopDesc")}
-										checked={draftSettings.petAlwaysOnTop}
-										onChange={(value) => updateDraft({ petAlwaysOnTop: value })}
-									/>
-									<SettingSwitchRow
-										title={t("settings.pet.patrol")}
-										description={t("settings.pet.patrolDesc")}
-										checked={draftSettings.petPatrolEnabled ?? true}
-										onChange={(value) => updateDraft({ petPatrolEnabled: value })}
-									/>
-									<SettingRow
-										title={<span>{t("settings.pet.patrolPause")}</span>}
-										description={t("settings.pet.patrolPauseDesc")}
-									>
-										<div className="flex w-full items-center gap-3">
-											<input
-												type="range"
-												min="1"
-												max="30"
-												step="1"
-												value={draftSettings.petPatrolPauseMin ?? 5}
-												onChange={(event) => updateDraft({ petPatrolPauseMin: parseInt(event.target.value) })}
-												className="min-w-0 flex-1 accent-[var(--color-accent)]"
-												aria-label={t("settings.pet.patrolPause")}
-											/>
-											<span className="min-w-12 shrink-0 text-right font-brand text-sm text-muted-foreground tabular-nums">
-												{draftSettings.petPatrolPauseMin ?? 5} min
-											</span>
-										</div>
-									</SettingRow>
-									<SettingRow
-										title={<span>{t("settings.pet.scale")}</span>}
-										description={t("settings.pet.scaleDesc")}
-									>
-										<div className="flex w-full items-center gap-3">
-											<input
-												type="range"
-												min="0.3"
-												max="2.0"
-												step="0.05"
-												value={draftSettings.petScale ?? 1}
-												onChange={(event) => updateDraft({ petScale: parseFloat(event.target.value) })}
-												className="min-w-0 flex-1 accent-[var(--color-accent)]"
-												aria-label={t("settings.pet.scale")}
-											/>
-											<span className="min-w-12 shrink-0 text-right font-brand text-sm text-muted-foreground tabular-nums">
-												{((draftSettings.petScale ?? 1) * 100).toFixed(0)}%
-											</span>
-										</div>
-									</SettingRow>
-								</SettingsSection>
-								{/* 选择宠物（单行分区：行标题即一级标题，内容行入淡色框） */}
-								<SettingBox>
-								<SettingRow
-									level={1}
-									title={<span>{t("settings.pet.choose")}</span>}
-									alignEnd={false}
-								>
-									<Select value={draftSettings.petId} onValueChange={(value) => {
-										setPetPreviewMode("__auto");
-										void window.piDesktop.pet.setPreviewMode("");
-										updateDraft({ petId: value });
-									}}>
-										<SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-										<SelectContent>
-											{petOptions.map((option) => (
-												<SelectItem key={option.value} value={option.value} disabled={option.disabled}>
-													{option.label}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-								</SettingRow>
-								<small className="setting-status">{t("settings.pet.petdexHint")}</small>
-								{(() => {
-									const selected = petList.find((pet) => pet.id === draftSettings.petId);
-									return (
-										<>
-											{selected && (
-												<div className="pet-chooser-preview-row" style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginTop: 8 }}>
-													<PetChooserPreview pet={selected} mode={petPreviewMode} />
-													<div style={{ minWidth: 0, flex: 1 }}>
-														<strong style={{ display: "block", fontSize: "var(--font-size-control)", color: "var(--color-text-primary)" }}>{selected.displayName}</strong>
-														{selected.description && (
-															<small className="setting-status" style={{ display: "block", marginTop: 2 }}>{selected.description}</small>
-														)}
-													</div>
-												</div>
-											)}
-										</>
-									);
-								})()}
-								</SettingBox>
-								<SettingsSection title={t("settings.pet.preview")} description={t("settings.pet.previewDesc")}>
-									<SettingRow
-										title={<span>{t("settings.pet.previewMode")}</span>}
-										alignEnd={false}
-									>
-										<Select value={petPreviewMode} onValueChange={(value) => {
-											setPetPreviewMode(value);
-											void window.piDesktop.pet.setPreviewMode(value === "__auto" ? "" : value);
-										}}>
-											<SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-											<SelectContent>
-												{[
-													{ value: "__auto", label: t("settings.pet.previewAuto") },
-													{ value: "idle", label: "idle (row 0)" },
-													{ value: "running", label: "running (row 7)" },
-													{ value: "failed", label: "failed (row 5)" },
-													{ value: "waiting", label: "waiting (row 6)" },
-													{ value: "waving", label: "waving (row 3)" },
-													{ value: "running-right", label: "running-right (row 1)" },
-													{ value: "running-left", label: "running-left (row 2)" },
-													{ value: "jumping", label: "jumping (row 4)" },
-													{ value: "review", label: "review (row 8)" },
-												].map((option) => (
-													<SelectItem key={option.value} value={option.value} disabled={option.disabled}>
-														{option.label}
-													</SelectItem>
-												))}
-											</SelectContent>
-										</Select>
-									</SettingRow>
-									<div className="flex justify-end gap-2 px-0.5 py-1.5">
-										<Button
-											size="sm"
-											variant="destructive"
-											onClick={() => void window.piDesktop.pet.testNotify("error")}
-										>
-											{t("settings.pet.testError")}
-										</Button>
-										<Button variant="secondary"
-											size="sm"
-											onClick={() => void window.piDesktop.pet.testNotify("done")}
-										>
-											{t("settings.pet.testDone")}
-										</Button>
-									</div>
-								</SettingsSection>
-							</>
-						</TabsContent>
-
-
 						{/* ── 进程监控 tab（由 Pi 管理界面迁入） ── */}
 						<TabsContent value="process" className="settings-panel min-w-0">
 							<ProcessMetricsTab />
@@ -2087,71 +1909,5 @@ function SettingsModalContent(props: SettingsModalProps) {
 			)}
 			</DialogContent>
 		</Dialog>
-	);
-}
-
-function PetChooserPreview(props: {
-	pet?: PetManifest;
-	mode?: string;
-}) {
-	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-	const imgRef = useRef<HTMLImageElement | null>(null);
-	const rafRef = useRef<number | null>(null);
-
-	useEffect(() => {
-		const canvas = canvasRef.current;
-		const pet = props.pet;
-		if (!pet || !pet.spritesheetUrl || !canvas) {
-			const ctx = canvas?.getContext("2d");
-			if (canvas) ctx?.clearRect(0, 0, canvas.width, canvas.height);
-			return;
-		}
-
-		const mode = props.mode && props.mode !== "__auto" ? props.mode : "idle";
-		const row = MODE_ROW[mode] ?? 0;
-		const frameCount = MODE_FRAMES[mode] ?? 6;
-		const img = new Image();
-		img.src = pet.spritesheetUrl;
-		let disposed = false;
-
-		const start = () => {
-			if (disposed) return;
-			const ctx = canvas.getContext("2d");
-			if (!ctx) return;
-			const startedAt = performance.now();
-			const draw = (now: number) => {
-				if (disposed) return;
-				const frame = Math.floor((now - startedAt) / 140) % frameCount;
-				ctx.clearRect(0, 0, CELL_W, CELL_H);
-				ctx.drawImage(
-					img,
-					(frame % GRID_COLS) * CELL_W,
-					row * CELL_H,
-					CELL_W,
-					CELL_H,
-					0,
-					0,
-					CELL_W,
-					CELL_H,
-				);
-				rafRef.current = requestAnimationFrame(draw);
-			};
-			rafRef.current = requestAnimationFrame(draw);
-		};
-
-		img.onload = start;
-		imgRef.current = img;
-		return () => {
-			disposed = true;
-			if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
-			rafRef.current = null;
-			imgRef.current = null;
-		};
-	}, [props.pet, props.mode]);
-
-	return (
-		<div className="pet-chooser-preview">
-			<canvas ref={canvasRef} width={CELL_W} height={CELL_H} aria-hidden="true" />
-		</div>
 	);
 }

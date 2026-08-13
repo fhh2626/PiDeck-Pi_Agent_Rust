@@ -214,8 +214,6 @@ export class AgentManager {
 	 */
 	/** 本地事件监听器（用于 Web SSE 等主进程内部订阅） */
 	private readonly localEventListeners = new Set<(agentId: string, event: unknown) => void>();
-	/** 状态变更监听器（用于 PetStateBridge 等主进程内部模块订阅 AgentTab[] 聚合状态） */
-	private readonly stateListeners = new Set<(tabs: AgentTab[]) => void>();
 	/** 主进程内部观察所有 renderer 输出，用于增量桥接 session-addressed 事件。 */
 	private readonly outputListeners = new Set<(channel: string, payload: unknown) => void>();
 	/** 开启了 RPC 日志记录的 agent id 集合 */
@@ -293,8 +291,6 @@ export class AgentManager {
 	private readonly pendingUIRequests = new Map<string, Map<string, { method: string; title: string }>>();
 	/** abort 时正在等待 ask_question 响应的 agent，用于在工具结果中覆写 answer 为 null。 */
 	private readonly abortedDuringAsk = new Set<string>();
-	/** 成功空闲（settled）回调：供 PetStateBridge 等主进程内部模块订阅，携带完成 Agent 身份。 */
-	private readonly settledListeners = new Set<(info: { agentId: string; title: string }) => void>();
 	/** 已发送 ask 系统通知的 agent；新一轮 run（agent_start）时清除，避免同一轮多次提问刷屏。 */
 	private readonly notifiedAskAgents = new Set<string>();
 	/** 待处理的项目信任确认请求。key 为 requestId，用于在 Agent 启动前等待用户的信任决策。 */
@@ -2732,34 +2728,6 @@ export class AgentManager {
 		return () => this.outputListeners.delete(listener);
 	}
 
-	/** 注册状态变更监听器（供 PetStateBridge 等主进程内部模块使用）；每次 emitState 后同步回调最新 AgentTab[] */
-	addStateListener(listener: (tabs: AgentTab[]) => void): () => void {
-		this.stateListeners.add(listener);
-		return () => { this.stateListeners.delete(listener); };
-	}
-
-	/**
-	 * 注册「Agent 成功空闲」监听器（供 PetStateBridge 等主进程内部模块使用）。
-	 * 仅在 agent_settled 成功路径或 get_state 兜底确认无工作后触发，
-	 * abort / 自动重试 / 压缩 / agent_end 都不会触发 —— 这些都不是可靠的完成点。
-	 */
-	onAgentSettled(listener: (info: { agentId: string; title: string }) => void): () => void {
-		this.settledListeners.add(listener);
-		return () => { this.settledListeners.delete(listener); };
-	}
-
-	private notifyAgentSettled(agentId: string, title: string) {
-		for (const listener of this.settledListeners) {
-			try { listener({ agentId, title }); } catch {}
-		}
-	}
-
-	private notifyStateListeners(tabs: AgentTab[]) {
-		for (const listener of this.stateListeners) {
-			try { listener(tabs); } catch {}
-		}
-	}
-
 	stopAll() {
 		// 应用退出时统一清理所有 pi 子进程，避免后台 agent 残留占用模型或文件句柄。
 		for (const runtime of this.agents.values()) {
@@ -3303,11 +3271,11 @@ export class AgentManager {
 						"running",
 					);
 				}
-				// 重试中保持 running，不能误置为 idle/error，否则宠物聚合状态会提前转 done/failed
+				// 重试中保持 running，避免侧栏和会话状态提前显示为完成或失败。
 				if (runtime) runtime.tab.status = "running";
 			} else if (errorMsg) {
 				this.addDetailedErrorMessage(agentId, String(errorMsg));
-				// 有错误且不会重试 → Agent 进入 error 态，宠物聚合为 failed（行5），
+				// 有错误且不会重试时，Agent 才进入 error 态，
 				// 否则会被误置为 idle 触发"所有任务完成"通知
 				if (runtime) runtime.tab.status = "error";
 			} else if (
@@ -3372,8 +3340,6 @@ export class AgentManager {
 				if (lastMessage?.role === "assistant" && !isAbortSettled) {
 					this.notifySessionEnd(agentId, runtime.tab.title);
 				}
-				// 成功空闲（settled）后才算完成：通知宠物等内部模块携带标题，供「{title} 已完成」气泡使用。
-				if (!isAbortSettled) this.notifyAgentSettled(agentId, runtime.tab.title);
 			}
 		}
 
@@ -4683,8 +4649,6 @@ export class AgentManager {
 		this.streamingText.delete(agentId);
 		this.emitState();
 		void this.emitRuntimeState(agentId);
-		// 兜底确认无工作也算成功空闲：与 agent_settled 一样通知完成（PetStateBridge 侧有去重冷却）。
-		this.notifyAgentSettled(agentId, runtime.tab.title);
 	}
 
 	private requireRuntime(agentId: string) {
@@ -4773,7 +4737,7 @@ export class AgentManager {
 
 	/**
 	 * 聚焦主窗口并让渲染进程切换到指定会话。
-	 * 复用 pet:focus-agent-target 通道（renderer 的 workspace chrome 监听后切到对应 project + session tab）；
+	 * 通过通用会话聚焦通道通知 renderer 切到对应 project + session tab；
 	 * sessionId 缺省（运行时尚未绑定会话）时只聚焦窗口，不做跳转。
 	 */
 	private focusMainWindowForSession(sessionId?: string) {
@@ -4787,7 +4751,7 @@ export class AgentManager {
 			if (!win.isVisible()) win.show();
 			win.focus();
 			if (sessionId) {
-				win.webContents.send(ipcChannels.petFocusAgentTarget, { sessionId });
+				win.webContents.send(ipcChannels.appFocusSessionTarget, { sessionId });
 			}
 		} catch (error) {
 			// 聚焦失败不影响主流程，静默处理
@@ -5122,10 +5086,6 @@ export class AgentManager {
 	private emitState() {
 		const tabs = this.list();
 		this.emit(ipcChannels.agentsState, tabs);
-		// 同步通知主进程内部状态订阅者（PetStateBridge），使宠物窗能拿到聚合状态。
-		// 设计文档原拟用 ipcMain.on("agents:state") 桥接是错的：webContents.send 是
-		// 主进程→渲染层单向通道，ipcMain 收不到主进程自己发出的消息，故改用本钩子。
-		this.notifyStateListeners(tabs);
 	}
 
 	private emit(channel: string, payload: unknown) {

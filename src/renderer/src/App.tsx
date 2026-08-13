@@ -536,13 +536,6 @@ export function App() {
     maxEditorFileSizeMB: 5,
     externalEditors: createDefaultExternalEditorSettings(),
 
-    // 桌面宠物默认关闭：关闭后应用与现状完全一致，零回归
-    petEnabled: false,
-    petId: "clawd",
-    petAlwaysOnTop: true,
-    petScale: 0.8,
-    petPatrolEnabled: true,
-    petPatrolPauseMin: 5,
     favoriteModels: [],
 
     // 字体配置：与 main SettingsStore 默认值保持一致，避免启动时闪烁

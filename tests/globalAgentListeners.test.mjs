@@ -19,7 +19,7 @@ const runtimeBridge = readFileSync(
 test("global listener owner handles non-runtime application events only", () => {
   for (const listener of [
     "projects.onChanged",
-    "pet.onFocusTarget",
+		"app.onFocusSessionTarget",
     "projects.onTrustRequest",
     "settings.onApplyWindow",
     "app.onUpdateProgress",

@@ -81,7 +81,6 @@ export type SystemIpcDeps = {
 		logger: { warn: (msg: string, detail: unknown) => void },
 	) => Promise<import("../wsl/WslPaths").WslEnvironment>;
 	/** React to settings changes for pet system */
-	reactToPetSettings?: (prev: AppSettings, next: AppSettings) => Promise<void>;
 	/** Session scanner WSL config */
 	configureSessionScannerWsl?: (env: import("../wsl/WslPaths").WslEnvironment) => Promise<void>;
 	clearSessionScannerWsl?: () => void;
@@ -142,7 +141,6 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 		installDownloadedUpdate,
 		openExternalUrl: doOpenExternalUrl,
 		resolveWslEnvironment,
-		reactToPetSettings,
 		configureSessionScannerWsl,
 		clearSessionScannerWsl,
 		refreshTrayContextMenu,
@@ -661,9 +659,6 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 		const settings = await settingsStore.update(patch);
 		// 设置变更审计已下沉到 SettingsStore.update 内部统一留痕（覆盖所有直写路径），此处不重复记录
 
-		if (typeof reactToPetSettings === "function") {
-			await reactToPetSettings(prevSettings, settings);
-		}
 		if (
 			"desktopProxyEnabled" in patch ||
 			"desktopProxyUrl" in patch ||

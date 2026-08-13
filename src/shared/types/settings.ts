@@ -170,21 +170,6 @@ export type StartupWindowMode =
 	/** WSL 用户名，如 piuser */
 	wslUser: string;
 
-	// ── 桌面宠物（全局聚合单宠，默认关闭，不破坏现状） ──
-	/** 是否启用桌面宠物悬浮窗，默认 false：关闭后应用与现状完全一致 */
-	petEnabled: boolean;
-	/** 当前选中的宠物包 id，默认内置水獭 */
-	petId: string;
-	/** 宠物窗是否始终置顶，默认 true */
-	petAlwaysOnTop: boolean;
-	/** 宠物缩放比例 0.3-2.0，默认 1.0，控制窗口与 sprite 渲染尺寸 */
-	petScale: number;
-	/** 是否启用 idle 巡游（无任务时沿屏幕底部左右走动），默认 true；
-	 *  巡游为低优先级 UI 行为，running/failed/review/逗弄 时自动让位。 */
-	petPatrolEnabled: boolean;
-	/** 巡游碰边后 idle 停顿时长（分钟），默认 5，范围 1–30 */
-	petPatrolPauseMin: number;
-
 	// ── 模型收藏：ModelPicker 中用 ☆ 标记，收藏的模型在列表中置顶 ──
 	/** 收藏的模型 ID 列表 */
 	favoriteModels: string[];
@@ -260,74 +245,4 @@ export type StartupWindowMode =
 	 */
 	securityConfig?: SecurityConfig;
 
-};
-
-// ── 桌面宠物类型 ──
-
-/** 宠物聚合动画状态；映射到 spritesheet 的行号。
- *  前 7 个为业务态（由 PetStateBridge 聚合 Agent 状态产出）；
- *  running-right / running-left / review 为本期启用的预留行——
- *  巡游方向帧由 PetPatrol 引擎直接推送，review 由「任务完成」转换触发。 */
-export type PetMode =
-	| "idle"
-	| "running"
-	| "failed"
-	| "waiting"
-	| "waving"
-	| "hidden"
-	| "jumping"
-	| "running-right" // 行1 巡游向右（PetPatrol 驱动）
-	| "running-left" // 行2 巡游向左（PetPatrol 驱动）
-	| "review"; // 行8 任务完成庆祝（running→idle 转换触发）
-
-/** 多 Agent 聚合后的全局宠物状态，由 PetStateBridge 计算并推送给宠物窗 */
-export type PetAggregateState = {
-	mode: PetMode;
-	/** 当前 running 的 Agent 数 */
-	runningCount: number;
-	/** 当前 error 的 Agent 数（>0 则 mode=failed，优先级最高） */
-	errorCount: number;
-	/** 点击宠物跳转目标 Agent id；无活跃 Agent 时为 null */
-	activeAgentId: string | null;
-	timestamp: number;
-};
-
-/** 宠物包清单项，合并内置包与 petdex 社区包后去重得到 */
-export type PetManifest = {
-	id: string;
-	displayName: string;
-	description?: string;
-	/** 来源：builtin 随应用打包，petdex 扫描自 ~/.codex/pets/ */
-	source: "builtin" | "petdex";
-	/** 渲染层可加载的 spritesheet URL（内置走打包资源，petdex 走 file://） */
-	spritesheetUrl: string;
-};
-
-
-/** 三端宠物窗能力探测结果（设计文档第 5.2 节降级形态） */
-export type PetWindowCaps = {
-	/** 是否支持透明背景（Linux 部分 WM 不支持） */
-	transparent: boolean;
-	/** 是否支持点击穿透（MVP 不用，预留） */
-	clickThrough: boolean;
-	/** 是否支持自由绝对坐标定位（Wayland 受限） */
-	freePosition: boolean;
-};
-
-/** 宠物通知气泡：出错/完成/等待操作时在宠物头顶弹出。
- *  waiting 为持久化提醒（等待用户回应），直到主进程推送 null 才消失；
- *  error/done 由主进程计时 4 秒后推送 null 自动消失。
- *  text 为完整文案（兼容），title/status 供 renderer 分段着色：标题黑色 + 状态词状态色。 */
-export type PetNotification = {
-	type: "error" | "done" | "waiting";
-	text: string;
-	/** 关联的 Agent id（waiting/error 必有，done 尽量带） */
-	agentId?: string;
-	timestamp: number;
-	/** true：不自动消失，直到主进程推送 null 清理（等待操作类） */
-	persistent?: boolean;
-	/** Agent 标题（黑色段）；缺省时 renderer 退化为整行单色绘制 */
-	title?: string;
-	/** 已翻译的状态词，如「已完成」（状态色段）；缺省时退化为整行单色绘制 */
-	status?: string;
 };

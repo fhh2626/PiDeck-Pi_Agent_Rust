@@ -105,7 +105,6 @@ import {
 	Globe2,
 	MessageCircle,
 	Network,
-	PawPrint,
 	Pin,
 	Plus,
 	RefreshCw,
@@ -153,7 +152,6 @@ import type {
 	OpenCodeSessionSummary,
 	GitBranchInfo,
 	ImageContent,
-	PetManifest,
 	PiCliUpdateResult,
 	PiCommand,
 	PiInstallExecResult,
@@ -166,9 +164,6 @@ import type {
 } from "../../../../shared/types";
 import { parseRichInputChips, unwrapFileChipPath } from "./composer/chips";
 import removeMarkdown from "remove-markdown";
-/** 复用 petdex 标准网格规格，在主设置面板里为宠物选择器渲染单格动画预览 */
-import { GRID_COLS, CELL_W, CELL_H, MODE_ROW, MODE_FRAMES } from "../../pet/PetSpriteSheet";
-
 import type { WorkspaceDrawerPanel } from "../../hooks/useWorkspacePanels";
 import { formatDuration, formatTime, stripAnsi } from "./TimelineFormat";
 import { extractVisionBridgeBlocks, matchVisionBridgeEvent } from "../../utils/visionBridgeBlocks";
@@ -587,75 +582,6 @@ export function CopyMenu(props: {
 // ============================================================
 
 /** 按工具名选择语义图标：read→文件、edit→铅笔、bash→终端、grep→搜索等，未匹配回退扳手。 */
-function PetChooserPreview(props: {
-	pet?: PetManifest;
-	mode?: string;
-}) {
-	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-	const imgRef = useRef<HTMLImageElement | null>(null);
-	const rafRef = useRef<number | null>(null);
-
-	useEffect(() => {
-		const pet = props.pet;
-		const canvas = canvasRef.current;
-		if (!pet || !pet.spritesheetUrl || !canvas) {
-			const ctx = canvas!.getContext("2d");
-			ctx?.clearRect(0, 0, canvas!.width, canvas!.height);
-			return;
-		}
-
-		// 复用 petdex 标准网格规格（8 列 × 9 行，单格 192×208）
-		const mode = props.mode && props.mode !== "__auto" ? props.mode : "idle";
-		const row = MODE_ROW[mode] ?? 0;
-		const frameCount = MODE_FRAMES[mode] ?? 6;
-		const cols = GRID_COLS;
-		const cellW = CELL_W;
-		const cellH = CELL_H;
-
-		// 解码 spritesheet；成功后用 rAF 按帧定时绘制单格，避免每帧重新解码。
-		const img = new Image();
-		img.src = pet.spritesheetUrl;
-		let disposed = false;
-		const start = () => {
-			if (disposed) return;
-			imgRef.current = img;
-			let frame = 0;
-			let last = performance.now();
-			const FPS = 8;
-			let acc = 0;
-			const tick = (now: number) => {
-				rafRef.current = requestAnimationFrame(tick);
-				acc += now - last;
-				last = now;
-				if (acc < 1000 / FPS) return;
-				acc = 0;
-				if (frameCount <= 0) return;
-				frame = (frame + 1) % frameCount;
-				const ctx = canvas.getContext("2d");
-				if (!ctx) return;
-				ctx.clearRect(0, 0, canvas.width, canvas.height);
-				// 仅绘制当前帧对应的单格，按 canvas 尺寸等比缩放，避免拉伸出框。
-				ctx.drawImage(img, frame * cellW, row * cellH, cellW, cellH, 0, 0, canvas.width, canvas.height);
-			};
-			rafRef.current = requestAnimationFrame(tick);
-		};
-		img.decode().then(start).catch(() => undefined);
-
-		return () => {
-			disposed = true;
-			if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
-			rafRef.current = null;
-			imgRef.current = null;
-		};
-	}, [props.pet, props.mode]);
-
-	return (
-		<div className="pet-chooser-preview">
-			<canvas ref={canvasRef} width={CELL_W} height={CELL_H} aria-hidden="true" />
-		</div>
-	);
-}
-
 /** 助手正文：扁平 markdown 渲染，无气泡包裹，全宽排版，支持内嵌图片。
  *  路径链接化用 remark 插件在 mdast 层处理（见底部 remarkLinkifyPaths），不再前置改写原始字符串。 */
 export const AssistantText = memo(

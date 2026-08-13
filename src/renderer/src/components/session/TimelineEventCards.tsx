@@ -501,7 +501,3 @@ export function RespondingIndicator(props: {
 		</div>
 	);
 }
-
-/** 宠物选择预览：给定宠物清单项，用 <canvas> 解码其 spritesheet 并循环播放
- *  对应 mode 行（默认 idle）的网格帧，让用户在选择宠物时即时看到动画效果，
- *  不必切换真实宠物窗。失败时降级为空占位，不阻塞设置面板。 */

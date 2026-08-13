@@ -131,13 +131,6 @@ let previewSettings: AppSettings = {
 	maxEditorFileSizeMB: 5,
 	externalEditors: createDefaultExternalEditorSettings(),
 
-	// 桌面宠物默认关闭
-	petEnabled: false,
-	petId: "clawd",
-	petAlwaysOnTop: true,
-	petScale: 0.8,
-	petPatrolEnabled: true,
-	petPatrolPauseMin: 5,
 	favoriteModels: [],
 
 	fontSize: "default",
@@ -642,6 +635,7 @@ export function createPreviewApi(): PiDesktopApi {
 			installUpdate: async () => undefined,
 			onUpdateProgress: () => () => undefined,
 			onOpenInBrowser: () => () => undefined,
+			onFocusSessionTarget: () => () => undefined,
 			feedbackEnvironment: async () => ({
 				appVersion: "preview",
 				platform: "win32",
@@ -908,29 +902,6 @@ export function createPreviewApi(): PiDesktopApi {
 			visionClearLog: async () => ({ ok: true }),
 			visionGetEvents: async () => ({ exists: false, size: 0, events: [], truncated: false }),
 			visionClearEvents: async () => ({ ok: true }),
-		},
-		pet: {
-			onState: noop,
-			list: async () => [
-			{ id: "clawd", displayName: "Clawd", source: "builtin", spritesheetUrl: "" },
-		],
-			setEnabled: async () => undefined,
-			setId: async () => undefined,
-			moveWindow: async () => undefined,
-			moveBy: async () => undefined,
-			ready: () => undefined,
-			contextMenu: async () => undefined,
-			focusAgent: async () => undefined,
-			onFocusTarget: noop,
-			onSprite: noop,
-			onNotify: noop,
-			setPreviewMode: async () => undefined,
-			onPreviewMode: noop,
-			onCaps: noop,
-			testNotify: async () => undefined,
-			tease: async () => undefined,
-			setDragging: async () => undefined,
-			getCurrent: async () => ({ id: "clawd", displayName: "Clawd", source: "builtin", spritesheetUrl: "" }),
 		},
 		terminal: {
 			// 预览模式只按归属键过滤：agent 目标用 agentId，project 目标用项目 id

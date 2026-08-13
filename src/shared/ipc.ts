@@ -304,41 +304,8 @@ export const ipcChannels = {
 	terminalExit: "terminal:exit",
 	terminalShells: "terminal:shells",
 
-	// ===== 桌面宠物（全局聚合单宠） =====
-	/** 主进程 → 宠物窗：推送聚合状态 */
-	petState: "pet:state",
-	/** 宠物窗/设置页 → 主进程：列出可用宠物包 */
-	petList: "pet:list",
-	/** 设置页 → 主进程：开关宠物 */
-	petSetEnabled: "pet:set-enabled",
-	/** 设置页 → 主进程：切换当前宠物 */
-	petSetId: "pet:set-id",
-	/** 宠物窗 → 主进程：拖拽移动窗口位置 */
-	petMoveWindow: "pet:move-window",
-	/** 宠物窗 → 主进程：拖拽相对位移（连续 screenX 差值，避免 DPI 坐标单位混用） */
-	petMoveBy: "pet:move-by",
-	/** 宠物窗 → 主进程：点击宠物跳转活跃 Agent */
-	petFocusAgent: "pet:focus-agent",
-	/** 主进程 → 主窗口：点击宠物后通知主窗切换到活跃 Agent tab */
-	petFocusAgentTarget: "pet:focus-agent-target",
-	/** 主进程 → 宠物窗：推送当前选中宠物的 manifest（含 spritesheetUrl），切换宠物时热加载 */
-	petCurrentSprite: "pet:current-sprite",
-	/** 宠物窗 → 主进程：拉取当前选中宠物的 manifest（挂载时主动拉取，避免推送竞态丢失） */
-	petGetCurrent: "pet:get-current",
-	/** 主进程 → 宠物窗：推送通知气泡（出错/完成时宠物头顶弹窗） */
-	petNotify: "pet:notify",
-	/** 设置页 → 主进程 → 宠物窗：预览动画行（测试用） */
-	petPreviewMode: "pet:preview-mode",
-	/** 主进程 → 宠物窗：推送窗口能力探测结果（透明/穿透/自由定位） ★ 降级形态渲染 */
-	petCaps: "pet:caps",
-	/** 宠物窗 → 主进程：双击宠物触发逗弄（注入一次 jumping 后恢复真实态） */
-	petTease: "pet:tease",
-	/** 宠物窗 → 主进程：拖拽起止通知（开始时暂停巡游，避免松手后 tick 命中反向边界瞬移） */
-	petDragState: "pet:drag-state",
-	/** 宠物窗 → 主进程：React 已挂载且 IPC 监听器已注册，主进程可安全推送初始状态 */
-	petReady: "pet:ready",
-	/** 宠物窗 → 主进程：请求显示右键上下文菜单 */
-	petContextMenu: "pet:context-menu",
+	/** 主进程 → 主窗口：系统通知等入口请求聚焦指定会话。 */
+	appFocusSessionTarget: "app:focus-session-target",
 
 	// ===== Scratch Pad（草稿本/多草稿） =====
 	scratchPadList: "scratch-pad:list",
@@ -347,10 +314,6 @@ export const ipcChannels = {
 	scratchPadLoad: "scratch-pad:load",
 	scratchPadSave: "scratch-pad:save",
 	scratchPadExport: "scratch-pad:export",
-
-	// ── 调试工具 ──
-	/** 设置面板 → 主进程：发送测试通知（调试弹窗样式） */
-	petTestNotify: "pet:test-notify",
 
 	// ===== 系统文件选择器 =====
 	dialogPickFiles: "dialog:pick-files",

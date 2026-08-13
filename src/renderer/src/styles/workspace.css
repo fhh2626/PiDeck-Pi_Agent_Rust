@@ -1,20 +1,3 @@
-/* ---------- 宠物选择预览（设置面板内联动画预览框） ---------- */
-.pet-chooser-preview {
-  flex: 0 0 auto;
-  width: 96px;
-  height: 104px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-muted);
-  overflow: hidden;
-}
-.pet-chooser-preview canvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-  image-rendering: pixelated;
-}
-
 /* ── 项目资源管理弹框 ────────────────────────────
  * 尺寸由 DialogContent 的响应式 utility 统一控制；这里仅保留内容容器的背景，
  * 避免旧 CSS 与 shadcn Dialog 的 max-width/height 变体互相争抢。 */

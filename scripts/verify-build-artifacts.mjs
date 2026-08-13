@@ -8,7 +8,6 @@ const EXPECTED_ENTRIES = {
 	main: "main/index.js",
 	preload: "preload/index.js",
 	index: "renderer/index.html",
-	pet: "renderer/pet.html",
 	// Web 服务入口：外部端（浏览器访问 http://host:port）加载的就是它。
 	// 产物缺失时 WebServiceManager 会静默回退到 A1 旧内嵌页（功能可用但体验是旧版），
 	// 因此必须纳入门禁，防止构建配置变更导致外部端悄悄变回旧页面。
@@ -96,7 +95,7 @@ export async function verifyBuildArtifacts({ repoRoot = process.cwd(), outDir } 
 
 	const rendererRoot = join(output, "renderer");
 	const resourcePaths = new Set();
-	for (const htmlPath of [entryPaths.index, entryPaths.pet, entryPaths.web]) {
+	for (const htmlPath of [entryPaths.index, entryPaths.web]) {
 		if (!(await exists(htmlPath))) continue;
 		const html = await readFile(htmlPath, "utf8");
 		for (const reference of extractHtmlResourceReferences(html)) {
@@ -132,7 +131,7 @@ export async function verifyBuildArtifacts({ repoRoot = process.cwd(), outDir } 
 		{
 			name: "renderer",
 			inputs: [join(root, "src", "renderer"), ...commonInputs],
-			artifacts: [entryPaths.index, entryPaths.pet, ...resourcePaths],
+			artifacts: [entryPaths.index, entryPaths.web, ...resourcePaths],
 		},
 	];
 	for (const group of freshnessGroups) {

@@ -46,16 +46,6 @@ export function readSingleInstancePreference(): boolean {
 }
 
 /**
- * 在 app.ready 之前同步读取桌面宠物开关（启动时快照）。
- * Linux 的 XWayland 兼容层（见 main/linuxDisplayBackend.ts，#108）必须在 ready 前
- * 决定是否强制 ozone-platform=x11，而宠物是该兼容层的唯一受益者，故以此为准。
- * 缺省 false：未启用宠物的 Linux 用户走原生显示后端，主窗口不受兼容层影响。
- */
-export function readPetEnabledPreference(): boolean {
-	return readDesktopSettingsSync().petEnabled === true;
-}
-
-/**
  * 读取 pi agent 的 settings.json 并从中提取 showThinking（取 hideThinkingBlock 的反值）。
  * pi CLI 的 hideThinkingBlock 语义：true=隐藏思考，false=显示思考。
  * 桌面端 showThinking 语义：true=显示，false=隐藏。
@@ -154,15 +144,6 @@ Gitmoji 对应关系：
   maxEditorFileSizeMB: 5,
   externalEditors: createDefaultExternalEditorSettings(),
 
-  // 桌面宠物默认关闭：关闭后应用与现状完全一致，零回归风险
-  petEnabled: false,
-  petId: "clawd",
-  petAlwaysOnTop: true,
-  petScale: 0.8,
-  // 巡游默认开启：宠物 idle 时自动沿屏幕底部左右走动，业务态出现即让位
-  petPatrolEnabled: true,
-  // 巡游碰边后 idle 停顿默认 5 分钟
-  petPatrolPauseMin: 5,
   favoriteModels: [],
 
   // ── 扩展管理 ──

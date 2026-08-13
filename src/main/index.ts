@@ -17,14 +17,12 @@ import { basename, join } from "node:path";
 import { createWriteStream, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { is } from "@electron-toolkit/utils";
-import { PetSystem, type PetSystemDeps } from "./pet";
 import {
 	applyLinuxDisplayBackendWorkaround,
 	isUsingLinuxXWaylandWorkaround,
 } from "./linuxDisplayBackend";
 import {
 	readElectronChromiumSandboxPreference,
-	readPetEnabledPreference,
 	readSingleInstancePreference,
 } from "./settings/SettingsStore";
 import { acquireVersionSingleInstance, type FocusPayload } from "./singleInstance";
@@ -55,12 +53,8 @@ if (isDevBuild) {
 	}
 }
 
-// Linux XWayland 兼容层：仅当桌面宠物启用时才强制 ozone-platform=x11（#108，
-// 强制 XWayland 在部分 GNOME/Wayland 环境会导致主窗口不可见）。
-// ozone 平台一经启动不可更改，整个生命周期统一使用启动时快照。
-// 注意必须放在 dev userData 覆盖之后，否则 dev 模式会误读正式版的 petEnabled。
-const petEnabledAtLaunch = readPetEnabledPreference();
-applyLinuxDisplayBackendWorkaround(petEnabledAtLaunch);
+// 用户显式指定 X11 时必须在 app.ready 前应用；默认保持系统原生显示后端。
+applyLinuxDisplayBackendWorkaround();
 
 // Chromium 沙箱开关必须在 app.ready 前生效。
 // 默认关闭：Windows 上部分安全软件/旧 GPU 驱动会在沙箱初始化时触发原生断点（0x80000003）。
@@ -276,7 +270,6 @@ let extensionManager: ExtensionManager;
 let projectResourceManager: ProjectResourceManager;
 let webServiceManager: WebServiceManager;
 let terminalManager: TerminalSessionManager;
-let petSystem: PetSystem | null = null;
 let appLogger: AppLogger;
 let rpcLogger: RpcLogger;
 /** 内存采样句柄（PIDECK_MEMORY_PROFILE=1 时启用），quit 时停止 */
@@ -1025,7 +1018,7 @@ function handleVersionFocusRequest(payload?: FocusPayload) {
 			sessionId = sessionRuntimeCoordinator.getSessionId(target.agentId);
 		}
 		if (sessionId) {
-			mainWindow.webContents.send(ipcChannels.petFocusAgentTarget, { sessionId });
+			mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, { sessionId });
 		}
 	};
 	if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1508,7 +1501,7 @@ function shouldUseDevRendererUrl() {
 }
 
 function shouldShowMainWindowImmediately() {
-	return isUsingLinuxXWaylandWorkaround(petEnabledAtLaunch);
+	return isUsingLinuxXWaylandWorkaround();
 }
 
 /** 启动尺寸预设 → 初始窗口尺寸；全屏/最大化也给合理兜底，避免显示器信息异常时缩成最小窗。 */
@@ -1732,14 +1725,11 @@ function registerIpc() {
 		installDownloadedUpdate,
 		openExternalUrl,
 		extensionManager,
-		// 设置变更副作用（代理 / 主题 / WSL / 宠物 / Web 服务）
+		// 设置变更副作用（代理 / 主题 / WSL / Web 服务）
 		applyDesktopProxy,
 		testPiProxy,
 		applyWebServiceSettings: (settings) => webServiceManager.applySettings(settings),
 		restartWebService: (settings) => webServiceManager.restart(settings),
-		reactToPetSettings: async (prev, next) => {
-			await petSystem?.reactToSettings(prev, next);
-		},
 		applyNativeThemeSource,
 		refreshTrayContextMenu,
 		notifyTitleBarChange: (window) => settingsStore.notifyTitleBarChange(window),
@@ -2194,28 +2184,12 @@ app.whenReady().then(async () => {
 	// catalog 可能尚未加载完，renderer 侧监听会小间隔重试直到能解析到会话记录。
 	const coldStartTarget = extractFocusTargetFromArgv(process.argv);
 	if (coldStartTarget?.sessionId && mainWindow && !mainWindow.isDestroyed()) {
-		mainWindow.webContents.send(ipcChannels.petFocusAgentTarget, {
+		mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, {
 			sessionId: coldStartTarget.sessionId,
 		});
 	}
 	void detectExternalEditorsOnFirstLaunch().catch((error) => {
 		void appLogger.warn("editor", "External editor first launch detection failed", error);
-	});
-
-	// 桌面宠物系统：新增模块，默认关闭（petEnabled=false），不触碰现有 IPC 与主窗逻辑
-	petSystem = new PetSystem({
-		agentManager,
-		settingsStore,
-		getMainWindow: () => mainWindow,
-		resolveSessionId: (agentId) => sessionRuntimeCoordinator.getSessionId(agentId),
-		translate: (key, params) => mainCopy(key, params),
-		recreateMainWindow: async () => {
-			await createWindow();
-			return mainWindow!;
-		},
-	});
-	void petSystem.start().catch((error) => {
-		void appLogger.warn("pet", "Pet system start failed", error);
 	});
 
 	// 项目列表可能位于杀软/同步盘较慢的 userData；窗口先显示，随后异步加载，避免 packaged app 打开时白屏等待。
@@ -2363,8 +2337,6 @@ app.on("before-quit", () => {
 	void webServiceManager?.stop();
 	terminalManager?.closeAll();
 	agentManager?.stopAll();
-	petSystem?.stop();
-	petSystem = null;
 });
 
 app.on("window-all-closed", () => {

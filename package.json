@@ -140,13 +140,6 @@
       {
         "from": "resources/model-specs.db",
         "to": "model-specs.db"
-      },
-      {
-        "from": "build/pets",
-        "to": "pets",
-        "filter": [
-          "**/*"
-        ]
       }
     ],
     "extraMetadata": {

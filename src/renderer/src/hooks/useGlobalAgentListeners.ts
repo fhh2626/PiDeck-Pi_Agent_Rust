@@ -40,7 +40,7 @@ export function useGlobalAgentListeners(
       store.set(replaceProjectInventoryAtom, projects);
       callbacksRef.current.onProjectsChanged?.(projects);
     });
-    const offFocusTarget = desktopApi.pet.onFocusTarget((target) => {
+    const offFocusTarget = desktopApi.app.onFocusSessionTarget((target) => {
       callbacksRef.current.onFocusTarget?.(target);
     });
     const offSettings = desktopApi.settings.onApplyWindow((settings) => {
