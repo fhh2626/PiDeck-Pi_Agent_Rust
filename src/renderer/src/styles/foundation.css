@@ -1351,10 +1351,6 @@ select:focus-visible {
   color: var(--color-accent);
 }
 
-.toolbar-actions .feedback-icon:hover {
-  background: color-mix(in srgb, var(--color-info) 10%, var(--color-bg-panel));
-  color: var(--color-info);
-}
 .sidebar-bottom-actions,
 .sidebar-bottom-primary-actions {
   /* 底栏布局由 SidebarContent Tailwind 承担 */
@@ -1372,11 +1368,6 @@ select:focus-visible {
   min-width: 0;
   white-space: nowrap;
 }
-.homepage-icon:hover {
-  background: var(--color-bg-hover);
-  color: var(--color-accent);
-}
-
 /* pure official：LogoMark 样式由组件 Tailwind class 承担；仅保留最小兜底 */
 .logo-mark {
   flex: 0 0 auto;
@@ -2392,7 +2383,6 @@ select:focus-visible {
 :root[data-bg-image="on"] [data-slot="dialog-content"].config-modal,
 :root[data-bg-image="on"] [data-slot="dialog-content"].settings-modal,
 :root[data-bg-image="on"] [data-slot="dialog-content"].project-resources-dialog,
-:root[data-bg-image="on"] [data-slot="dialog-content"].feedback-modal-shell,
 :root[data-bg-image="on"] [data-slot="dialog-content"].environment-dialog {
   /* 这些都是完整工作台弹框，header 与内容必须共享页面面板档透明度。 */
   --wallpaper-dialog-alpha: var(--wallpaper-panel-alpha, 30%);

@@ -1,4 +1,4 @@
-import { Search, Settings, Sliders, MessageSquare, Globe, FolderPlus } from "lucide-react";
+import { Search, Settings, Sliders, FolderPlus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type { AgentTab, Project, SessionRecord, SessionSummary, WorktreeEntry } from "../../../../shared/types";
 import {
@@ -91,8 +91,6 @@ export type SidebarContentProps = {
   chrome?: ReactNode;
   onOpenSettings?: () => void;
   onOpenConfig?: () => void;
-  onOpenFeedback?: () => void;
-  onOpenHomepage?: () => void;
 };
 
 export function SidebarContent(props: SidebarContentProps) {
@@ -193,8 +191,6 @@ export function SidebarContent(props: SidebarContentProps) {
           <div className="sidebar-bottom-primary-actions flex min-w-0 flex-1 items-center gap-0">
             <Button type="button" variant="ghost" size="icon-sm" className="icon-button settings-icon size-8 rounded-none text-muted-foreground hover:bg-muted hover:text-foreground" title={t("settings.title")} aria-label={t("settings.title")} onClick={props.onOpenSettings}><Settings className="size-4" /></Button>
             <Button type="button" variant="ghost" size="icon-sm" className="icon-button config-icon size-8 rounded-none text-muted-foreground hover:bg-muted hover:text-foreground" title={t("config.title")} aria-label={t("config.title")} onClick={props.onOpenConfig}><Sliders className="size-4" /></Button>
-            <Button type="button" variant="ghost" size="icon-sm" className="icon-button feedback-icon size-8 rounded-none text-muted-foreground hover:bg-muted hover:text-foreground" title={t("feedback.title")} aria-label={t("feedback.title")} onClick={props.onOpenFeedback}><MessageSquare className="size-4" /></Button>
-            <Button type="button" variant="ghost" size="icon-sm" className="icon-button homepage-icon size-8 rounded-none text-muted-foreground hover:bg-muted hover:text-foreground" title={t("app.homepage")} aria-label={t("app.homepage")} onClick={props.onOpenHomepage}><Globe className="size-4" /></Button>
           </div>
         </div>
       )}

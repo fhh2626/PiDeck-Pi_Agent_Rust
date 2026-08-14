@@ -2738,7 +2738,6 @@ body.ask-dialog-open .ask-question-card.pending {
   inset: var(--window-drag-height) 0 0 0;
   z-index: 940;
 }
-.custom-titlebar-enabled .feedback-modal,
 .custom-titlebar-enabled .settings-modal,
 .custom-titlebar-enabled .config-modal {
   max-height: calc(100vh - 56px);

@@ -38,7 +38,6 @@ import type {
 	ExternalEditor,
 	ExternalEditorId,
 	ExternalEditorSetting,
-	FeedbackEnvironment,
 	FileTreeNode,
 	GitBranchInfo,
 	ImageContent,
@@ -886,10 +885,6 @@ const api = {
 			ipcRenderer.invoke(ipcChannels.appInstallUpdate, filePath) as Promise<void>,
 		onUpdateProgress: (callback: (progress: AppUpdateDownloadProgress) => void) =>
 			subscribe(ipcChannels.appUpdateProgress, callback),
-		feedbackEnvironment: () =>
-			ipcRenderer.invoke(
-				ipcChannels.appFeedbackEnvironment,
-			) as Promise<FeedbackEnvironment>,
 		openExternal: (url: string, forceSystem?: boolean) =>
 			ipcRenderer.invoke(ipcChannels.appOpenExternal, url, forceSystem) as Promise<void>,
 		onOpenInBrowser: (callback: (url: string) => void) =>

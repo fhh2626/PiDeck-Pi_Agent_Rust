@@ -39,7 +39,6 @@ test("overlay roots expose narrow contracts and never subscribe to raw UI reques
 // 写成 `!next && onClose` 只会返回函数引用，不会关弹层。
 test("dialog onOpenChange handlers invoke onClose instead of returning the callback", () => {
   const files = [
-    "components/overlays/SessionActionOverlays.tsx",
     "components/overlays/OverlayComponents.tsx",
     "components/app/ImportModals.tsx",
     "components/app/ProjectResourcesModal.tsx",

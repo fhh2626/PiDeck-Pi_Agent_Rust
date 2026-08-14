@@ -645,20 +645,6 @@ export function createPreviewApi(): PiDesktopApi {
 			onUpdateProgress: () => () => undefined,
 			onOpenInBrowser: () => () => undefined,
 			onFocusSessionTarget: () => () => undefined,
-			feedbackEnvironment: async () => ({
-				appVersion: "preview",
-				platform: "win32",
-				arch: "x64",
-				electronVersion: "preview",
-				chromeVersion: "preview",
-				nodeVersion: "preview",
-				pi: {
-					installed: true,
-					command: "pi",
-					version: "preview",
-					searchedDirs: [],
-				},
-			}),
 			openExternal: async () => undefined,
 			restart: async () => undefined,
 			rendererLog: async (level, scope, message, detail) => {

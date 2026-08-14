@@ -187,7 +187,6 @@ export const ipcChannels = {
 	appDownloadUpdate: "app:download-update",
 	appInstallUpdate: "app:install-update",
 	appUpdateProgress: "app:update-progress",
-	appFeedbackEnvironment: "app:feedback-environment",
 	appOpenExternal: "app:open-external",
 	appOpenInBrowser: "app:open-in-browser",
 	appRestart: "app:restart",

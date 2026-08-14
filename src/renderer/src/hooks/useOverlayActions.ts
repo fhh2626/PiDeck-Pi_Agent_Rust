@@ -1,7 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
-import { t } from "../i18n";
 import { desktopApi as api } from "../desktopApi";
-import type { Project, AppInfo } from "../../../shared/types";
 
 interface ConfirmDialogConfig {
   title: string;
@@ -17,30 +15,14 @@ interface TrustRequest {
   projectName: string;
 }
 
-interface UseOverlayActionsParams {
-  activeProject?: Project;
-  appInfo: AppInfo;
-  showToast: (message: string, duration?: number) => void;
-}
-
-export function useOverlayActions({ activeProject, appInfo, showToast }: UseOverlayActionsParams) {
+export function useOverlayActions() {
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogConfig | null>(null);
   const [trustRequest, setTrustRequest] = useState<TrustRequest | null>(null);
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const showConfirm = useCallback((config: ConfirmDialogConfig) => setConfirmDialog(config), []);
   const clearConfirm = useCallback(() => setConfirmDialog(null), []);
 
   const overlayProps = useMemo(() => ({
-    feedback: feedbackOpen ? {
-      open: true as const,
-      project: activeProject,
-      appInfo,
-      onClose: () => setFeedbackOpen(false),
-      onCopy: () => showToast(t("app.feedbackCopied")),
-      onOpenExternal: (url: string) => api.app.openExternal(url),
-      loadEnvironment: api.app.feedbackEnvironment,
-    } : undefined,
     confirm: confirmDialog ? {
       open: true as const,
       props: {
@@ -62,7 +44,7 @@ export function useOverlayActions({ activeProject, appInfo, showToast }: UseOver
         setTrustRequest(null);
       },
     } : undefined,
-  }), [feedbackOpen, activeProject, appInfo, confirmDialog, trustRequest, showToast]);
+  }), [confirmDialog, trustRequest]);
 
   return {
     confirmDialog,
@@ -70,8 +52,6 @@ export function useOverlayActions({ activeProject, appInfo, showToast }: UseOver
     clearConfirm,
     trustRequest,
     setTrustRequest,
-    feedbackOpen,
-    setFeedbackOpen,
     overlayProps,
   };
 }

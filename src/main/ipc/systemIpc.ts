@@ -569,30 +569,6 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 		agentManager.isRpcLogging(resolveRpcRuntimeAgent(target)!),
 	);
 
-	// ── 反馈环境 ─────────────────────────────────────────────────────
-
-	ipcMain.handle(ipcChannels.appFeedbackEnvironment, async () => {
-		const settings = settingsStore.get();
-		const pi = await piLocator.check(
-			settings.customPiPath,
-			settings.wslEnabled,
-			settings.wslDistro,
-			settings.wslUser,
-			settings.piRuntimePreference,
-			settings.piTypescriptPath,
-			settings.piRustPath,
-		);
-		return {
-			appVersion: app.getVersion(),
-			platform: process.platform,
-			arch: process.arch,
-			electronVersion: process.versions.electron ?? "",
-			chromeVersion: process.versions.chrome ?? "",
-			nodeVersion: process.versions.node,
-			pi,
-		};
-	});
-
 	// ── 外部链接 / 重启 / 窗口控制 ──────────────────────────────────
 
 	ipcMain.handle(ipcChannels.appOpenExternal, async (_event, url: string, forceSystem?: boolean) => {

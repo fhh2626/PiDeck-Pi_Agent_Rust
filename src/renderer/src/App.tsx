@@ -678,7 +678,7 @@ export function App() {
   const activeProject = projects.find(
     (project) => project.id === activeProjectId,
   );
-  const overlays = useOverlayActions({ activeProject, appInfo, showToast });
+  const overlays = useOverlayActions();
   const sessionsProject = projects.find(
     (project) => project.id === sessionsProjectId,
   );
@@ -2581,12 +2581,9 @@ export function App() {
       creatingWorktree={worktreeCreating}
       isLanWeb={isLanWeb}
       onOpenConfig={() => setConfigOpen(true)}
-      onOpenFeedback={() => overlays.setFeedbackOpen(true)}
       settingsExpandedProjectIds={settings.sidebarExpandedProjectIds}
       settingsLoaded={settingsLoaded}
       onExpandedProjectsReady={() => setExpandedProjectsReady(true)}
-      // 官网主页是品牌入口，强制系统浏览器打开：不受「链接打开方式=内置浏览器」设置影响
-      onOpenHomepage={() => void api.app.openExternal("https://github.com/fhh2626/PiDeck-Pi_Agent_Rust", true)}
     />
   );
 

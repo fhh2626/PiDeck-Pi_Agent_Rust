@@ -19,8 +19,6 @@ interface AppSidebarProps {
   creatingWorktree: boolean;
   isLanWeb: boolean;
   onOpenConfig: () => void;
-  onOpenFeedback: () => void;
-  onOpenHomepage: () => void;
   /** 左侧栏折叠态与开关（main 布局：按钮在品牌文字右侧） */
   listCollapsed: boolean;
   toggleListCollapsed: () => void;
@@ -79,8 +77,6 @@ export function AppSidebar(props: AppSidebarProps) {
       </>}
       onOpenSettings={() => setSettingsOpen(true)}
       onOpenConfig={props.onOpenConfig}
-      onOpenFeedback={props.onOpenFeedback}
-      onOpenHomepage={props.onOpenHomepage}
     />
     </>
   );
