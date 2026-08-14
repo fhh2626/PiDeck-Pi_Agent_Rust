@@ -30,6 +30,37 @@ async function rmDir(dir) {
   }
 }
 
+/**
+ * Remove sql.js fallback builds that are not used by the packaged main process.
+ *
+ * PiDeck loads sql.js through its default Node export (`dist/sql-wasm.js`) and
+ * supplies the matching `sql-wasm.wasm` via locateFile. The asm.js, browser,
+ * debug, and worker variants are useful to the npm package's test/browser
+ * matrix, but they are not part of the Electron runtime and otherwise add
+ * several megabytes to every release.
+ */
+async function removeSqlJsNonRuntimeFiles(sqlJsDistDir) {
+  const keepFiles = new Set(["sql-wasm.js", "sql-wasm.wasm"]);
+  let removedBytes = 0;
+  let removedFiles = 0;
+
+  try {
+    const entries = await fs.promises.readdir(sqlJsDistDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || keepFiles.has(entry.name)) continue;
+      const fullPath = path.join(sqlJsDistDir, entry.name);
+      const stat = await fs.promises.stat(fullPath);
+      await fs.promises.unlink(fullPath);
+      removedBytes += stat.size;
+      removedFiles++;
+    }
+  } catch {
+    // sql.js is optional for a degraded build; missing dist is handled later.
+  }
+
+  return { removedBytes, removedFiles };
+}
+
 /** 递归获取目录总大小 */
 async function dirSize(dir) {
   let total = 0;
@@ -102,6 +133,8 @@ async function stripFromAsar(asarPath, extractDir, removePaths, label) {
 /**
  * @param {import("electron-builder").AfterPackContext} context
  */
+exports.removeSqlJsNonRuntimeFiles = removeSqlJsNonRuntimeFiles;
+
 exports.default = async function (context) {
   const { appOutDir } = context;
 
@@ -238,9 +271,19 @@ exports.default = async function (context) {
       totalRemoved += docBytes;
       console.log(`  [afterPack] 已删除 node_modules 中文档/SourceMap (${(docBytes / 1024 / 1024).toFixed(1)} MB)`);
     }
+
+    // --- 3b. sql.js only needs the wasm Node runtime in the packaged app ---
+    const sqlJsDistDir = path.join(nmExtractDir, "sql.js", "dist");
+    const sqlJsCleanup = await removeSqlJsNonRuntimeFiles(sqlJsDistDir);
+    if (sqlJsCleanup.removedBytes > 0) {
+      totalRemoved += sqlJsCleanup.removedBytes;
+      console.log(
+        `  [afterPack] sql.js fallback builds: 已删除 ${sqlJsCleanup.removedFiles} 个 (${(sqlJsCleanup.removedBytes / 1024 / 1024).toFixed(1)} MB)`,
+      );
+    }
   }
 
-  // --- 3b2. 删除 asar 内 node-pty 非当前平台的 prebuild（.node 文件被 electron-builder 自动解包到 asar.unpacked，
+  // --- 3c. 删除 asar 内 node-pty 非当前平台的 prebuild（.node 文件被 electron-builder 自动解包到 asar.unpacked，
   //    但 asar 内仍保留了所有平台的副本，平台过滤只在 afterPack 上一步做了 asar.unpacked 的清理）---
   const nodePtyPrebuildDir = path.join(extractDir, "node_modules", "node-pty", "prebuilds");
   if (fs.existsSync(nodePtyPrebuildDir)) {

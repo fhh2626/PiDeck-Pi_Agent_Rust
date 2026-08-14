@@ -106,7 +106,7 @@
     "afterPack": "./scripts/after-pack-cleanup.js",
     "npmRebuild": false,
     "asarUnpack": [
-      "node_modules/sql.js/dist/*.wasm"
+      "node_modules/sql.js/dist/sql-wasm.wasm"
     ],
     "directories": {
       "output": "release",

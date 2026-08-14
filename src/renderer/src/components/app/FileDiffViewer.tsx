@@ -5,8 +5,6 @@ import { Button } from "../ui-shadcn/button";
 import { cn } from "../../lib/utils";
 import { MarkdownStream } from "../session/MarkdownStream";
 import { defaultUrlTransform } from "../session/MarkdownLinkCore";
-import { defaultRemarkPlugins, defaultRehypePlugins } from "streamdown";
-import rehypeKatex from "rehype-katex";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 // CodeDiffView 静态链上挂着 @pierre/diffs + shiki（WASM 重库），懒加载后这些模块
 // 移出首屏初始 chunk（约 -500KB 解析量），仅在用户打开 diff 时才拉取。
@@ -465,8 +463,7 @@ export function FileDiffViewer(props: {
 								<MarkdownStream
 									text={content}
 									onOpenExternal={() => undefined}
-									remarkPlugins={[defaultRemarkPlugins.gfm]}
-									rehypePlugins={[defaultRehypePlugins.raw, rehypeKatex]}
+									remarkPlugins={[]}
 									urlTransform={defaultUrlTransform}
 								/>
 							</div>

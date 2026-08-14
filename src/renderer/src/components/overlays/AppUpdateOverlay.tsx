@@ -1,5 +1,4 @@
 import { MarkdownStream } from "../session/MarkdownStream";
-import { defaultRemarkPlugins } from "streamdown";
 import { t } from "../../i18n";
 import {
 	Dialog,
@@ -80,7 +79,7 @@ function UpdateDialog(props: {
 						<MarkdownStream
 							text={props.info.releaseNotes.trim() || t("update.noReleaseNotes")}
 							onOpenExternal={() => undefined}
-							remarkPlugins={[defaultRemarkPlugins.gfm]}
+							remarkPlugins={[]}
 						/>
 					</div>
 				</div>

@@ -8,7 +8,9 @@ import test from "node:test";
 // 代码块不再包 details 折叠（Chrome 中文会露出默认「详情」disclosure）。
 // 锚点：mermaid/math 由 @streamdown/* 插件接管；a 仍走 MarkdownLink
 // （file:// 打开 + 系统浏览器）；Tailwind 已扫描 streamdown 类名保证控件样式完整。
-const stream = readFileSync("src/renderer/src/components/session/MarkdownStream.tsx", "utf8");
+const streamWrapper = readFileSync("src/renderer/src/components/session/MarkdownStream.tsx", "utf8");
+const streamRenderer = readFileSync("src/renderer/src/components/session/MarkdownStreamRenderer.tsx", "utf8");
+const stream = `${streamWrapper}\n${streamRenderer}`;
 const surface = readFileSync("src/renderer/src/components/session/SurfaceComponents.tsx", "utf8");
 const link = readFileSync("src/renderer/src/components/session/MarkdownLink.tsx", "utf8");
 const linkCore = readFileSync("src/renderer/src/components/session/MarkdownLinkCore.ts", "utf8");
@@ -48,6 +50,17 @@ test("streamdown pipeline delegates to official plugins (code/mermaid/math) and 
   assert.doesNotMatch(stream, /mode=\{props\.isStreaming \? "streaming" : "static"\}/);
   // mermaid 主题跟随明暗
   assert.match(stream, /theme: isDark \? "dark" : "default"/);
+});
+
+test("heavy markdown renderer stays behind a dynamic boundary", () => {
+  assert.match(streamWrapper, /lazy\(\(\) =>[\s\S]*import\("\.\/MarkdownStreamRenderer"\)/);
+  assert.doesNotMatch(streamWrapper, /from "streamdown"/);
+  assert.doesNotMatch(streamWrapper, /from "@streamdown\//);
+  assert.match(streamRenderer, /from "streamdown"/);
+  assert.match(streamRenderer, /from "@streamdown\/code"/);
+  assert.match(streamRenderer, /from "@streamdown\/mermaid"/);
+  assert.match(streamWrapper, /streamLive \? \(/);
+  assert.match(streamWrapper, /useSmoothStream/);
 });
 
 test("streamdown code/table chrome uses faded action controls", () => {
@@ -117,21 +130,20 @@ test("static markdown scenes share the Streamdown engine", () => {
   assert.match(diffViewer, /MarkdownStream/);
   assert.match(updateOverlay, /MarkdownStream/);
   assert.match(scratchPad, /MarkdownStream/);
-  // 静态场景保留各自插件（草稿本的高亮 mark 与 GFM task list 覆盖）
+  // 静态场景保留各自扩展（草稿本的高亮 mark、换行与 GFM task list 覆盖）
   assert.match(scratchPad, /rehypeHighlightMark/);
-  assert.match(scratchPad, /remarkBreaks/);
+  assert.match(scratchPad, /breaks/);
 });
 
 test("streaming overlong guard: plain-text fallback above STREAM_LIGHT_MAX_CHARS", () => {
   const stream = readFileSync("src/renderer/src/components/session/MarkdownStream.tsx", "utf8");
   // 阈值常量导出（字符数）：流式主路径已是纯文本，阈值只做超长硬顶
   assert.match(stream, /export const STREAM_LIGHT_MAX_CHARS = 8_000/);
-  assert.match(stream, /streamPlain =\s*\n?\s*isStreamingNow && displayText\.length > STREAM_LIGHT_MAX_CHARS/);
+  assert.match(streamWrapper, /streamPlain = displayText\.length > STREAM_LIGHT_MAX_CHARS/);
   // 回退节点：纯文本 + pre-wrap（排版由容器 markdown-body 接管）
   assert.match(stream, /whitespace-pre-wrap break-words/);
   // 流式主路径不建 Streamdown 树；settle 后再挂全量管线
   assert.match(stream, /streamLive \? \(/);
-  assert.match(stream, /streamLive,/);
   assert.match(stream, /liveText/);
   assert.match(stream, /streamingDisplayText/);
   // 超长兜底对思考同样生效（ThinkingBlock 走同一 MarkdownStream），无需额外开关
@@ -139,8 +151,9 @@ test("streaming overlong guard: plain-text fallback above STREAM_LIGHT_MAX_CHARS
   assert.match(thinking, /<MarkdownStream/);
   assert.doesNotMatch(thinking, /from "\.\.\/\.\.\/utils\/useSmoothStream"/);
   assert.match(thinking, /text=\{props\.text\}/);
-  assert.match(stream, /mode="static"/);
-  assert.match(stream, /resolvedRemarkPlugins = streamLive\s*\n\s*\?\s*\[\]/);
+  assert.match(streamRenderer, /mode="static"/);
+  assert.match(streamRenderer, /const resolvedRemarkPlugins = \[/);
+  assert.match(streamRenderer, /const resolvedRehypePlugins = \[/);
 });
 
 test("AnswerOutput live path renders through MarkdownStream (no dual typewriter)", () => {
