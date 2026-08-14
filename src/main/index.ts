@@ -1822,6 +1822,13 @@ function registerIpc() {
 		appLogger,
 		getMainWindow: () => mainWindow,
 		openExternalUrl,
+		getAuthorizedRoots: () => [
+			...projectStore.list().map((project) => project.path),
+			promptManager.getDir(),
+			...skillManager.getDirs(),
+			join(app.getPath("home"), ".pi", "agent"),
+			app.getPath("userData"),
+		],
 	});
 }
 

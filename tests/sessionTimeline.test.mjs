@@ -13,6 +13,10 @@ const source = readFileSync(
   "src/renderer/src/hooks/useSessionTimelineController.ts",
   "utf8",
 );
+const timelineComponentSource = readFileSync(
+  "src/renderer/src/components/session/SessionMessageTimeline.tsx",
+  "utf8",
+);
 
 function compileModule(filePath, imports = {}) {
   const output = ts.transpileModule(readFileSync(filePath, "utf8"), {
@@ -67,6 +71,7 @@ test("timeline auto-scroll only sticks while the reader remains near the bottom"
 test("timeline owns paging, delegated scroll follow, and outline jump lifecycle", () => {
 	assert.match(source, /selectAtom\([\s\S]*sessionMessagesCacheAtom/);
 	assert.match(source, /readRecordMessagePage\(sessionId/);
+	assert.match(timelineComponentSource, /sessionId: props\.controller \? undefined : sessionId/);
 	assert.match(source, /prependHistoryPage/);
 	// 激活分页（2026-08）：runtime 窗口会话的显示总数 = disk 前缀 + 窗口段的组合长度
 	assert.match(source, /totalMessageCount: diskPage \? diskPage\.total : combinedMessages\.length/);

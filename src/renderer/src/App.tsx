@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { SKIN_PRESETS } from "./themePresets";
+import { resolveChatTypographyVars } from "./lib/chatTypography";
 // 壁纸模式已注入的 token 键（effect 重跑/清除设置时需要跨运行保留，避免漏清）
 let injectedWallpaperTokens = new Set<string>();
 import {
@@ -549,6 +550,10 @@ export function App() {
     uiFontSize: null,
     chatFontSize: null,
     inputFontSize: null,
+    chatBodyLineHeight: "default",
+    chatBlockGap: "default",
+    chatListDensity: "default",
+    chatCodeDensity: "default",
     zoomFactor: 1,
     fontFamilyBase: "system",
     fontFamilyBaseCustom: "",
@@ -997,6 +1002,15 @@ export function App() {
     root.dataset.uiFontSize = uiFontSize;
     root.dataset.chatFontSize = chatFontSize;
     root.dataset.inputFontSize = inputFontSize;
+    // 会话排版（行距/块间距/列表/代码密度）：档位 → token 由纯函数解析后写入。
+    // CSS 只消费 token；data-* 仅用于测试与调试定位。
+    root.dataset.chatBodyLineHeight = settings.chatBodyLineHeight;
+    root.dataset.chatBlockGap = settings.chatBlockGap;
+    root.dataset.chatListDensity = settings.chatListDensity;
+    root.dataset.chatCodeDensity = settings.chatCodeDensity;
+    for (const [name, value] of Object.entries(resolveChatTypographyVars(settings))) {
+      root.style.setProperty(name, value);
+    }
     // 旧属性保留，兼容外部依赖或测试仍读取 dataset.fontSize 的场景
     root.dataset.fontSize = settings.fontSize;
     root.dataset.fontBase = settings.fontFamilyBase;
@@ -1020,6 +1034,10 @@ export function App() {
     settings.uiFontSize,
     settings.chatFontSize,
     settings.inputFontSize,
+    settings.chatBodyLineHeight,
+    settings.chatBlockGap,
+    settings.chatListDensity,
+    settings.chatCodeDensity,
     settings.fontFamilyBase,
     settings.fontFamilyBaseCustom,
     settings.fontFamilyMono,
@@ -1027,7 +1045,7 @@ export function App() {
   ]);
 
   /** 当前会话中 agent 修改过的文件(从 tool 消息 meta 中提取) */
-  // 优化:只在消息数量变化时才重新计算,减少不必要的遍历
+  // 依赖当前会话和消息数组引用：消息数量不变的 tool 状态/参数更新也必须重算。
   const modifiedFiles = useMemo(() => {
     const byPath = new Map<string, SessionModifiedFile>();
     for (const msg of activeMessages) {
@@ -1058,11 +1076,11 @@ export function App() {
       });
     }
     return Array.from(byPath.values());
-  }, [activeMessages.length, activeAgentId]);
-  // 优化:轮廓项计算仅在消息数量变化时触发,减少不必要的重计算
+  }, [activeAgentId, activeMessages, currentSessionId]);
+  // 会话切换或消息内容引用变化时重算，避免同长度历史会话复用旧大纲。
   const outlineItems = useMemo(
     () => buildOutline(activeMessages),
-    [activeMessages.length, activeAgentId],
+    [activeAgentId, activeMessages, currentSessionId],
   );
   const flatFiles = useMemo(() => flattenFiles(files), [files]);
   // === file editor hook ===

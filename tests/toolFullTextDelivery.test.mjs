@@ -28,13 +28,14 @@ test("tool detail is delivered with truncated/fullLength markers", () => {
 });
 
 test("runtime tool path caches full text for on-demand read", () => {
-  // 运行期完整结果只进 LRU 缓存（toolFullTextByMessageId），截断版进 meta
-  assert.match(agentManager, /private readonly toolFullTextByMessageId = new Map<string, string>\(\);/);
+  // 运行期完整结果只进按 agent 隔离的 LRU 缓存，截断版进 meta
+  assert.match(agentManager, /private readonly toolFullTextByAgent = new Map<string, Map<string, string>>\(\);/);
   assert.match(agentManager, /TOOL_FULL_TEXT_LRU_LIMIT = 200/);
   assert.match(agentManager, /if \(detailDelivery\.truncated\)/);
-  assert.match(agentManager, /this\.toolFullTextByMessageId\.set\(messageId, fullText\);/);
-  // agent 停止时缓存整体释放
-  assert.match(agentManager, /toolFullTextByMessageId\.clear\(\);/);
+  assert.match(agentManager, /fullTextCache\.set\(messageId, fullText\);/);
+  // agent 停止时只释放当前 agent 的缓存
+  assert.match(agentManager, /this\.toolFullTextByAgent\.delete\(agentId\);/);
+  assert.doesNotMatch(agentManager, /toolFullTextByMessageId\.clear\(\);/);
 });
 
 test("delivery strips redundant meta.result from tool messages", () => {
@@ -51,12 +52,24 @@ test("delivery strips redundant meta.result from tool messages", () => {
 test("full text read falls back to session file with LRU cache", () => {
   // 主进程：内存缓存优先，回退会话文件定位读取（不整文件转换）
   assert.match(agentManager, /async readMessageFullText\(/);
-  assert.match(agentManager, /this\.toolFullTextByMessageId\.get\(messageId\)/);
+  assert.match(agentManager, /this\.toolFullTextByAgent\.get\(agentId\)\?\.get\(messageId\)/);
   assert.match(agentManager, /this\.sessionHistoryReader\.readMessageFullText\(sessionPath, messageId, entryId\)/);
   // 文件读取：逐行 parse 定位（entryId 优先，回退 message.id），LRU 200
   assert.match(reader, /async readMessageFullText\(/);
   assert.match(reader, /entryId && e\.id === entryId/);
   assert.match(reader, /FULL_TEXT_CACHE_LIMIT = 200/);
+});
+
+test("agent cleanup removes every per-agent cache without clearing sibling output", () => {
+  assert.match(agentManager, /this\.toolStateSequenceByAgent\.delete\(agentId\);/);
+  assert.match(agentManager, /this\.activeToolCallsByAgent\.delete\(agentId\);/);
+  assert.match(agentManager, /this\.toolExecutingByAgent\.delete\(agentId\);/);
+  assert.match(agentManager, /this\.messageDirtyFromByAgent\.delete\(agentId\);/);
+  assert.match(agentManager, /this\.displayWindowStartByAgent\.delete\(agentId\);/);
+  assert.match(agentManager, /this\.messageHeadOffsetByAgent\.delete\(agentId\);/);
+  assert.match(agentManager, /this\.pendingSlideOutByAgent\.delete\(agentId\);/);
+  assert.match(agentManager, /this\.sessionFileVersionByAgent\.delete\(agentId\);/);
+  assert.match(agentManager, /this\.promptRequestedAtByAgent\.delete\(agentId\);/);
 });
 
 test("IPC channel, handler and preload surface are wired", () => {

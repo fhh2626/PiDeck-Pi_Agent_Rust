@@ -49,6 +49,16 @@
   --line-height-input: 22px;
   --line-height-title: 24px;
   --line-height-heading: 28px;
+  /* 会话排版 token：档位由 lib/chatTypography.ts 解析后写入；默认值 = 出厂观感，
+     timeline.css / streamdownChrome.css 消费，禁止在设置枚举与 CSS 之间再散落硬编码。 */
+  --chat-body-line-height: 1.35;
+  --chat-block-gap: 6px;
+  --chat-list-block-gap-top: 4px;
+  --chat-list-block-gap-bottom: 6px;
+  --chat-list-item-gap: 3px;
+  --chat-code-line-height: 1.6;
+  --chat-code-block-gap: 0.85rem;
+  --chat-table-cell-padding-y: 0.45rem;
   /*
    * 主题色板：纯白基底（浅色下大面积背景为中性白/灰，不带色相），accent 为可切换主题色。
    * 默认 accent=neutral（黑白灰）；绿色等主题由 :root[data-accent="…"] 覆盖，

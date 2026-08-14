@@ -514,13 +514,12 @@ export const cacheSessionMessagesAtom = atom(
       return false;
     }
 
-    // 防止空/较少 disk 响应清空或退化已有 runtime 缓存（匿名会话切回场景）：
-    // 当 disk 来源的消息数 ≤ cache 中已有消息数时，视为 stale 空读或退化读，直接跳过；
-    // 仅当 disk 携带严格更多的消息（如补齐窗口前的历史）时才允许写入。
+    // runtime 窗口是当前会话的权威快照。磁盘首页只用于没有 runtime 的历史会话；
+    // 即使磁盘返回更多消息，也不能把 runtime 来源改回 disk，否则后续增量 flush
+    // 会因 source 不再是 runtime 而被丢弃，直到下一次终态全量快照才恢复。
     if (
       input.source === "disk" &&
-      current?.source !== "disk" &&
-      current?.messages?.length >= input.messages.length
+      current?.source === "runtime"
     ) {
       return false;
     }

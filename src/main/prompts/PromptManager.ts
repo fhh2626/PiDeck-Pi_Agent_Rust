@@ -11,6 +11,24 @@ import type {
 } from "../../shared/types";
 import type { WslEnvironment } from "../wsl/WslPaths";
 import type { MainProcessTranslationKey } from "../../shared/i18n/mainProcessCopy";
+
+export const PROMPT_ALREADY_EXISTS_CODE = "PROMPT_ALREADY_EXISTS";
+
+export class PromptAlreadyExistsError extends Error {
+	readonly code = PROMPT_ALREADY_EXISTS_CODE;
+
+	constructor(message: string) {
+		super(message);
+		this.name = "PromptAlreadyExistsError";
+	}
+}
+
+export function isPromptAlreadyExistsError(error: unknown): boolean {
+	if (error instanceof PromptAlreadyExistsError) return true;
+	if (!error || typeof error !== "object") return false;
+	return Reflect.get(error, "code") === PROMPT_ALREADY_EXISTS_CODE;
+}
+
 type PromptSettingsSlice = {
 	hiddenBuiltinPromptNames?: string[];
 };
@@ -252,11 +270,21 @@ export class PromptManager {
 		if (!description) throw new Error(this.translate("mainPrompt.descriptionRequired"));
 
 		const filePath = join(this.promptsDir, `${name}.md`);
-		if (existsSync(filePath)) throw new Error(this.translate("mainPrompt.alreadyExists", { name }));
+		const alreadyExistsMessage = this.translate("mainPrompt.alreadyExists", { name });
+		if (existsSync(filePath)) throw new PromptAlreadyExistsError(alreadyExistsMessage);
 
 		// 内容仅含 frontmatter 中的 description，正文由用户后续在编辑器中编写，不与 skill 重复展示描述
 		const content = `---\ndescription: ${description.replace(/\n/g, " ")}\n---\n`;
-		await writeFile(filePath, content, "utf8");
+		try {
+			// The existence check is only an early UX path; wx closes the race between
+			// two concurrent imports so one cannot silently overwrite the other.
+			await writeFile(filePath, content, { encoding: "utf8", flag: "wx" });
+		} catch (error: unknown) {
+			if (error && typeof error === "object" && Reflect.get(error, "code") === "EEXIST") {
+				throw new PromptAlreadyExistsError(alreadyExistsMessage);
+			}
+			throw error;
+		}
 
 		return {
 			name,

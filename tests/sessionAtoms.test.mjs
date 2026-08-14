@@ -140,9 +140,10 @@ test("does not let a stale disk write clobber a live runtime cache", () => {
   );
 });
 
-test("allows a richer disk write to replace a leaner runtime cache", () => {
-  // If disk has strictly more messages than the runtime cache, the overwrite is
-  // real progress (e.g. runtime missed early windowed messages), so allow it.
+test("does not let a richer disk page replace an authoritative runtime cache", () => {
+  // The runtime window is the live source of truth. Historical disk pages must
+  // be prepended through the dedicated paging atoms instead of changing source
+  // to disk, otherwise later runtime deltas would be discarded.
   const atoms = loadAtoms();
   const store = createStore();
   store.set(atoms.cacheSessionMessagesAtom, {
@@ -156,13 +157,13 @@ test("allows a richer disk write to replace a leaner runtime cache", () => {
       { id: "d1", role: "user", text: "old" },
       { id: "r1", role: "assistant", text: "live" },
     ],
-    source: "disk",
-    expectedRevision: 0,
+      source: "disk",
+      expectedRevision: 0,
   });
-  assert.equal(applied, true);
+  assert.equal(applied, false);
   assert.equal(
     store.get(atoms.sessionMessagesCacheAtom)["session-b"].messages.length,
-    2,
+    1,
   );
 });
 

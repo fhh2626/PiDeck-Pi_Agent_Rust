@@ -97,9 +97,8 @@ function readAskField(input: unknown, key: string): unknown {
 export class AgentManager {
 	private readonly agents = new Map<string, AgentRuntime>();
 	private readonly messages = new Map<string, ChatMessage[]>();
-	/** 工具完整结果 LRU 缓存：截断下发后完整文本仅存于此（运行期「查看完整输出」走内存，
-	 *  历史会话回退读会话文件）。键为 pi message id，agent 停止时随 clearAgentState 释放。 */
-	private readonly toolFullTextByMessageId = new Map<string, string>();
+	/** 工具完整结果 LRU 缓存：按 agent 隔离，避免停止一个会话清空其他会话的结果。 */
+	private readonly toolFullTextByAgent = new Map<string, Map<string, string>>();
 
 	/** 当前流式思考的累积文本，用于实时推送给前端展示 */
 	private readonly streamingThinking = new Map<string, string>();
@@ -196,7 +195,7 @@ export class AgentManager {
 	 * 文件直接读取仅解析近尾部少量消息，避免大会话加载导致的界面冻结。
 	 */
 	private static readonly MAX_AUTO_HISTORY_LOAD_BYTES = 5 * 1024 * 1024;
-	/** 工具完整结果 LRU 上限（见 toolFullTextByMessageId）。 */
+	/** 工具完整结果 LRU 上限（见 toolFullTextByAgent）。 */
 	private static readonly TOOL_FULL_TEXT_LRU_LIMIT = 200;
 	/**
 	 * 大会话直接从文件尾部读取时，最多保留的最近消息轮次（每条 user 消息算一轮）。
@@ -550,7 +549,7 @@ export class AgentManager {
 
 	/**
 	 * 按需读取消息完整文本（「查看完整输出」）：优先运行期工具结果缓存
-	 * （toolFullTextByMessageId，仅截断下发后的完整文本），回退会话文件定位读取
+	 * （toolFullTextByAgent，仅截断下发后的完整文本），回退会话文件定位读取
 	 * （SessionHistoryReader 内部有 LRU）。找不到或读取失败抛错，由 IPC 层转结构化错误。
 	 */
 	async readMessageFullText(
@@ -558,7 +557,7 @@ export class AgentManager {
 		messageId: string,
 		entryId?: string,
 	): Promise<{ text: string }> {
-		const cached = this.toolFullTextByMessageId.get(messageId);
+		const cached = this.toolFullTextByAgent.get(agentId)?.get(messageId);
 		if (cached !== undefined) return { text: cached };
 		const runtime = this.agents.get(agentId);
 		const sessionPath = runtime?.tab.sessionPath;
@@ -2403,6 +2402,8 @@ export class AgentManager {
 	 * compactingAgents（compact 的 catch 靠它决定重连）。
 	 */
 	private clearAgentState(agentId: string) {
+		// 关闭路径必须清掉所有按 agent 索引的运行态；agentId 每次 spawn 都不同，
+		// 遗留 key 不会串到新进程，但会在反复崩溃/重启时形成慢泄漏。
 		this.streamingThinking.delete(agentId);
 		this.thinkingSegmentByAgent.delete(agentId);
 		this.setStreamingAgent(agentId, false);
@@ -2419,8 +2420,19 @@ export class AgentManager {
 		this.abortedDuringAsk.delete(agentId);
 		this.pendingUIRequests.delete(agentId);
 		this.clearStreamGate(agentId);
-		// 工具完整结果缓存是运行期性能优化（回退读文件等价），agent 停止时整体释放
-		this.toolFullTextByMessageId.clear();
+		this.toolStateSequenceByAgent.delete(agentId);
+		this.activeToolCallsByAgent.delete(agentId);
+		this.toolExecutingByAgent.delete(agentId);
+		this.messageDirtyFromByAgent.delete(agentId);
+		this.displayWindowStartByAgent.delete(agentId);
+		this.messageHeadOffsetByAgent.delete(agentId);
+		this.pendingSlideOutByAgent.delete(agentId);
+		this.sessionFileVersionByAgent.delete(agentId);
+		this.promptRequestedAtByAgent.delete(agentId);
+		this.rpcLoggingAgents.delete(agentId);
+		this.dropPendingLiveRpcLogs(agentId);
+		// 工具完整结果缓存是运行期性能优化（回退读文件等价），只释放当前 agent。
+		this.toolFullTextByAgent.delete(agentId);
 	}
 
 	async restart(agentId: string): Promise<AgentTab> {
@@ -4275,16 +4287,21 @@ export class AgentManager {
 			isError,
 		);
 		// detailText 整体截断（拼接后可能超单段上限）并标记 truncated/fullLength；
-		// 完整结果文本缓存在 toolFullTextByMessageId（LRU），供「查看完整输出」按需读取。
+		// 完整结果文本按 agent 缓存在 toolFullTextByAgent（LRU），供「查看完整输出」按需读取。
 		const detailDelivery = this.messageProjector.truncateDetailWithMeta(detailText);
 		if (detailDelivery.truncated) {
 			const fullText = this.messageProjector.extractToolResultText(result) || this.messageProjector.safeJson(result);
 			if (fullText) {
-				this.toolFullTextByMessageId.set(messageId, fullText);
-				if (this.toolFullTextByMessageId.size > AgentManager.TOOL_FULL_TEXT_LRU_LIMIT) {
+				let fullTextCache = this.toolFullTextByAgent.get(agentId);
+				if (!fullTextCache) {
+					fullTextCache = new Map<string, string>();
+					this.toolFullTextByAgent.set(agentId, fullTextCache);
+				}
+				fullTextCache.set(messageId, fullText);
+				if (fullTextCache.size > AgentManager.TOOL_FULL_TEXT_LRU_LIMIT) {
 					// LRU 淘汰最旧（Map 迭代序 = 插入序）
-					const oldest = this.toolFullTextByMessageId.keys().next().value;
-					if (oldest !== undefined) this.toolFullTextByMessageId.delete(oldest);
+					const oldest = fullTextCache.keys().next().value;
+					if (oldest !== undefined) fullTextCache.delete(oldest);
 				}
 			}
 		}

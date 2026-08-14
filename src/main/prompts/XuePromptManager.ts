@@ -3,7 +3,8 @@ import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { app } from "electron";
 import initSqlJs from "sql.js";
-import { PromptManager } from "./PromptManager";
+import { isPromptAlreadyExistsError, PromptManager } from "./PromptManager";
+import { createUniquePrompt } from "./createUniquePrompt";
 import type {
 	YaoPromptCategory,
 	YaoPromptItem,
@@ -258,24 +259,14 @@ export class XuePromptManager {
 			.replace(/^-|-$/g, "")
 			.toLowerCase();
 
-		const tryCreate = async (
-			tryName: string
-		): Promise<PiPromptTemplateSummary> => {
-			try {
-				return await this.promptManager.create({
-					name: tryName,
-					description: detail.description || detail.title,
-				});
-			} catch {
-				const match = tryName.match(/-(\d+)$/);
-				const nextNum = match ? parseInt(match[1], 10) + 1 : 2;
-				return tryCreate(
-					tryName.replace(/-\d+$/, "") + "-" + nextNum
-				);
-			}
-		};
-
-		const summary = await tryCreate(name);
+		const summary = await createUniquePrompt({
+			baseName: name,
+			create: (tryName) => this.promptManager.create({
+				name: tryName,
+				description: detail.description || detail.title,
+			}),
+			isAlreadyExists: isPromptAlreadyExistsError,
+		});
 		const frontmatter = `---\ndescription: ${(detail.description || detail.title).replace(/\n/g, " ")}\nsource: xueprompt\n---\n\n`;
 		await this.promptManager.writeContent(
 			summary.path,

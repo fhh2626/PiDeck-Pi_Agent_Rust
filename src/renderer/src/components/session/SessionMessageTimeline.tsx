@@ -167,9 +167,9 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
   const messageLoadState = useAtomValue(messageLoadStateSelector);
   const sendState = useAtomValue(sendStateSelector);
   const internalController = useSessionTimelineController({
-    sessionId,
-    // An injected controller already owns loading and scroll effects; keep this hook inert in that case.
-    messages: props.controller ? [] : undefined,
+    // An injected controller already owns loading and scroll effects; omit the
+    // session identity so this inert hook cannot start a second disk load.
+    sessionId: props.controller ? undefined : sessionId,
   });
   const controller = props.controller ?? internalController;
   const timelineRef = props.timelineRef ?? controller.timelineRef;
