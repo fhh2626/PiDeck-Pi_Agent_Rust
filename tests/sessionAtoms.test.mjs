@@ -540,6 +540,54 @@ test("windowed full reconciles disk history prefix: seam dedupe by entryId and v
   assert.equal(entry().windowStart, 1);
 });
 
+test("edit/delete fileVersion drop stale history even when the prefix has no version", () => {
+  // 用户上滚补历史后，前缀可能还没带上 indexVersion。
+  // 编辑/删除改了 JSONL 却只下发尾部 3 轮时，无 version 的旧前缀会把窗外旧文本继续拼回去，
+  // 表现为「编辑了不刷新，再编一条才看到」。
+  const atoms = loadAtoms();
+  const store = createStore();
+  const emit = (payload) =>
+    store.set(atoms.applySessionRuntimeEventAtom, {
+      sessionId: "session-a",
+      agentId: "agent-a",
+      runtimeGeneration: 1,
+      sourceChannel: "agents:message",
+      payload,
+    });
+  const entry = () => store.get(atoms.sessionMessagesCacheAtom)["session-a"];
+
+  emit({ agentId: "agent-a", windowStart: 2, totalLength: 4, fileVersion: "100:2000", messages: [
+    { id: "r1", role: "user", text: "q", meta: { entryId: "e3" } },
+    { id: "r2", role: "assistant", text: "a", meta: { entryId: "e4" } },
+  ] });
+  store.set(atoms.sessionMessagesCacheAtom, {
+    ...store.get(atoms.sessionMessagesCacheAtom),
+    "session-a": {
+      ...entry(),
+      history: {
+        messages: [
+          { id: "h1", role: "user", text: "old-q", meta: { entryId: "e1" } },
+          { id: "h2", role: "assistant", text: "old-a", meta: { entryId: "e2" } },
+        ],
+        nextBefore: null,
+      },
+    },
+  });
+
+  // 编辑落在窗口外：全量 flush 仍只带尾部 3 轮。旧前缀没有 version 时，
+  // 不能继续按 entryId 拼回去，否则窗外那条永远是编辑前的文本。
+  emit({ agentId: "agent-a", windowStart: 2, totalLength: 4, fileVersion: "200:2100", messages: [
+    { id: "r1", role: "user", text: "q", meta: { entryId: "e3" } },
+    { id: "r2", role: "assistant", text: "a", meta: { entryId: "e4" } },
+  ] });
+  assert.equal(entry().history, undefined, "versionless prefix must not survive a new fileVersion");
+  assert.equal(
+    entry().messages.some((message) => message.text === "old-a"),
+    false,
+    "stale edited text must not remain in the spliced timeline",
+  );
+});
+
 test("incremental upsert offset accounts for leading compaction cards (H1 regression)", () => {
   const atoms = loadAtoms();
   const store = createStore();

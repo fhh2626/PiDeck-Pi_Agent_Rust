@@ -163,7 +163,13 @@ test("drawer toggle stays on session tab bar right; no gap when drawer open", ()
   const rail = readFileSync("src/renderer/src/components/workspace/WorkspaceDrawerRail.tsx", "utf8");
   assert.doesNotMatch(rail, /onClose/);
   assert.doesNotMatch(rail, /drawer-rail-close/);
-  // 抽屉打开后窗口控件叠在抽屉顶上，会话 Tab 不再预留 144px，开关贴在 Tab 栏右缘
+  // 抽屉打开后窗口控件叠在抽屉顶上，会话 Tab 不再预留 144px，开关贴在 Tab 栏右缘。
+  // drawer-open 必须同时要求未折叠：折叠后聊天区顶到窗口右缘，Tab 栏仍须让位，
+  // 否则抽屉开关会与关闭按钮重叠。
+  assert.match(
+    shell,
+    /drawer && !drawerCollapsed \? "drawer-open" : ""/,
+  );
   assert.match(
     foundation,
     /\.custom-titlebar-enabled:not\(\.drawer-open\) \.session-tabs-bar \{[\s\S]*?margin-right:\s*var\(--window-controls-width\);/,

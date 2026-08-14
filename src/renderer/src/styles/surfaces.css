@@ -390,12 +390,12 @@
 }
 .outline-zone {
   position: relative;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
 }
 .outline-trigger {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -535,8 +535,8 @@
 }
 .scratch-pad-entry {
   position: static;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -553,8 +553,8 @@
 }
 .terminal-entry {
   position: static;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -571,8 +571,8 @@
 }
 .files-entry {
   position: static;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -589,8 +589,8 @@
 }
 .git-entry {
   position: static;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -611,8 +611,8 @@
 }
 .editors-entry {
   position: static;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -631,8 +631,8 @@
 /* 内置浏览器入口按钮，样式与 editors-entry 一致，保持视觉统一 */
 .browser-entry {
   position: static;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);

@@ -13,6 +13,13 @@ import { detectPiRuntimeKind } from "../../shared/piCompatibility";
 
 export { BUILT_IN_EXTENSIONS } from "./builtInExtensions";
 
+/**
+ * pi list 对「过滤式安装」包的 source 后缀：settings.json 里 packages 条目为对象形式
+ * （选择性加载指定资源）时，pi 在 list 输出中追加此标记。解析时剥离该后缀，
+ * 过滤状态存进 PiExtensionSummary.filtered，避免污染卸载/更新等以 source 为参数的命令。
+ */
+export const FILTERED_SUFFIX = " (filtered)";
+
 type SettingsProvider = () => AppSettings;
 type ExtensionCopy = (
 	key: MainProcessTranslationKey,
@@ -719,10 +726,19 @@ export class ExtensionManager {
 			}
 
 			if (/^(?:npm|file|github|git|https?):/i.test(trimmed)) {
+				// pi list 对「过滤式安装」的包在 source 后追加 " (filtered)" 标记
+				// （settings.json 里 packages 条目是对象形式，只选择性加载列出的资源）。
+				// source 必须剥离该后缀：卸载/更新/版本查询都以 source 为参数，
+				// 带后缀时 pi remove / pi update / npm view 都找不到目标。
+				const isFiltered = trimmed.endsWith(FILTERED_SUFFIX);
+				const source = isFiltered
+					? trimmed.slice(0, -FILTERED_SUFFIX.length)
+					: trimmed;
 				pending = {
-					id: `${scope}:${trimmed}`,
-					source: trimmed,
+					id: `${scope}:${source}`,
+					source,
 					scope,
+					...(isFiltered ? { filtered: true } : {}),
 				};
 				result.push(pending);
 				continue;

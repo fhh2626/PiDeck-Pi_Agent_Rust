@@ -177,10 +177,11 @@ function WidgetChip(props: {
 					size="sm"
 					// h-[22px] 与右侧状态徽章（.session-status span 高度 22px）对齐，
 					// 避免同一行内 TODO 徽章明显偏高；边框用同款弱化色保持节奏一致。
-					className={`h-[22px] max-w-44 gap-1.5 rounded-md border-border-subtle px-2 text-caption${allDone ? " border-[color-mix(in_srgb,var(--color-success)_50%,transparent)] text-[var(--color-success)]" : ""}`}
+					// text-widget：比徽章（caption 12px）再小 1px（默认 11px），图标同步缩到 11px。
+					className={`h-[22px] max-w-44 gap-1.5 rounded-md border-border-subtle px-2 text-widget${allDone ? " border-[color-mix(in_srgb,var(--color-success)_50%,transparent)] text-[var(--color-success)]" : ""}`}
 					title={title}
 				>
-					<Icon size={13} strokeWidth={2} aria-hidden="true" />
+					<Icon size={11} strokeWidth={2} aria-hidden="true" />
 					<span className="shrink-0 font-semibold">{title}</span>
 					{summary && (
 						<span className="min-w-0 truncate tabular-nums text-muted-foreground">
@@ -196,7 +197,9 @@ function WidgetChip(props: {
 				sideOffset={8}
 				// 桌面紧凑宽度：28rem 上限，再受 Radix 实际可用宽度（--radix-popover-content-available-width）
 				// 约束并保留 12px 边界余量；不再用视口宽度推算，窄窗口时内容收敛而非整体左移
-				className="w-[min(28rem,calc(var(--radix-popover-content-available-width)_-_12px))] p-0"
+				// widget-popover 标记：壁纸模式下该弹层跟随面板透明度（见 foundation.css
+				// 的 :root[data-bg-image="on"] .widget-popover 规则），其余浮层保持 92%+ 底色
+				className="widget-popover w-[min(28rem,calc(var(--radix-popover-content-available-width)_-_12px))] p-0"
 			>
 				{/* 官方 BeUI TodoList 不接受 dismiss 语义（避免改动官方结构），
 				    关闭按钮作为宿主层绝对定位叠放在右上角：不占布局空间（移除独立的 h-8 关闭行），

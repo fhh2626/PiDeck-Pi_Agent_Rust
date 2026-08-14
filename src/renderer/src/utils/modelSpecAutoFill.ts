@@ -7,11 +7,16 @@
  * 规则（与内置表 lookupModelSpec 语义对齐）：
  * - 只填空字段：contextWindow/maxTokens 为空才填、reasoning 仅在「未设置」时填 true、
  *   input 未配置且规格声明图片才填——用户手填/明确关掉的一律不覆盖。
- * - contextWindow/maxTokens 官方未公开（undefined）的模型跳过对应字段，不填误导值。
+ * - 兜底：contextWindow/maxTokens 匹配不到或官方未公开（undefined/null）时，
+ *   填保守默认值（128000 / 8192），保证字段始终有值，用户可再手动改。
  */
 
 import type { ModelSpec } from "../../../shared/types/modelSpecs";
 import type { ModelItem, ModelsFile, ProviderConfig } from "../config/configTypes";
+
+/** 兜底默认值：模型匹配不到或规格未公开时使用（与主流长上下文模型对齐，用户可手动改） */
+export const DEFAULT_CONTEXT_WINDOW = 128000;
+export const DEFAULT_MAX_TOKENS = 8192;
 
 /** 单模型补全 patch：返回 [字段, 值] 列表，无空字段可补时返回空数组 */
 export function computeModelSpecPatches(
@@ -19,11 +24,13 @@ export function computeModelSpecPatches(
 	spec: ModelSpec,
 ): Array<[string, unknown]> {
 	const updates: Array<[string, unknown]> = [];
-	if (model.contextWindow == null && spec.contextWindow != null) {
-		updates.push(["contextWindow", spec.contextWindow]);
+	// 兜底逻辑：contextWindow/maxTokens 为空一律填——优先规格值，规格缺失（未匹配/官方未公开）
+	// 时用保守默认值，避免空字段导致上游（如 Web 端模型下拉）显示/校验异常
+	if (model.contextWindow == null) {
+		updates.push(["contextWindow", spec.contextWindow ?? DEFAULT_CONTEXT_WINDOW]);
 	}
-	if (model.maxTokens == null && spec.maxTokens != null) {
-		updates.push(["maxTokens", spec.maxTokens]);
+	if (model.maxTokens == null) {
+		updates.push(["maxTokens", spec.maxTokens ?? DEFAULT_MAX_TOKENS]);
 	}
 	// reasoning 只在「未设置」时填 true；用户明确关掉的 false 不覆盖
 	if (model.reasoning === undefined && spec.reasoning === true) {
@@ -66,8 +73,11 @@ export async function collectModelSpecPatches(
 			// 浅拷贝 provider，仅 models 数组会被替换，其余字段共享引用
 			providers[providerName] = { ...provider, models: [...provider.models] };
 		}
-		if (!spec) continue;
-		const updates = computeModelSpecPatches(model, spec);
+		// 空 id 模型无意义，跳过（不发查询、不填默认值）
+		if (!model.id) continue;
+		// 未匹配（null）时用空规格兜底：computeModelSpecPatches 会填保守默认值
+		const fallback: ModelSpec = { source: "models-dev", matchedId: model.id };
+		const updates = computeModelSpecPatches(model, spec ?? fallback);
 		if (updates.length === 0) continue;
 		filledCount++;
 		const next = { ...model };

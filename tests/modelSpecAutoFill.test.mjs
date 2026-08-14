@@ -2,7 +2,7 @@
  * 模型规格自动补全纯函数测试（utils/modelSpecAutoFill.ts）。
  *
  * 覆盖：computeModelSpecPatches 只填空字段语义（手填不覆盖、false 不覆盖、
- * 规格缺 context 不填、input 已配不填）；collectModelSpecPatches 批量补全
+ * 规格缺 context 填默认值、input 已配不填）；collectModelSpecPatches 批量补全
  * （并行查询、计数、不修改入参、新快照语义）。
  */
 
@@ -32,7 +32,7 @@ function compileModule(filePath) {
 }
 
 const mod = compileModule("src/renderer/src/utils/modelSpecAutoFill.ts");
-const { computeModelSpecPatches, collectModelSpecPatches } = mod;
+const { computeModelSpecPatches, collectModelSpecPatches, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } = mod;
 
 /** vm 沙箱数组原型与测试 realm 不同，deepEqual 会因引用不等失败——逐项断言 */
 function assertUpdates(updates, expected) {
@@ -90,15 +90,29 @@ test("computeModelSpecPatches: 用户明确关掉的 reasoning=false 不覆盖",
 	]);
 });
 
-test("computeModelSpecPatches: 规格缺 context/maxTokens（官方未公开）不填", () => {
+test("computeModelSpecPatches: 规格缺 context/maxTokens（官方未公开）→ 保守默认值兜底", () => {
 	const updates = computeModelSpecPatches(
 		{ id: "sensenova-6.7-flash-lite" },
 		fullSpec({ contextWindow: undefined, maxTokens: undefined }),
 	);
-	// reasoning + images 照常填，context/maxTokens 跳过
+	// reasoning + images 照常填；context/maxTokens 无规格值时填默认值（128000/8192）
 	assertUpdates(updates, [
+		["contextWindow", 128000],
+		["maxTokens", 8192],
 		["reasoning", true],
 		["input", ["text", "image"]],
+	]);
+});
+
+test("computeModelSpecPatches: 规格完全未命中 → 仍填保守默认值兜底", () => {
+	// 空规格（lookup 返回 null 时的 fallback）没有 context/maxTokens
+	const updates = computeModelSpecPatches(
+		{ id: "my-custom-model" },
+		{ source: "models-dev", matchedId: "my-custom-model" },
+	);
+	assertUpdates(updates, [
+		["contextWindow", DEFAULT_CONTEXT_WINDOW],
+		["maxTokens", DEFAULT_MAX_TOKENS],
 	]);
 });
 
@@ -137,7 +151,7 @@ test("collectModelSpecPatches: 批量补全、计数、不修改入参", async (
 		lookedUp.push(`${providerName}:${modelId}`);
 		return modelId === "gpt-4o" ? fullSpec() : modelId === "glm-5" ? fullSpec({ contextWindow: undefined }) : null;
 	});
-	assert.equal(filledCount, 2);
+	assert.equal(filledCount, 3);
 	// 查询只对非空 id 发起
 	assert.deepEqual(lookedUp, ["relay:gpt-4o", "relay:filled", "other:glm-5"]);
 	// 新快照：gpt-4o 全填
@@ -146,13 +160,13 @@ test("collectModelSpecPatches: 批量补全、计数、不修改入参", async (
 	// 手填/明确关闭的保持
 	assert.equal(providers.relay.models[1].contextWindow, 999);
 	assert.equal(providers.relay.models[1].reasoning, false);
-	// 规格未命中（filled 返回 null）不填
-	assert.equal(providers.relay.models[1].maxTokens, undefined);
+	// 规格未命中（null）→ maxTokens 兜底填默认值
+	assert.equal(providers.relay.models[1].maxTokens, 8192);
 	// 空 id 模型原样保留
 	assert.equal(providers.relay.models[2].id, "");
-	// glm-5 只填能力位
+	// glm-5 能力位照常；context 无规格值 → 默认值
 	assert.equal(providers.other.models[0].reasoning, true);
-	assert.equal(providers.other.models[0].contextWindow, undefined);
+	assert.equal(providers.other.models[0].contextWindow, 128000);
 	// 入参不被修改
 	assert.equal(models.providers.relay.models[0].contextWindow, undefined);
 	assert.equal(models.providers.other.models[0].reasoning, undefined);
@@ -160,13 +174,14 @@ test("collectModelSpecPatches: 批量补全、计数、不修改入参", async (
 	assert.equal(providers.relay.baseUrl, "https://relay.example");
 });
 
-test("collectModelSpecPatches: lookup 抛错按未命中处理，不阻断保存", async () => {
+test("collectModelSpecPatches: lookup 抛错按未命中处理（默认值兜底），不阻断保存", async () => {
 	const models = { providers: { a: { models: [{ id: "x" }, { id: "y" }] } } };
 	const { providers, filledCount } = await collectModelSpecPatches(models, async (p, id) => {
 		if (id === "x") throw new Error("boom");
 		return fullSpec();
 	});
-	assert.equal(filledCount, 1);
-	assert.equal(providers.a.models[0].contextWindow, undefined);
+	// 抛错/未命中 → 默认值兜底，两个模型都有补丁
+	assert.equal(filledCount, 2);
+	assert.equal(providers.a.models[0].contextWindow, 128000);
 	assert.equal(providers.a.models[1].contextWindow, 128000);
 });

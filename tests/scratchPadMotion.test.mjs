@@ -9,14 +9,16 @@ function cssRule(selector) {
   return styles.match(new RegExp(`(?:^|\\n)${selector} \\{([\\s\\S]*?)\\n\\}`, "m"))?.[1];
 }
 
-test("scratch pad keeps wallpaper, overlay, and panel on one opaque surface", () => {
+test("scratch pad wallpaper overlay is translucent, panel follows panel alpha", () => {
+  // 壁纸模式遮罩与面板同档半透明（透出背景图，避免整页纯色空白）；
+  // 草稿本面板底色跟随背景图滑块（--wallpaper-panel-alpha），不再是纯色白
   assert.match(
     styles,
-    /:root\[data-bg-image="on"\] \.scratch-pad-overlay\s*\{\s*background:\s*var\(--wallpaper-base, var\(--color-bg-app\)\);/,
+    /:root\[data-bg-image="on"\] \.scratch-pad-overlay\s*\{[\s\S]*?background:\s*color-mix\([\s\S]*?var\(--wallpaper-panel-alpha,\s*30%\)/,
   );
   assert.match(
     styles,
-    /:root\[data-bg-image="on"\] \.scratch-pad-panel[\s\S]*?--wallpaper-dialog-alpha:\s*100%;/,
+    /:root\[data-bg-image="on"\] \.scratch-pad-panel[\s\S]*?--wallpaper-dialog-alpha:\s*var\(--wallpaper-panel-alpha,\s*30%\);/,
   );
 });
 

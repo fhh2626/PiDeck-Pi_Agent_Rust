@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 import vm from "node:vm";
+import { twMerge } from "tailwind-merge";
 
 // 官方 BeUI Todo List 迁移后：组件源码在 agents/todo-list.tsx（官方结构忠实拷贝），
 // widget 行→TodoItem 的解析器移入 session/agentTodoParser.ts（纯函数）。
@@ -80,8 +81,8 @@ test("compact variant is optional, defaults to official classes, and uses PiDeck
 	assert.match(src, /compact\?: boolean/);
 	assert.match(src, /compact = false/);
 
-	// 抽出所有 `compact ? "紧凑类" : "官方类"` 变体对，逐一校验
-	const pairs = [...src.matchAll(/compact \? "([^"]*)" : "([^"]*)"/g)];
+	// 抽出所有 `compact ? "紧凑类" : "官方类"` 变体对（允许换行，条目/详情为多行三元），逐一校验
+	const pairs = [...src.matchAll(/compact\s*\?\s*"([^"]*)"\s*:\s*"([^"]*)"/g)];
 	assert.ok(pairs.length >= 7, `expected >= 7 compact ternaries, got ${pairs.length}`);
 
 	// 官方默认分支保留官方原始类（h-11 / text-sm / text-xs / min-h-9 等）
@@ -100,10 +101,14 @@ test("compact variant is optional, defaults to official classes, and uses PiDeck
 		);
 	}
 	const compact = pairs.map(([c]) => c).join(" ");
-	assert.match(compact, /text-control/); // 标题/条目正文
-	assert.match(compact, /text-caption/); // 计数/详情/空态
+	assert.match(compact, /text-widget/); // 标题/空态（比徽章小 1px + vw 收缩）
+	assert.match(compact, /text-\[length:var\(--text-widget-item\)\]/); // 条目再小一档（默认 10px）
+	assert.match(compact, /text-\[length:var\(--text-widget-detail\)\]/); // 详情最小档（默认 9px）
+	assert.match(compact, /text-caption/); // 头部完成计数
 	assert.match(compact, /h-9 gap-2 pl-3 pr-8/); // 头部收紧 + 宿主关闭按钮预留角
 	assert.match(compact, /min-h-8 gap-2/); // 行距收紧
+	// 状态图标随 compact 收两档：官方 size-5（20px）→ size-3.5（14px）
+	assert.match(src, /compact \? "size-3\.5" : "size-5"/);
 
 	// 动画 / 自动折叠 / 无障碍语义不受 compact 影响
 	assert.match(src, /useReducedMotion/);
@@ -111,6 +116,46 @@ test("compact variant is optional, defaults to official classes, and uses PiDeck
 	assert.match(src, /aria-expanded=\{currentOpen\}/);
 	// 已完成项无删除线（2026-12 产品取舍，见文件头部适配注释）
 	assert.doesNotMatch(src, /scaleX: status === "completed" \? 1 : 0/);
+});
+
+test("tailwind-merge keeps widget font sizes next to status colors", () => {
+	// 2027-01 回归：cn() 内的 tailwind-merge 把自定义 text-widget* 误判为颜色类，
+	// 与 text-muted-foreground/* 同组冲突而被丢弃——条目曾退回继承 body 14px
+	// （用户反馈“字体特别大”的根因）。必须用 text-[length:var(--text-widget-*)]
+	// 显式声明字号类型，twMerge 才归入 font-size 组与颜色共存。
+	const item = twMerge(
+		"min-w-0 flex-1 break-words text-[length:var(--text-widget-item)] text-muted-foreground/65",
+	);
+	assert.match(item, /text-\[length:var\(--text-widget-item\)\]/);
+	assert.match(item, /text-muted-foreground\/65/);
+	const detail = twMerge(
+		"shrink-0 text-[length:var(--text-widget-detail)] text-muted-foreground/55",
+	);
+	assert.match(detail, /text-\[length:var\(--text-widget-detail\)\]/);
+	assert.match(detail, /text-muted-foreground\/55/);
+	// 顺带锁定：裸 text-widget-item 命名形式仍会被吞，禁止改回去
+	const legacy = twMerge("text-widget-item text-muted-foreground/65");
+	assert.doesNotMatch(legacy, /text-widget-item/);
+});
+
+test("widget popover follows wallpaper translucency, items use foreground text", () => {
+	// 2027-01 用户要求：todo 弹层背景跟随壁纸透明度——App.tsx 给所有浮层保留 92%+ 底色，
+	// widget 弹层单独降回面板档；条目文字用前景色（黑）而非 muted 灰。
+	const chips = readFileSync(
+		"src/renderer/src/components/session/SessionWidgetChips.tsx",
+		"utf8",
+	);
+	assert.match(chips, /widget-popover w-\[min\(28rem/);
+	const css = readFileSync("src/renderer/src/styles/foundation.css", "utf8");
+	assert.match(
+		css,
+		/:root\[data-bg-image="on"\] \.widget-popover \{[\s\S]*?--color-bg-popover: color-mix\(in srgb, var\(--wallpaper-base, var\(--color-bg-app\)\) var\(--wallpaper-panel-alpha, 30%\), transparent\);/,
+	);
+	const src = todoListSource();
+	// pending 条目文字用前景色（黑）
+	assert.match(src, /status === "pending" && "text-foreground"/);
+	// 完成/取消保留淡色弱化（☑ 对勾已足够区分完成态）
+	assert.match(src, /status === "completed" && "text-muted-foreground\/60"/);
 });
 
 test("official sibling helpers exist with required exports", () => {
@@ -141,7 +186,7 @@ function loadParser() {
 
 test("parser maps widget lines to official TodoItem status shape", () => {
 	const { parseAgentTodoItems } = loadParser();
-	// 真实 pi-deck-todo 扩展输出：分组标题 + 带 #id 的条目
+	// 旧版 pi-deck-todo 扩展输出（分组标题 + 带 #id 的条目）：parser 保持向后兼容
 	const items = parseAgentTodoItems([
 		"── 待办 ──",
 		"☐ #1 修复登录页样式",
@@ -181,6 +226,68 @@ test("parser strips todo #ids and plan numbering from titles", () => {
 	assert.equal(plan[0].title, "发版");
 	// 只有标记没有正文的行不产生列表项
 	assert.equal(parseAgentTodoItems(["☑"]).length, 0);
+});
+
+test("parser preserves insertion order for completed items (2027-01 widget contract)", () => {
+	const { parseAgentTodoItems } = loadParser();
+	// pi-deck-todo 扩展新输出：无分组标题，按插入顺序带 ☐/☑ 标记，完成项不沉底
+	const items = parseAgentTodoItems([
+		"☐ #1 设计 schema",
+		"☑ #2 写文档",
+		"☐ #3 补测试",
+	]);
+	// 完成项在原位：顺序与 widget 行一致，不做任何分组重排
+	assert.equal(items.length, 3);
+	assert.equal(items[0].title, "设计 schema");
+	assert.equal(items[0].status, "pending");
+	assert.equal(items[1].title, "写文档");
+	assert.equal(items[1].status, "completed");
+	assert.equal(items[2].title, "补测试");
+	assert.equal(items[2].status, "pending");
+	assert.equal(items[1].id, "写文档");
+});
+
+test("pi-deck-todo extension emits in-order lines, no status grouping or cleanup", () => {
+	const ext = readFileSync("resources/extensions/pi-deck-todo.ts", "utf8");
+	// 完成项原位保留：不再按状态分组沉底，也不再有「最近完成」区段
+	assert.doesNotMatch(ext, /── 已完成 ──/);
+	assert.doesNotMatch(ext, /── 最近完成 ──/);
+	assert.doesNotMatch(ext, /recentlyDone/);
+	assert.doesNotMatch(ext, /cleanupCompleted/);
+	// 新契约：按插入顺序输出全部条目，完成态由 ☑ 标记表达
+	assert.match(ext, /for \(const t of todos\)/);
+	assert.match(ext, /`\$\{t\.done \? "☑" : "☐"\} #\$\{t\.id\} \$\{t\.text\}`/);
+	// session_start 不再清理已完成项
+	assert.doesNotMatch(ext, /cleanupCompleted\(ctx\)/);
+});
+
+test("text-widget token is one step smaller than the session status badge", () => {
+	// 2027-01 用户要求：todo 弹层（含外面 chip）字体比右侧会话上下文徽章再小一档
+	const css = readFileSync("src/renderer/src/styles/tailwind.css", "utf8");
+	assert.match(
+		css,
+		/--text-widget: clamp\(9px, 0\.7vw, calc\(var\(--font-size-caption\) - 1px\)\);/,
+	);
+	assert.match(css, /--text-widget--line-height: var\(--line-height-caption\);/);
+	// 条目/详情再分两档：10px / 9px（均低于标题档 11px 与徽章 12px）
+	assert.match(
+		css,
+		/--text-widget-item: clamp\(9px, 0\.7vw, calc\(var\(--font-size-caption\) - 2px\)\);/,
+	);
+	assert.match(
+		css,
+		/--text-widget-detail: clamp\(8px, 0\.6vw, calc\(var\(--font-size-caption\) - 3px\)\);/,
+	);
+	// 右侧状态徽章字号：surfaces.css .session-status span 用 caption（比 widget 大 1px）
+	const surfacesCss = readFileSync("src/renderer/src/styles/surfaces.css", "utf8");
+	assert.match(surfacesCss, /\.session-status span \{[\s\S]{0,600}font-size: var\(--font-size-caption\)/);
+	// 外面的 chip 与列表同用 text-widget（比徽章小 1px），图标 13px→11px
+	const chips = readFileSync(
+		"src/renderer/src/components/session/SessionWidgetChips.tsx",
+		"utf8",
+	);
+	assert.match(chips, /text-widget/);
+	assert.match(chips, /<Icon size=\{11\} strokeWidth=\{2\} aria-hidden="true" \/>/);
 });
 
 test("parser ids are stable across status toggles and line insertions", () => {

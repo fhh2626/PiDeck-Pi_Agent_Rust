@@ -53,7 +53,11 @@ export function useSessionRuntimeBridge(callbacks: RuntimeBridgeCallbacks = {}):
           duration?: number;
         };
         const text = notice.i18nKey ? t(notice.i18nKey as TranslationKey) : notice.message;
-        if (text) showNotice(text, notice.duration ?? 2500, notice.kind ?? "info");
+        if (text) {
+          // 异常（error）常驻不自动消失；info/warning 保持主进程指定的短时反馈
+          const kind = notice.kind ?? "info";
+          showNotice(text, kind === "error" ? Number.POSITIVE_INFINITY : (notice.duration ?? 2500), kind);
+        }
         return;
       }
       const previousRuntime = store.get(sessionRuntimeByIdAtom)[event.sessionId];

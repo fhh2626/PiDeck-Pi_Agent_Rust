@@ -14,13 +14,13 @@
       "url": "https://github.com/1900EasonJin"
     }
   ],
-  "homepage": "https://github.com/ayuayue/PiDeck#readme",
+  "homepage": "https://github.com/fhh2626/PiDeck-Pi_Agent_Rust#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ayuayue/PiDeck.git"
+    "url": "git+https://github.com/fhh2626/PiDeck-Pi_Agent_Rust.git"
   },
   "bugs": {
-    "url": "https://github.com/ayuayue/PiDeck/issues"
+    "url": "https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/issues"
   },
   "keywords": [
     "pi",

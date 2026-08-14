@@ -11,6 +11,7 @@ import {
 } from "../ui-shadcn/resizable";
 import { AppHeader } from "../AppHeader";
 import { WorkspaceDrawerHost } from "../workspace/WorkspaceDrawerHost";
+import { useNotifyLayoutResized } from "../../hooks/useNotifyLayoutResized";
 import { LIST_WIDTH_MIN, LIST_WIDTH_MAX } from "../../hooks/useResize";
 import {
   DRAWER_WIDTH_MIN,
@@ -19,6 +20,7 @@ import {
   type WorkspaceDrawerPanel,
 } from "../../hooks/useWorkspacePanels";
 import { cn } from "../../lib/utils";
+import { shouldCommitPanelPixels } from "../../lib/shellPanelLayout";
 
 /**
  * 工作台外壳（#115 U5 布局换装）：三栏水平布局由 react-resizable-panels 接管。
@@ -107,6 +109,13 @@ export function AppShell(props: AppShellProps) {
 
   const listPanelRef = useRef<PanelImperativeHandle | null>(null);
   const drawerPanelRef = useRef<PanelImperativeHandle | null>(null);
+  // 开合 effect 不把 width 放进依赖（否则每次回写都会再 expand/resize 一轮）。
+  // 打开折叠面板时用 ref 读最新保存宽度，避免 expand() 落到 minSize。
+  const listWidthRef = useRef(listWidth);
+  const drawerWidthRef = useRef(drawerWidth);
+  listWidthRef.current = listWidth;
+  drawerWidthRef.current = drawerWidth;
+  const notifyLayoutResized = useNotifyLayoutResized();
 
   // 抽屉/侧栏“刚打开”标志：closed→open 时给内容容器挂一次进入动画类；
   // 动画结束（onAnimationEnd）移除。面板库 collapse/expand 是即时宽度，
@@ -131,7 +140,8 @@ export function AppShell(props: AppShellProps) {
     const panel = listPanelRef.current;
     if (!panel) return;
     if (listCollapsed) { if (!panel.isCollapsed()) panel.collapse(); }
-    else if (panel.isCollapsed()) panel.expand();
+    // expand() 无上次展开宽度时落到 minSize(100)；全屏/还原时会被当成新宽度。
+    else if (panel.isCollapsed()) panel.resize(listWidthRef.current);
   }, [listCollapsed]);
 
   // 抽屉 Panel 常驻挂载（drawer=null 时折叠 0 宽），此 effect 统一同步折叠态；
@@ -144,7 +154,11 @@ export function AppShell(props: AppShellProps) {
         // drawer 为空时必须折叠（常驻挂载下避免空面板意外展开）
         if (!drawer || drawerCollapsed) {
           if (!panel.isCollapsed()) panel.collapse();
-        } else if (panel.isCollapsed()) panel.expand();
+        } else if (panel.isCollapsed()) {
+          // expand() 无历史会落到 minSize(180)。清缓存后保存宽度是默认 320，
+          // 写成 180 再被宽度 effect resize(320)，就是打开抽屉后一直闪、点一下才停。
+          panel.resize(drawerWidthRef.current);
+        }
       } catch { /* 约束未就绪，忽略本轮同步 */ }
     });
     return () => cancelAnimationFrame(frame);
@@ -168,29 +182,50 @@ export function AppShell(props: AppShellProps) {
     return () => cancelAnimationFrame(frame);
   }, [drawerWidth, drawer, drawerCollapsed]);
 
-  // ── 拖拽完成 → px/折叠状态统一回写 ──
-  // onLayoutChanged 在一次布局变更“完成”时触发（拖拽释放、分隔条键盘调整），
-  // 拖拽过程中不触发；isUserInteraction=false 的程序化变更（如上面的 effect 同步）
-  // 不回写，防止 effect → resize → 回写 的反馈回路。
+  // ── 布局落定 → 状态回写 ──
+  // onLayoutChanged 在一次布局变更“完成”时触发（拖拽释放、分隔条键盘调整、容器缩放）。
+  // 折叠状态只在用户交互时回写。抽屉像素宽走 shouldCommitPanelPixels：缩放后跟像素，
+  // 折叠 0 / expand→min 的瞬时值不写。
   function handleLayoutChanged(_layout: Layout, meta: LayoutChangedMeta) {
+    // 无论交互还是程序化变更，布局落定后都通知悬浮层重算一次。
+    notifyLayoutResized();
+    const drawerPanel = drawerPanelRef.current;
+    const drawerMin = drawerPinned ? DRAWER_WIDTH_MIN_PINNED : DRAWER_WIDTH_MIN;
+    if (drawerPanel && drawer && !drawerCollapsed) {
+      // 缩放后 --drawer-* 仍要跟像素走；但 expand→min 的瞬时值不能盖掉保存宽度。
+      const next = shouldCommitPanelPixels({
+        px: drawerPanel.getSize().inPixels,
+        savedWidth: drawerWidth,
+        minSize: drawerMin,
+        isUserInteraction: meta.isUserInteraction,
+      });
+      if (next !== null) setDrawerWidth(next);
+    }
+
     if (!meta.isUserInteraction) return;
     const listPanel = listPanelRef.current;
     if (listPanel) {
       const px = Math.round(listPanel.getSize().inPixels);
       const collapsed = listPanel.isCollapsed() || px <= LIST_COLLAPSED_SIZE + 1;
       if (collapsed !== listCollapsed) setListCollapsed(collapsed);
-      if (!collapsed && Math.abs(px - listWidth) > 1) setListWidth(px);
+      if (!collapsed) {
+        const next = shouldCommitPanelPixels({
+          px,
+          savedWidth: listWidth,
+          minSize: LIST_WIDTH_MIN,
+          isUserInteraction: true,
+        });
+        if (next !== null) setListWidth(next);
+      }
     }
-    const drawerPanel = drawerPanelRef.current;
     if (drawerPanel) {
       const px = Math.round(drawerPanel.getSize().inPixels);
       const collapsed = drawerPanel.isCollapsed() || px <= 1;
       if (collapsed) {
         // 拖拽折叠仅允许未钉住场景（pinned 面板 collapsible=false，不会走到这）
         if (!drawerCollapsed) setDrawerCollapsed(true);
-      } else {
-        if (drawerCollapsed) setDrawerCollapsed(false);
-        if (Math.abs(px - drawerWidth) > 1) setDrawerWidth(px);
+      } else if (drawerCollapsed) {
+        setDrawerCollapsed(false);
       }
     }
   }
@@ -199,7 +234,7 @@ export function AppShell(props: AppShellProps) {
     <div
       className={[
         "wechat-shell",
-        drawer ? "drawer-open" : "",
+        drawer && !drawerCollapsed ? "drawer-open" : "",
         listCollapsed ? "list-collapsed" : "",
         drawerCollapsed ? "drawer-collapsed" : "",
         useNativeTitleBar ? "" : "custom-titlebar-enabled",

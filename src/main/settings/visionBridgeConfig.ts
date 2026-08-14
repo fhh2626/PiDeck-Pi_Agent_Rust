@@ -53,7 +53,8 @@ export const VISION_DEFAULT_CONFIG: VisionBridgeConfig = {
 	model: "",
 	// 0 = 不限制：请求不传 max_tokens，输出长度交给模型默认（Anthropic 必填，请求侧兜底 1024）
 	maxTokens: 0,
-	timeoutMs: 30_000,
+	// 单张图片转换请求超时（默认 2 分钟：视觉请求常含多图/慢模型，30s 偏紧）
+	timeoutMs: 120_000,
 	concurrency: 2,
 	promptTemplate: VISION_DEFAULT_PROMPT,
 };

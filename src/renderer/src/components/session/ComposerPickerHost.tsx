@@ -2,6 +2,7 @@ import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { useEffect, useRef, useState } from "react";
 import type { AvailableModel, SessionRuntimeTarget } from "../../../../shared/types";
 import {
+  modelPendingByIdAtom,
   sessionComposerModeByIdAtom,
   sessionRecordByIdAtomFamily,
   sessionRuntimeByIdAtom,
@@ -26,6 +27,8 @@ import {
   toSessionRuntimeTarget,
 } from "../../utils/sessionCommands";
 import { ConfirmDialog } from "../app/AppParts";
+import { useSessionPaneServices } from "./SessionPaneServices";
+import { usePendingModelApply } from "../../hooks/usePendingModelApply";
 import type { ComposerPickerKind } from "../../hooks/useSessionComposerController";
 import { WELCOME_MODEL_KEY, WELCOME_THINKING_KEY, readWelcomeModelPreference, readWelcomeThinkingPreference } from "../../utils/chatSessionBootstrap";
 
@@ -46,6 +49,8 @@ export function ComposerPickerHost(props: ComposerPickerHostProps) {
   const upsertSession = useSetAtom(upsertSessionAtom);
   const thinkingPending = useAtomValue(thinkingLevelPendingByIdAtom)[sessionId];
   const setThinkingPendingMap = useSetAtom(thinkingLevelPendingByIdAtom);
+  const modelPending = useAtomValue(modelPendingByIdAtom)[sessionId];
+  const setModelPendingMap = useSetAtom(modelPendingByIdAtom);
   const [models, setModels] = useState<AvailableModel[]>([]);
   const composerModes = useAtomValue(sessionComposerModeByIdAtom);
   const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
@@ -57,6 +62,18 @@ export function ComposerPickerHost(props: ComposerPickerHostProps) {
     model: string;
   } | null>(null);
   const [restarting, setRestarting] = useState(false);
+  // 与 Tab 栏「重启」共用 App.restartActiveAgent：置 restartingAgentId，
+  // SessionView overlay（loader + 文案）才会亮。选择器自己调 restartRuntime
+  // 能换进程，但不会驱动那套 UI 状态。
+  const { restartActiveAgent } = useSessionPaneServices();
+  // 不跟 restartTarget state 同步：ConfirmDialog 点确定会先 onOpenChange(false)
+  // 走 onCancel 清掉 state；确认意图放 ref，避免当成取消后丢数据。
+  const restartIntentRef = useRef<{
+    agentId: string;
+    provider: string;
+    modelId: string;
+  } | null>(null);
+  const confirmingRestartRef = useRef(false);
 
   useEffect(() => {
     void desktopApi.settings.get().then((settings) => {
@@ -122,6 +139,94 @@ export function ComposerPickerHost(props: ComposerPickerHostProps) {
     upsertSession(updated);
   }
 
+  function currentLiveModel() {
+    return {
+      provider: runtime?.state?.provider ?? record?.model?.provider ?? "",
+      modelId: runtime?.state?.modelId ?? record?.model?.modelId ?? "",
+      modelName: runtime?.state?.modelName,
+    };
+  }
+
+  function markModelPending(model: AvailableModel) {
+    const live = currentLiveModel();
+    const from = modelPending?.from ?? {
+      provider: live.provider,
+      modelId: live.modelId,
+      modelName: live.modelName,
+    };
+    if (from.provider === model.provider && from.modelId === model.id) {
+      setModelPendingMap((prev) => ({ ...prev, [sessionId]: undefined }));
+      return;
+    }
+    setModelPendingMap((prev) => ({
+      ...prev,
+      [sessionId]: {
+        from,
+        to: {
+          provider: model.provider,
+          modelId: model.id,
+          modelName: model.name ?? model.id,
+        },
+      },
+    }));
+  }
+
+  function offerModelRestart(handle: SessionRuntimeTarget, model: AvailableModel) {
+    props.onClose();
+    restartIntentRef.current = {
+      agentId: handle.agentId,
+      provider: model.provider,
+      modelId: model.id,
+    };
+    setRestartTarget({
+      handle,
+      model: `${model.provider}/${model.id}`,
+    });
+  }
+
+  function applyRuntimeModelState(agentState: { provider?: string; modelId?: string; modelName?: string }) {
+    const current = store.get(sessionRuntimeByIdAtom)[sessionId];
+    if (!current) return;
+    store.set(sessionRuntimeByIdAtom, {
+      ...store.get(sessionRuntimeByIdAtom),
+      [sessionId]: {
+        ...current,
+        state: current.state ? { ...current.state, ...agentState } : agentState,
+      },
+    });
+  }
+
+  usePendingModelApply({
+    sessionId,
+    runtime,
+    modelPending,
+    applyRuntimeModelState,
+    clearPending: () => setModelPendingMap((prev) => ({ ...prev, [sessionId]: undefined })),
+    offerRestart: offerModelRestart,
+  });
+
+  /**
+   * 生成进行中：pi 不支持运行中切模型。快照里已有的模型只写会话记录，
+   * 本轮结束后由本组件再调 setRuntimeModel；不在快照里的新加模型走重启确认。
+   */
+  async function pickModelWhileBusy(handle: SessionRuntimeTarget, model: AvailableModel) {
+    try {
+      const listed = requireSessionCommand(await desktopApi.sessions.listRuntimeModels(handle));
+      const snapshotHasModel = listed.value.some(
+        (item) => item.provider === model.provider && item.id === model.id,
+      );
+      if (!snapshotHasModel) {
+        offerModelRestart(handle, model);
+        return;
+      }
+    } catch {
+      // 查快照失败（含生成中 busy）不挡选择：先记下，本轮结束后 setRuntimeModel 再判断要不要重启。
+    }
+    await applyModelToRecord(model);
+    markModelPending(model);
+    props.onClose();
+  }
+
   async function pickModel(model: AvailableModel) {
     // 欢迎页/未启动 Agent（无 record）：把选择存本地偏好，点「启动 Agent」创建会话时应用。
     if (!record) {
@@ -137,7 +242,14 @@ export function ComposerPickerHost(props: ComposerPickerHostProps) {
       return;
     }
     const handle = currentHandle();
+    const generationInFlight =
+      Boolean(handle) &&
+      (runtime?.status === "running" || Boolean(runtime?.state?.isStreaming));
     try {
+      if (handle && generationInFlight) {
+        await pickModelWhileBusy(handle, model);
+        return;
+      }
       if (handle) {
         try {
           const result = requireSessionCommand(await desktopApi.sessions.setRuntimeModel(
@@ -150,21 +262,10 @@ export function ComposerPickerHost(props: ComposerPickerHostProps) {
             model: { provider: model.provider, modelId: model.id },
             updatedAt: Date.now(),
           });
+          setModelPendingMap((prev) => ({ ...prev, [sessionId]: undefined }));
           // 立即将返回的 AgentRuntimeState 合并到 runtime state atom，
           // 使底部栏的模型名称、provider 即刻刷新，无需等待 emitState 事件
-          const agentState = result.value;
-          const current = store.get(sessionRuntimeByIdAtom)[sessionId];
-          if (current) {
-            store.set(sessionRuntimeByIdAtom, {
-              ...store.get(sessionRuntimeByIdAtom),
-              [sessionId]: {
-                ...current,
-                state: current.state
-                  ? { ...current.state, ...agentState }
-                  : agentState,
-              },
-            });
-          }
+          applyRuntimeModelState(result.value);
         } catch (error) {
           // 运行时代理不可用（Agent 已关/绑定已换）时降级写记录，
           // 保证「先选模型、后启动 Agent」的流程始终可用。
@@ -179,30 +280,39 @@ export function ComposerPickerHost(props: ComposerPickerHostProps) {
       // 模型在本地 models.json 存在但运行中 Agent 快照未加载（pi set_model 校验失败）：
       // 关闭选择器并提示用户重启 Agent 使新模型生效，而非直接报错。
       if (error instanceof SessionCommandFailure && error.needsRestart && handle) {
-        props.onClose();
-        setRestartTarget({
-          handle,
-          model: `${model.provider}/${model.id}`,
-        });
+        offerModelRestart(handle, model);
         return;
       }
       showNotice(error instanceof Error ? error.message : String(error), 4000);
     }
   }
 
-  /** 重启 Agent 使新模型生效（新 pi 进程会重新加载 models.json）。 */
+  /**
+   * 确认后先把新模型写入会话记录，再走统一重启入口。
+   * setRuntimeModel 失败时不写 catalog（避免取消后误套新模型）；
+   * 重启后 applyPreferences 读 catalog 才能套上用户刚确认的模型。
+   * 必须走 restartActiveAgent，才能点亮 SessionView 的重启动画。
+   */
   async function confirmRestart() {
-    if (!restartTarget || restarting) return;
+    const intent = restartIntentRef.current;
+    if (!intent || restarting) return;
+    confirmingRestartRef.current = true;
     setRestarting(true);
+    // 先关确认框，避免 AlertDialog 关闭动画盖住 overlay。
+    setRestartTarget(null);
     try {
-      await desktopApi.sessions.restartRuntime(restartTarget.handle);
-      showNotice(t("app.modelRestartDone"), 3000);
-      props.onClose();
+      const updated = await desktopApi.sessions.updateRecord(sessionId, {
+        model: { provider: intent.provider, modelId: intent.modelId },
+      });
+      upsertSession(updated);
+      setModelPendingMap((prev) => ({ ...prev, [sessionId]: undefined }));
+      await restartActiveAgent(intent.agentId);
     } catch (error) {
       showNotice(error instanceof Error ? error.message : String(error), 4000);
     } finally {
+      confirmingRestartRef.current = false;
+      restartIntentRef.current = null;
       setRestarting(false);
-      setRestartTarget(null);
     }
   }
 
@@ -336,8 +446,15 @@ export function ComposerPickerHost(props: ComposerPickerHostProps) {
           title={t("app.modelRestartTitle")}
           message={t("app.modelRestartBody", { model: restartTarget.model })}
           confirmLabel={t("common.confirm")}
-          onConfirm={() => void confirmRestart()}
-          onCancel={() => setRestartTarget(null)}
+          onConfirm={() => {
+            confirmingRestartRef.current = true;
+            void confirmRestart();
+          }}
+          onCancel={() => {
+            // 只关框：点确定也会先走 onOpenChange(false)→onCancel。
+            // 不能在这里清 restartIntentRef，否则确认路径读到空、重启不会发生。
+            setRestartTarget(null);
+          }}
         />
       )}
     </>

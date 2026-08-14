@@ -40,7 +40,8 @@ test("worktree rows carry the anonymous action next to create-draft", () => {
 test("active worktree selection only highlights the branch row, not the whole block", () => {
   // wrapper 不允许再带 isActive 背景（会把展开的会话列表一起压暗）
   assert.doesNotMatch(worktreeTree, /workspace-tree-row group[\s\S]{0,200}isActive && "bg-accent\/60/);
-  assert.match(worktreeTree, /workspace-tree-select[\s\S]{0,300}isActive && "bg-accent\/60/);
+  // 窄侧栏注释行插在中间，窗口留到 500 保证断言不依赖注释长度
+  assert.match(worktreeTree, /workspace-tree-select[\s\S]{0,500}isActive && "bg-accent\/60/);
 });
 
 test("child worktree labels use a smaller hierarchy than their parent project", () => {
@@ -53,7 +54,7 @@ test("worktree auxiliary labels stay at the compact micro size", () => {
   // 这些是层级提示而非主要导航项；使用 caption 会随 medium 档位放大到 13px，
   // 导致“其他工作区”和“还有 N 个会话/查看更多子项”抢过会话行的视觉层级。
   assert.match(worktreeTree, /workspace-tree-section-header[^\n]*text-micro/);
-  assert.match(sessionTree, /className=\{`h-auto justify-start px-2 text-\[10px\] /);
+  assert.match(sessionTree, /className=\{`h-auto justify-start px-2 text-micro /);
   assert.match(sessionTree, /worktree-sessions-more/);
   assert.match(workspaceStyles, /\.session-more-row,[\s\S]*?font-size: var\(--font-size-micro\)/);
   assert.match(workspaceStyles, /\.worktree-sessions-more[\s\S]*?font-size: var\(--font-size-micro\)/);

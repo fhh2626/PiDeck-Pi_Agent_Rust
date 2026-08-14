@@ -20,6 +20,8 @@ export function createComposerExtensions() {
 			orderedList: false,
 			listItem: false,
 			horizontalRule: false,
+			// 禁用 link：粘贴 HTML 时不要把 URL/实体解析成可点链接（composer 只认纯文本）
+			link: false,
 			// 保留 document / paragraph / hardBreak / history
 		}),
 		MentionChip,

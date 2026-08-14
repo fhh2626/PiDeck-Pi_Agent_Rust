@@ -1,5 +1,5 @@
 import { test as base, _electron as electron, type ElectronApplication, type Page } from "@playwright/test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -17,15 +17,34 @@ export type AppFixture = {
 	userDataRoot: string;
 };
 
+/** 测试文件可通过 test.use({ seedProjects }) 预置项目列表（写入 projects.json） */
+export type SeedProject = { id: string; name: string; path: string; pinned?: boolean };
+
 const repoRoot = resolve(__dirname, "..");
 
-export const test = base.extend<AppFixture>({
+export const test = base.extend<AppFixture & { seedProjects: SeedProject[] | undefined }>({
+	seedProjects: [undefined, { option: true }],
 	userDataRoot: async ({}, use) => {
 		const dir = mkdtempSync(join(tmpdir(), "pideck-e2e-"));
 		await use(dir);
 		rmSync(dir, { recursive: true, force: true });
 	},
-	app: async ({ userDataRoot }, use) => {
+	app: async ({ userDataRoot, seedProjects }, use) => {
+		// 预置项目列表（ProjectStore.load 保留种子项目并追加内置 Chat 项目）；
+		// 写进 profile 目录（应用尊重 --user-data-dir，见 main/index.ts 注释）。
+		if (seedProjects && seedProjects.length > 0) {
+			mkdirSync(join(userDataRoot, "profile"), { recursive: true });
+			writeFileSync(
+				join(userDataRoot, "profile", "projects.json"),
+				JSON.stringify(
+					seedProjects.map((project, index) => ({
+						lastOpenedAt: Date.now() + index,
+						sortOrder: index,
+						...project,
+					})),
+				),
+			);
+		}
 		const env = {
 			...process.env,
 			// 隔离 userData；同时清掉 dev 注入，防止指到 dev server

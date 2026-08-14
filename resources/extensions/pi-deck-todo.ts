@@ -4,6 +4,8 @@
  * 注册 todo 工具让 LLM 主动维护任务列表（add / toggle / clear / list），并通过
  * RPC Extension UI Protocol 在桌面端展示进度：
  *   - ctx.ui.setWidget 持续显示当前列表与完成进度（fire-and-forget，不污染会话消息）
+ *   - widget 按插入顺序输出全部条目，完成项原位保留（☑ 标记，不按状态分组沉底），
+ *     清空列表显式用 clear（2027-01 用户要求）
  *   - /todo 命令用 ctx.ui.notify 输出文本快照（单数命名，避免与 plan-mode 的 /todos 冲突）
  *
  * 状态持久化用 pi.appendEntry 写 custom entry，session_start / session_tree 时读
@@ -60,8 +62,6 @@ export default function (pi: ExtensionAPI) {
 	// 内存状态：session_start / session_tree 时从会话快照重建
 	let todos: Todo[] = [];
 	let nextId = 1;
-	// 已完成的项在下一轮清理前暂存，用于 widget 显示「最近完成」
-	let recentlyDone: Todo[] = [];
 	// widget 折叠状态
 	let widgetCollapsed = false;
 	// 是否已让位给第三方 todo 扩展；让位后不显示 widget、不重建状态、命令转引导
@@ -82,49 +82,26 @@ export default function (pi: ExtensionAPI) {
 		pi.appendEntry(ENTRY_TYPE, { todos, nextId });
 	}
 
-	/** 刷新桌面端 widget：按状态分组，已完成项折叠隐藏 */
+	/**
+	 * 刷新桌面端 widget：按插入顺序输出全部条目，完成项原位保留（仅换 ☑ 标记），
+	 * 不再按状态分组把已完成项沉底（2027-01 用户要求）；清空请用 todo clear。
+	 * 折叠态只回一行 "done/total" 摘要。
+	 */
 	function updateWidget(ctx: ExtensionContext): void {
-		const pending = todos.filter((t) => !t.done);
-		const done = todos.filter((t) => t.done);
-		if (pending.length === 0 && done.length === 0 && recentlyDone.length === 0) {
+		if (todos.length === 0) {
 			ctx.ui.setWidget(WIDGET_KEY, undefined);
 			return;
 		}
 		const lines: string[] = [];
 		if (widgetCollapsed) {
-			lines.push(`${done.length}/${todos.length}`);
+			const done = todos.filter((t) => t.done).length;
+			lines.push(`${done}/${todos.length}`);
 		} else {
-			if (pending.length > 0) {
-				lines.push("── 待办 ──");
-				for (const t of pending) {
-					lines.push(`☐ #${t.id} ${t.text}`);
-				}
-			}
-			if (done.length > 0) {
-				lines.push("── 已完成 ──");
-				for (const t of done) {
-					lines.push(`☑ #${t.id} ${t.text}`);
-				}
-			}
-			if (recentlyDone.length > 0 && done.length === 0 && pending.length > 0) {
-				lines.push("── 最近完成 ──");
-				for (const t of recentlyDone) {
-					lines.push(`☑ ${t.text}`);
-				}
+			for (const t of todos) {
+				lines.push(`${t.done ? "☑" : "☐"} #${t.id} ${t.text}`);
 			}
 		}
 		ctx.ui.setWidget(WIDGET_KEY, lines);
-	}
-
-	/** 新轮次清理已完成项：移出待办列表但保留在 recentlyDone 中供引用 */
-	function cleanupCompleted(ctx: ExtensionContext): void {
-		const pending = todos.filter((t) => !t.done);
-		const done = todos.filter((t) => t.done);
-		if (done.length > 0) {
-			recentlyDone = [...done.slice(-3), ...recentlyDone].slice(0, 5);
-		}
-		todos = pending;
-		persistState();
 	}
 
 	/**
@@ -254,20 +231,16 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("还没有待办事项，可以告诉 AI 添加。", "info");
 				return;
 			}
-			const pending = todos.filter((t) => !t.done);
-			const done = todos.filter((t) => t.done);
-			let msg = `Todos ${done.length}/${todos.length}`;
-			if (pending.length > 0) {
-				msg += `\n── 待办 ──\n${pending.map((t) => `☐ #${t.id} ${t.text}`).join("\n")}`;
-			}
-			if (done.length > 0) {
-				msg += `\n── 已完成 ──\n${done.map((t) => `☑ #${t.id} ${t.text}`).join("\n")}`;
-			}
+			// 与 widget 一致的顺序：按插入顺序输出，完成项原位带 ☑ 标记
+			const done = todos.filter((t) => t.done).length;
+			let msg = `Todos ${done}/${todos.length}`;
+			msg += `\n${todos.map((t) => `${t.done ? "☑" : "☐"} #${t.id} ${t.text}`).join("\n")}`;
 			ctx.ui.notify(msg, "info");
 		},
 	});
 
-	// 会话启动 / 分支切换时从快照重建状态、清理已完成项、刷新 widget。
+	// 会话启动 / 分支切换时从快照重建状态、刷新 widget。
+	// 不再清理已完成项：完成标记原位保留，直到用户执行 todo clear（2027-01 用户要求）。
 	pi.on("session_start", async (_event, ctx) => {
 		if (!isOwnTodo()) {
 			yielded = true;
@@ -275,7 +248,6 @@ export default function (pi: ExtensionAPI) {
 		}
 		yielded = false;
 		reconstructState(ctx);
-		cleanupCompleted(ctx);
 		updateWidget(ctx);
 	});
 

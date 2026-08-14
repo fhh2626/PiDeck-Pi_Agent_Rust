@@ -5,7 +5,9 @@
 
 import type { EditorProps } from "@tiptap/pm/view";
 import type { ComposerChip } from "../chips";
+import { htmlToPlainText } from "../../../../utils/clipboard";
 import { toComposerDomKeyboardEvent } from "./domEventBridge";
+import { insertComposerPlainText } from "./insertComposerPlainText";
 
 export type ComposerEditorDomHandlers = {
 	composingRef: { current: boolean };
@@ -45,10 +47,19 @@ export function buildComposerEditorProps(
 			handlers.onKeyDown?.(toComposerDomKeyboardEvent(event));
 			return event.defaultPrevented;
 		},
-		handlePaste: (_view, event) => {
-			if (!handlers.onPaste) return false;
-			handlers.onPaste(event);
-			return event.defaultPrevented;
+		handlePaste: (view, event) => {
+			// 先给 controller：文件路径 / 位图 / 单条绝对路径由上层接管
+			handlers.onPaste?.(event);
+			if (event.defaultPrevented) return true;
+			// 普通文本一律按纯文本插入。TipTap 默认会解析 text/html，
+			// Windows 剪贴板残留的 &amp; / mention 标签会把正文搅成重复 & 或 chip。
+			const text = event.clipboardData?.getData("text/plain") ?? "";
+			const html = text ? "" : (event.clipboardData?.getData("text/html") ?? "");
+			const payload = text || (html ? htmlToPlainText(html) : "");
+			if (!payload) return false;
+			event.preventDefault();
+			insertComposerPlainText(view, payload);
+			return true;
 		},
 		handleDOMEvents: {
 			compositionstart: () => {

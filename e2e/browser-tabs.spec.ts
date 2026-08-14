@@ -1,4 +1,8 @@
 import { test, expect } from "./fixtures";
+import { openFirstSession, makeSeedProject } from "./open-session";
+
+const seedProject = makeSeedProject("BrowserTabsE2E");
+test.use({ seedProjects: [seedProject] });
 
 /**
  * 内置浏览器 tab 关闭回归守卫（issue：点叉无法关闭 tab / 最后 tab 关闭应收起侧边栏）。
@@ -7,9 +11,8 @@ import { test, expect } from "./fixtures";
  * 2. 关闭最后一个 tab：整个浏览器抽屉关闭（侧边栏收起）。
  */
 async function openBrowserPanel(window: import("@playwright/test").Page) {
-	await expect(window.locator("#boot-overlay")).toHaveCount(0, { timeout: 20_000 });
-	// 全新 profile 无会话：先点侧栏内置「聊天」项目进入 Chat 面，头部抽屉开关才出现
-	await window.locator(".conversation.chat-project").first().click();
+	// 新建会话打开工作台后，头部抽屉开关才出现
+	await openFirstSession(window);
 	const toggle = window.locator(".header-drawer-toggle").first();
 	await expect(toggle).toBeVisible();
 	await toggle.click();

@@ -16,6 +16,7 @@ import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { WebAssistantText } from "./WebAssistantText";
 import { MarkdownStream } from "@/components/session/MarkdownStream";
+import { SingleLinePreview } from "@/components/session/SingleLinePreview";
 import { TimelineMarker } from "../components/session/TimelineMarker";
 
 /** 用户消息右对齐气泡（结构与桌面 UserBubble 一致，去掉操作栏/附件能力）。 */
@@ -36,9 +37,15 @@ export const WebUserBubble = memo(function WebUserBubble(props: { message: UIMes
 	);
 });
 
-/** 思考折叠卡片（复用桌面 ThinkingBlock 视觉：Brain 图标 + 可折叠正文）。 */
-export const WebThinkingBlock = memo(function WebThinkingBlock(props: { text: string }) {
-	const [expanded, setExpanded] = useState(true);
+/** 思考折叠卡片（复用桌面 ThinkingBlock 视觉：Brain 图标 + 可折叠正文）。
+ * 默认折叠成单行预览（deepseek-harness ReasoningRow 模式：流式中 tail -f 显示最新行 + 扫光，
+ * 结束后显示第一行），标题行整行可点击展开/收起。 */
+export const WebThinkingBlock = memo(function WebThinkingBlock(props: {
+	text: string;
+	/** 思考是否仍在流式：控制 SingleLinePreview 的尾部跟随 + 扫光（Web 端 part 无独立完成标志，用整条消息 isStreaming 近似） */
+	running?: boolean;
+}) {
+	const [expanded, setExpanded] = useState(false);
 	if (!props.text.trim()) return null;
 	return (
 		<TimelineMarker kind="thinking" tone="neutral">
@@ -56,9 +63,11 @@ export const WebThinkingBlock = memo(function WebThinkingBlock(props: { text: st
 					<ChevronRight size={15} className="shrink-0 text-text-tertiary" aria-hidden="true" />
 				)}
 				{!expanded && (
-					<span className="min-w-0 flex-[1_1_auto] truncate font-mono text-caption text-text-tertiary">
-						{props.text.slice(0, 80)}{props.text.length > 80 ? "..." : ""}
-					</span>
+					<SingleLinePreview
+						text={props.text}
+						running={props.running}
+						className="min-w-0 flex-[1_1_auto] py-0 pr-2 font-mono text-caption text-text-tertiary"
+					/>
 				)}
 			</button>
 			{expanded && (
@@ -142,7 +151,7 @@ export const WebAssistantMessage = memo(function WebAssistantMessage(props: {
 		<div className="w-full min-w-0">
 			{message.parts.map((part, index) => {
 				if (part.type === "reasoning") {
-					return <WebThinkingBlock key={index} text={part.text} />;
+					return <WebThinkingBlock key={index} text={part.text} running={isStreaming} />;
 				}
 				if (part.type === "dynamic-tool" || (typeof part.type === "string" && part.type.startsWith("tool-"))) {
 					// v7：静态工具 part.type 为 `tool-${toolName}`（tool-input-start 无 dynamic 标志），

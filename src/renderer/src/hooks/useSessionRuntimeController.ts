@@ -14,6 +14,7 @@ import {
   sessionRuntimeUiBySessionIdAtomFamily,
 } from "../atoms/session-selectors";
 import { sessionSendStateByIdAtom } from "../atoms/composer-atoms";
+import { isUserFacingSessionStart } from "./useSessionTimelineController";
 import type { QueuedPrompt } from "./useQueuedPrompt";
 import { t } from "../i18n";
 import { dismissNotice, type NoticeId } from "../utils/notice";
@@ -152,9 +153,8 @@ export function useSessionRuntimeController(
         (currentSessionSendState.status === "activating" ? "starting" : "idle"))
       : undefined;
 
-  const isAgentStarting =
-    activeConversationStatus === "starting" ||
-    currentSessionSendState.status === "activating";
+  // 标题栏 loading / 输入框禁用只跟用户发送走；后台预热的 runtime starting 不能顶高顶栏。
+  const isAgentStarting = isUserFacingSessionStart(currentSessionSendState.status);
 
   const isAgentBusy = Boolean(
     hasActiveConversation &&
@@ -209,9 +209,13 @@ export function useSessionRuntimeController(
       notification.requestId,
     );
     if (!rememberRuntimeNotification(key)) return;
+    // 异常提示（error）常驻不自动消失：会话失败/重试类通知需要用户看到并处理，
+    // 自动消失（默认 3s）容易错过；info 保持短时反馈。
     showNotice(
       notification.message,
-      notification.notifyType === "error" || notification.notifyType === "warning" ? 3000 : 1500,
+      notification.notifyType === "error"
+        ? Number.POSITIVE_INFINITY
+        : notification.notifyType === "warning" ? 3000 : 1500,
       notification.notifyType,
     );
   }, [currentSessionId, currentSessionRuntimeUi, showNotice]);

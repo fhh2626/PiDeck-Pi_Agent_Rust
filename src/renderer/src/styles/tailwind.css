@@ -112,6 +112,16 @@
   --text-caption--line-height: var(--line-height-caption);
   --text-control: var(--font-size-control);
   --text-control--line-height: var(--line-height-control);
+  /* widget 弹层（todo/plan 列表）字号体系：标题/空态/chip 用 --text-widget（默认 11px，
+     比右侧徽章 caption 12px 小 1px）；条目 --text-widget-item 再小一档（默认 10px）；
+     详情 --text-widget-detail 最小（默认 9px）。均随「界面字号」设置联动，
+     窄窗口 vw 收缩兜底不无限放大 */
+  --text-widget: clamp(9px, 0.7vw, calc(var(--font-size-caption) - 1px));
+  --text-widget--line-height: var(--line-height-caption);
+  --text-widget-item: clamp(9px, 0.7vw, calc(var(--font-size-caption) - 2px));
+  --text-widget-item--line-height: var(--line-height-caption);
+  --text-widget-detail: clamp(8px, 0.6vw, calc(var(--font-size-caption) - 3px));
+  --text-widget-detail--line-height: var(--line-height-caption);
   --text-body: var(--font-size-body);
   --text-body--line-height: var(--line-height-body);
   --text-chat: var(--font-size-chat);
@@ -213,5 +223,67 @@
   }
   & details > :not(summary) {
     padding: 0 12px 8px;
+  }
+}
+
+/* ── 壁纸模式右侧抽屉透明化覆盖 ──────────────────────────────
+ * 必须放 utilities 层：legacy 层（foundation.css）的 data-bg-image 规则
+ * 压不过 bg-background / bg-bg-subtle 等 utility（层序 legacy < utilities）。
+ * Git / 浏览器 / 抽屉头部叠在半透明 detail-drawer 上会形成双层白（更实），
+ * 这里统一透明、透出 detail-drawer 一层，与文件面板/聊天区同档。 */
+@layer utilities {
+  :root[data-bg-image="on"] .shell-panel-drawer .drawer-header,
+  :root[data-bg-image="on"] .shell-panel-drawer .git-panel,
+  :root[data-bg-image="on"] .shell-panel-drawer .git-panel .bg-background,
+  :root[data-bg-image="on"] .shell-panel-drawer .browser-panel,
+  :root[data-bg-image="on"] .shell-panel-drawer .browser-panel .bg-bg-subtle {
+    background: transparent;
+  }
+}
+
+/* ── 壁纸模式 chrome 小块透明化（tab 栏/标题/抽屉 tab 栏/窗口控制条）──────────
+ * 这些连续纯色小块用 bg-background（/80）或 --color-bg-panel，叠在半透明面板
+ * （chat-pane/detail-drawer 同为 panelMix 白）上形成双层半透明白（≈47-51% 白），
+ * 比主区单层（30%）实一档，观感像磨砂灰白补丁；透明后透出底层单层，与主区同档。
+ * 必须放 utilities 层：session-tabs-bar 的 bg-background/80、chat-header/drawer-
+ * activity-rail 的 bg-background 都是 utility，legacy 层规则压不过（层序）。
+ * .window-controls 的 background 原在 legacy 层（foundation.css），此处一并收口。 */
+@layer utilities {
+  :root[data-bg-image="on"] .session-tabs-bar,
+  :root[data-bg-image="on"] .chat-header,
+  :root[data-bg-image="on"] .drawer-activity-rail,
+  :root[data-bg-image="on"] .window-controls {
+    background: transparent;
+  }
+}
+
+/* ── 壁纸模式内容层磨砂块透明化（第二波：输入框/用户气泡/工具卡片）──────────
+ * composer-box 用 bg-card、user-turn-bubble 用 bg-muted/60、tool-card 用
+ * bg-bg-panel（均为 utilities 层 utility），叠在 chat-pane 半透明白上形成双层白；
+ * 透明化后靠 border + shadow 保持卡片边界。同理必须放 utilities 层才能压过。
+ * 注意：user-turn-bubble 在 timeline.css（legacy）还有一套 accent-muted 混色背景，
+ * 因 utilities > legacy 本就只生效 bg-muted/60，此处一并收口为透明。 */
+@layer utilities {
+  :root[data-bg-image="on"] .composer-box,
+  :root[data-bg-image="on"] .user-turn-bubble,
+  :root[data-bg-image="on"] .tool-card {
+    background: transparent;
+  }
+}
+
+/* ── 思考扫光动画（deepseek-harness ReasoningRow 同款）─────────────────
+ * 折叠态思考单行的「流式光带」：仅思考仍在流式（running）时存在，结束后消失，
+ * 与状态完全同步，避免旧跑马灯「思考结束还在滚」的问题。 */
+@theme {
+  --animate-thinking-sweep: thinking-sweep 2.6s ease-out infinite;
+
+  @keyframes thinking-sweep {
+    0% {
+      left: -300px;
+    }
+    90%,
+    100% {
+      left: 100%;
+    }
   }
 }

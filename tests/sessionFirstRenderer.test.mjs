@@ -59,7 +59,7 @@ test("App routes project and Session selection through the command owner", () =>
   assert.match(appSource, /selectProject: selectProjectCommand/);
   assert.match(appSource, /selectSession: selectSessionCommand/);
   assert.match(appSource, /selectSessionCommand\(session\.projectId, session\.id, false\)/);
-  assert.match(appSource, /selectSessionCommand\(projectId, result\.targetSessionId, true\)/);
+  assert.match(appSource, /selectSessionCommand\(projectId, targetSessionId, true\)/);
   assert.match(appSource, /sessionRecordByIdAtomFamily\(target\.sessionId\)/);
   assert.match(
     appSource,
@@ -100,6 +100,16 @@ test("typing in the current Composer prewarms its runtime once", () => {
   assert.match(composerSource, /composer\.attachments\.length === 0/);
 });
 
+
+test("forking a user message opens the new session as a permanent tab", () => {
+  const body = functionBody("forkFromUserMessage");
+  // fork 做于 Tab 栏之前：只刷新列表不切焦点/不登记，新会话会出现但点 Tab 对不上 runtime。
+  assert.match(body, /openReplacedRuntimeSession\(/);
+  assert.match(body, /targetSessionId \?\? currentSessionIdRef/);
+  assert.match(functionBody("openReplacedRuntimeSession"), /registerOpenSession\(targetSessionId, "permanent"\)/);
+  assert.match(functionBody("openReplacedRuntimeSession"), /selectSessionCommand\(projectId, targetSessionId, true\)/);
+  assert.match(functionBody("cloneAgentSession"), /openReplacedRuntimeSession\(/);
+});
 
 test("active Agent identity is derived from the selected Session runtime", () => {
   assert.match(

@@ -329,7 +329,10 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 						{
 							cwd: app.getPath("home"),
 							timeout: 120_000,
-							env: { ...process.env, npm_config_fund: "false", npm_config_audit: "false" },
+							// 复用 PiLocator 搜索目录拼 PATH：桌面端继承的注册表 PATH 不含版本管理器
+							// （mise/fnm/volta/scoop 等）在 shell 会话里动态注入的目录，终端可用而
+							// 桌面端“找不到 npm”即源于此；前置搜索目录后 npm 才能被 cmd 解析到。
+							env: { ...piLocator.createProcessEnv(), npm_config_fund: "false", npm_config_audit: "false" },
 							windowsHide: true,
 							encoding: "utf8",
 							shell: false,
@@ -351,7 +354,7 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 						{
 							cwd: app.getPath("home"),
 							timeout: 120_000,
-							env: { ...process.env, npm_config_fund: "false", npm_config_audit: "false" },
+							env: { ...piLocator.createProcessEnv(), npm_config_fund: "false", npm_config_audit: "false" },
 							encoding: "utf8",
 						},
 						(error: unknown, stdout: string, stderr: string) => {
@@ -389,7 +392,12 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 					execFile(
 						process.env.ComSpec || "cmd.exe",
 						["/d", "/s", "/c", "npm --version"],
-						{ timeout: 10_000, encoding: "utf8", windowsHide: true, shell: false },
+						{
+							// 同 piExecInstall：npm 可能只存在于版本管理器动态目录中，
+							// 必须用 PiLocator 搜索目录（含注册表 PATH）重建子进程 PATH。
+							env: piLocator.createProcessEnv(),
+							timeout: 10_000, encoding: "utf8", windowsHide: true, shell: false,
+						},
 						(error, stdout) => {
 							if (error) {
 								resolve({ available: false, error: error.message });
@@ -402,7 +410,12 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 					execFile(
 						"npm",
 						["--version"],
-						{ timeout: 10_000, encoding: "utf8" },
+						{
+							// 非 Windows：/bin/sh -lc 已能拿到登录 shell PATH；仍叠加搜索目录
+							// 兜底 GUI 启动时 Homebrew/fnm/mise 等动态路径缺失的场景。
+							env: piLocator.createProcessEnv(),
+							timeout: 10_000, encoding: "utf8",
+						},
 						(error, stdout) => {
 							if (error) {
 								resolve({ available: false, error: error.message });
@@ -465,7 +478,15 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 
 	// 进程监控：Electron 各进程 + pi agent 子进程内存/CPU 快照（手动刷新，不做高频轮询）
 	ipcMain.handle(ipcChannels.processMetrics, async (): Promise<ProcessMetricsSnapshot> => {
-		return getProcessSnapshot(deps.agentManager.listAgentPids());
+		const agents = deps.agentManager.listAgentPids().map((agent) => {
+			// 进程监控表展示会话身份：按 agentId 反查关联的会话 id/标题，
+			// 让用户知道每个 agent 对应哪个会话（而不是只看到内部 id）
+			const sessionInfo = deps.sessionRuntimeCoordinator.getSessionInfoForAgent(
+				agent.agentId,
+			);
+			return { ...agent, ...(sessionInfo ?? {}) };
+		});
+		return getProcessSnapshot(agents);
 	});
 
 	ipcMain.handle(ipcChannels.stopAgent, async (_event, agentId: unknown) => {

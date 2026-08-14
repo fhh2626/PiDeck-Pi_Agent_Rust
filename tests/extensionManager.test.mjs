@@ -104,6 +104,48 @@ test("an explicit extension refresh bypasses a version-enriched cache", async ()
   assert.equal((await manager.list(true)).raw, "true:2");
 });
 
+test("parseListOutput strips the pi list (filtered) suffix so uninstall/update use a clean source", () => {
+  const { ExtensionManager } = loadExtensionManagerModule();
+  const manager = new ExtensionManager({}, () => ({}));
+
+  const raw = [
+    "User packages:",
+    "  npm:pi-web-access",
+    "    C:\\Users\\demo\\.pi\\agent\\npm\\node_modules\\pi-web-access",
+    "  npm:@adrianapan/pikit (filtered)",
+    "    C:\\Users\\demo\\.pi\\agent\\npm\\node_modules\\@adrianapan\\pikit",
+  ].join("\n");
+
+  const parsed = manager.parseListOutput(raw);
+  const pikit = parsed.find((ext) => ext.source.includes("pikit"));
+
+  // source 必须是干净的 npm source：卸载（pi remove）与更新（pi update / npm view）都依赖它
+  assert.equal(pikit.source, "npm:@adrianapan/pikit");
+  assert.equal(pikit.filtered, true);
+  assert.equal(pikit.id, "user:npm:@adrianapan/pikit");
+  // 路径行照常解析，不受后缀影响
+  assert.equal(
+    pikit.path,
+    "C:\\Users\\demo\\.pi\\agent\\npm\\node_modules\\@adrianapan\\pikit",
+  );
+});
+
+test("parseListOutput leaves plain package sources untouched", () => {
+  const { ExtensionManager } = loadExtensionManagerModule();
+  const manager = new ExtensionManager({}, () => ({}));
+
+  const raw = [
+    "User packages:",
+    "  npm:pi-web-access",
+    "    C:\\Users\\demo\\.pi\\agent\\npm\\node_modules\\pi-web-access",
+  ].join("\n");
+
+  const parsed = manager.parseListOutput(raw);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].source, "npm:pi-web-access");
+  assert.equal(parsed[0].filtered, undefined);
+});
+
 test("uninstall removes a local extension and clears its stale disable entry", async () => {
   const { ExtensionManager } = loadExtensionManagerModule();
   const home = await mkdtemp(join(tmpdir(), "pideck-extension-manager-"));

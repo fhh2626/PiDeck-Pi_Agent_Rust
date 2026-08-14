@@ -157,6 +157,7 @@ export function createPreviewApi(): PiDesktopApi {
 		// 与同步接口不匹配，因此返回空串，右键粘贴菜单静默无操作
 		readText: () => "",
 		readHtml: () => "",
+		readImage: () => "",
 	};
 	const createTerminalTab = async (agentId: string, shell?: string, cwd?: string) => {
 		const shellName = shell ?? "powershell";
@@ -440,7 +441,7 @@ export function createPreviewApi(): PiDesktopApi {
 			}),
 			forkRuntimeSession: async (target) => ({
 				ok: true,
-				value: { cancelled: false, text: "" },
+				value: { cancelled: false, text: "", targetSessionId: `${target.sessionId}:fork` },
 			}),
 			setFocusedSession: async () => undefined,
 			getRuntimeState: async (target) => ({
@@ -448,6 +449,10 @@ export function createPreviewApi(): PiDesktopApi {
 				value: { target, value: {} },
 			}),
 			listRuntimeCommands: async (target) => ({
+				ok: true,
+				value: { target, value: [] },
+			}),
+			listRuntimeModels: async (target) => ({
 				ok: true,
 				value: { target, value: [] },
 			}),

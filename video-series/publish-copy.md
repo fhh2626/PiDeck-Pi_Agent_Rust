@@ -9,8 +9,8 @@
 
 ```
 【项目地址】
-GitHub：https://github.com/ayuayue/PiDeck
-Release 下载：https://github.com/ayuayue/PiDeck/releases
+GitHub：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust
+Release 下载：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/releases
 
 【相关】
 pi 官方文档：https://pi.dev/docs/latest
@@ -27,8 +27,8 @@ PiDeck 是同时支持原版 Pi Agent 和 Pi_Agent_Rust 的桌面工作台（非
 **短版页脚（字数紧时用）：**
 
 ```
-GitHub：https://github.com/ayuayue/PiDeck
-下载：https://github.com/ayuayue/PiDeck/releases
+GitHub：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust
+下载：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/releases
 QQ 群：1026218644
 ```
 
@@ -65,8 +65,8 @@ EP04  添加项目与第一次对话
 EP05  对话进阶（@ 引用 / 斜线命令 / Shell）
 EP06  进阶功能总览（多项目 / Git / 终端 / 历史）
 
-GitHub：https://github.com/ayuayue/PiDeck
-下载：https://github.com/ayuayue/PiDeck/releases
+GitHub：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust
+下载：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/releases
 QQ 群：1026218644
 
 #PiDeck #AI编程 #pi #Cursor #开发者工具 #效率工具
@@ -98,8 +98,8 @@ PiDeck,AI编程,pi,Cursor,Claude Code,开发者工具,效率工具,本地Agent,�
 
 下一集：安装 Node、Agent runtime、PiDeck，并完成环境检测。
 
-GitHub：https://github.com/ayuayue/PiDeck
-下载：https://github.com/ayuayue/PiDeck/releases
+GitHub：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust
+下载：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/releases
 QQ 群：1026218644
 
 #PiDeck #AI编程 #PiAgent #PiAgentRust #开发者工具
@@ -129,8 +129,8 @@ pi 文档：https://pi.dev/docs/latest
 
 下一集：配置模型与认证（Models / Auth）。
 
-GitHub：https://github.com/ayuayue/PiDeck
-下载：https://github.com/ayuayue/PiDeck/releases
+GitHub：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust
+下载：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/releases
 QQ 群：1026218644
 
 #PiDeck #安装教程 #Nodejs #AI编程
@@ -161,8 +161,8 @@ https://www.bilibili.com/video/BV1NRTK6LE5z
 
 下一集：添加本地项目、启动 Agent、发出第一条消息。
 
-GitHub：https://github.com/ayuayue/PiDeck
-下载：https://github.com/ayuayue/PiDeck/releases
+GitHub：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust
+下载：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/releases
 QQ 群：1026218644
 
 #PiDeck #模型配置 #APIKey #OpenCode #DeepSeek
@@ -191,8 +191,8 @@ QQ 群：1026218644
 
 下一集：@ 文件引用、斜线命令、Shell 与高效工作流。
 
-GitHub：https://github.com/ayuayue/PiDeck
-下载：https://github.com/ayuayue/PiDeck/releases
+GitHub：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust
+下载：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/releases
 QQ 群：1026218644
 
 #PiDeck #第一次对话 #AI编程助手
@@ -222,8 +222,8 @@ QQ 群：1026218644
 
 下一集：多项目、Git、终端、历史与设置总览。
 
-GitHub：https://github.com/ayuayue/PiDeck
-下载：https://github.com/ayuayue/PiDeck/releases
+GitHub：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust
+下载：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/releases
 QQ 群：1026218644
 
 #PiDeck #AI编程 #效率技巧 #Shell
@@ -254,8 +254,8 @@ QQ 群：1026218644
 
 系列到此收官。欢迎 Star 与加群交流。
 
-GitHub：https://github.com/ayuayue/PiDeck
-下载：https://github.com/ayuayue/PiDeck/releases
+GitHub：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust
+下载：https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/releases
 QQ 群：1026218644
 
 #PiDeck #Git #终端 #开源项目

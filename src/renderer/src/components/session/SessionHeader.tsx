@@ -10,6 +10,7 @@ import {
   sessionSendStateByIdAtom,
   projectByIdAtomFamily,
 } from "../../atoms";
+import { isUserFacingSessionStart } from "../../hooks/useSessionTimelineController";
 import { t } from "../../i18n";
 import { displayProjectDirectoryName } from "../../rendererUtils";
 import { Button } from "../ui-shadcn/button";
@@ -81,8 +82,9 @@ export function SessionHeader(props: SessionHeaderProps) {
   );
   const sendState = useAtomValue(sendStateSelector);
   const runtimeState = sessionMode ? runtime?.state : legacyProps.runtimeState;
+  // session 模式也只认用户发送；预热 starting 不能给标题栏加 loading（会顶高/半透明）。
   const isStarting = sessionMode
-    ? runtime?.status === "starting" || sendState?.status === "activating"
+    ? isUserFacingSessionStart(sendState?.status)
     : legacyProps.isStarting;
   const isAnonymous = props.isAnonymous || (sessionMode && session?.noSession === true);
   // 项目名：session 模式从会话记录解析 projectId → 项目目录名；

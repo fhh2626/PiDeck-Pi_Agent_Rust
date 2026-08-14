@@ -44,6 +44,28 @@ test("parsePiListModels parses table with provider/model/thinking", () => {
   assert.equal(models[1].reasoning, true);
 });
 
+test("parsePiListModels keeps provider names containing spaces (regression: grok.weishiair.de copy)", () => {
+  // 用户复制 provider 时把名字存成 "grok.weishiair.de copy"（含空格）。旧实现按空格
+  // 切分前两列 → provider="grok.weishiair.de"、id="copy"（假模型，真模型 grok-4.6 被吞），
+  // 点击假模型报错被分类成「会话已不存在」。修复：从右往左取后 4 列，模型 id 之前的
+  // 所有 token 拼回 provider 名。
+  const stdout = [
+    "provider  model  context  max-out  thinking  images",
+    "grok.weishiair.de         grok-4.5                  500K     128K     yes       yes",
+    "grok.weishiair.de copy    grok-4.6                  500K     128K     yes       yes",
+  ].join("\n");
+  const models = parsePiListModels(stdout);
+  assert.equal(models.length, 2);
+  assert.equal(models[0].provider, "grok.weishiair.de");
+  assert.equal(models[0].id, "grok-4.5");
+  assert.equal(models[1].provider, "grok.weishiair.de copy");
+  assert.equal(models[1].id, "grok-4.6");
+  assert.equal(models[1].contextWindow, 500 * 1024);
+  assert.equal(models[1].maxTokens, 128 * 1024);
+  assert.equal(models[1].reasoning, true);
+  assert.equal(models[1].images, true);
+});
+
 test("parsePiListModels captures context/maxTokens/images columns", () => {
   const stdout = [
     "provider                  model                         context  max-out  thinking  images",
@@ -139,8 +161,20 @@ test("fetchModelList uses cache; refreshModelList forces reload", () => {
   // 加速参数传入 execFile
   assert.match(cacheSource, /MODEL_LIST_FAST_ARGS/);
   // 空结果不写缓存（避免永久「没有匹配的模型」）+ 自动重试
-  assert.match(cacheSource, /models\.length > 0\) cachedListModels/);
+  assert.match(cacheSource, /if \(models\.length > 0 && !configInvalidated\) cachedListModels/);
   assert.match(cacheSource, /重试一次|setTimeout\(resolve, 500\)/);
+});
+
+test("config save must not let stale in-flight list overwrite new cache", () => {
+  // 保存 models.json 时若存在旧的在途 fork（启动预取/此前打开过选择器），
+  // 旧结果会覆盖新配置缓存 → 「新模型有时候没有」。修复：
+  // 1) invalidate 置 configInvalidated，在途结果不再写缓存
+  assert.match(cacheSource, /configInvalidated = true/);
+  assert.match(cacheSource, /if \(models\.length > 0 && !configInvalidated\) cachedListModels/);
+  // 2) refreshModelList 不直接复用旧在途请求：链式等它结束后重新 fork
+  assert.match(cacheSource, /const pending = cachedListModelsPending/);
+  assert.match(cacheSource, /pending[\s\S]*?\.catch\(\(\) => undefined\)/);
+  assert.match(cacheSource, /configInvalidated = false/);
 });
 
 test("config save (models/auth) triggers background refresh", () => {
@@ -179,7 +213,12 @@ test("AgentManager.setModel detects Model not found with local model present", (
 test("renderer ComposerPickerHost shows restart confirm on needsRestart", () => {
   assert.match(pickerHost, /needsRestart/);
   assert.match(pickerHost, /ConfirmDialog/);
-  assert.match(pickerHost, /restartRuntime/);
+  // 确认后必须走统一重启入口（restartActiveAgent），才能点亮 SessionView overlay；
+  // 禁止选择器自己调 restartRuntime（那条路径不置 restartingAgentId）。
+  assert.match(pickerHost, /restartActiveAgent/);
+  assert.doesNotMatch(pickerHost, /desktopApi\.sessions\.restartRuntime/);
+  // 确认时先写会话记录再重启：setRuntimeModel 失败路径不再写 catalog。
+  assert.match(pickerHost, /updateRecord\(sessionId, \{[\s\S]*?model: \{ provider: intent\.provider, modelId: intent\.modelId \}/);
   assert.match(pickerHost, /modelRestartTitle/);
   assert.match(pickerHost, /modelRestartBody/);
 });

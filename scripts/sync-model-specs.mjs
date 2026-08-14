@@ -220,6 +220,54 @@ const BUILTIN_EXTRA_SPECS = [
 		attachment: 1,
 		input_modalities: JSON.stringify(["text", "image"]),
 	},
+	// ── Kimi for Coding（Kimi Code 官方平台，code.kimi.com）──
+	// 依据 kimi.com/code/docs 模型卡：k3 为 1M 上下文（原生多模态），k3-256k 为 256K 版本
+	// （不支持视频输入）；kimi-for-coding / -highspeed 为 K2.7-Code 系列 256K。
+	// models.dev 仅收录能力位（reasoning/tool_call/attachment）无上下文，这里补齐官方值。
+	{
+		source: "builtin",
+		provider: "kimi-for-coding",
+		id: "k3",
+		context_window: 1048576,
+		max_tokens: null,
+		reasoning: 1,
+		tool_call: 1,
+		attachment: 1,
+		input_modalities: JSON.stringify(["text", "image", "video"]),
+	},
+	{
+		source: "builtin",
+		provider: "kimi-for-coding",
+		id: "k3-256k",
+		context_window: 262144,
+		max_tokens: null,
+		reasoning: 1,
+		tool_call: 1,
+		attachment: 1,
+		input_modalities: JSON.stringify(["text", "image"]),
+	},
+	{
+		source: "builtin",
+		provider: "kimi-for-coding",
+		id: "kimi-for-coding",
+		context_window: 262144,
+		max_tokens: null,
+		reasoning: 1,
+		tool_call: 1,
+		attachment: 1,
+		input_modalities: JSON.stringify(["text", "image", "video"]),
+	},
+	{
+		source: "builtin",
+		provider: "kimi-for-coding",
+		id: "kimi-for-coding-highspeed",
+		context_window: 262144,
+		max_tokens: null,
+		reasoning: 1,
+		tool_call: 1,
+		attachment: 1,
+		input_modalities: JSON.stringify(["text", "image", "video"]),
+	},
 ];
 
 function resolveProxy() {

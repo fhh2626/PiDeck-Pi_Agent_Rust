@@ -32,20 +32,24 @@ import {
   canLoadSessionTimelineMore,
   deriveSessionSurfaceRuntime,
   isLatestTimelineRunBusy,
+  resolveTimelineTopCompensation,
   useSessionTimelineController,
   type SessionTimelineController,
 } from "../../hooks/useSessionTimelineController";
 import { t, translateI18nDescriptor } from "../../i18n";
 import { cn } from "../../lib/utils";
+import { Loader2 } from "lucide-react";
 import { showNotice } from "../../utils/notice";
 import { stripAnsi } from "./TimelineFormat";
 import { SessionStartSurface } from "./SessionStartSurface";
 import { MessageScroller } from "../agents/message-scroller";
+import { resolveFreshTailIds } from "../../lib/pinTurnScroll";
 import { chatContentWidthStyle } from "./chatContentWidth";
 import {
   selectTimelineTurnWindow,
   shouldWindowTimelineTurns,
   TIMELINE_MOUNTED_TURN_LIMIT,
+  TIMELINE_SCROLLED_MAX_ITEMS,
   countAgentRunItems,
 } from "./timeline/turnRenderWindow";
 
@@ -268,14 +272,13 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
     const lastMessage = activeMessages[activeMessages.length - 1];
     const nextTail = lastMessage?.id;
     seenTailMessageIdRef.current = nextTail;
-    if (!nextTail || !previousTail) return; // 首帧（历史加载完成前）只记录基线
-    if (nextTail === previousTail) return;
-    // 新消息只播放轻量入场效果；发送后的顶屏动画暂时关闭，避免与流式跟随争夺滚动位置。
-    // 找到基线之后的新增消息（尾部追加，而非分页前插）
-    const baselineIndex = activeMessages.findIndex((message) => message.id === previousTail);
-    const fresh = baselineIndex < 0
-      ? [nextTail]
-      : activeMessages.slice(baselineIndex + 1).map((message) => message.id);
+    if (!nextTail) return;
+    const fresh = resolveFreshTailIds(
+      activeMessages,
+      previousTail,
+      nextTail,
+      sendState?.requestId,
+    );
     if (fresh.length === 0) return;
     setFreshMessageIds((current) => {
       const next = new Set(current);
@@ -294,7 +297,11 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
       }, 1200);
       freshTimersRef.current.set(id, timer);
     }
-  }, [activeMessages]);
+  }, [
+    activeMessages,
+    controller.autoScroll,
+    sendState?.requestId,
+  ]);
 
   useEffect(() => () => {
     for (const timer of freshTimersRef.current.values()) window.clearTimeout(timer);
@@ -312,43 +319,79 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
     prevRenderedRunsRef.current = next;
     return next;
   }, [renderedRuns]);
-  // 贴底长会话：只挂尾部 N 个 agent-run；上滚/恢复历史位置时放开（autoScroll=false）。
-  // 数据仍在 atoms；这里只减少 TurnRow / Streamdown 挂载。
+  // 渲染窗口（2026-08 黑屏治理）：贴底只挂尾部 3 轮；上滚查看历史也裁剪
+  // （controller.scrolledWindowTurns，初始 15 轮 + 「显示更早」逐步扩大）——
+  // 历史全量放开挂载是大会话渲染进程内存峰值/黑屏的来源。数据仍在 atoms。
   const followingForTurnWindow = controller.autoScroll;
+  const turnWindowTurns = followingForTurnWindow
+    ? TIMELINE_MOUNTED_TURN_LIMIT
+    : controller.scrolledWindowTurns;
   const displayRuns = useMemo(
     () => selectTimelineTurnWindow(
       reconciledRuns,
-      followingForTurnWindow,
-      TIMELINE_MOUNTED_TURN_LIMIT,
+      turnWindowTurns,
+      followingForTurnWindow ? undefined : TIMELINE_SCROLLED_MAX_ITEMS,
     ),
-    [followingForTurnWindow, reconciledRuns],
+    [followingForTurnWindow, reconciledRuns, turnWindowTurns],
   );
+  // 「最后一个 agent-run」：live 挂载门的判定基准。不能按最后一条显示条目判定：
+  // steer 排队期显示数组以用户消息结尾（新轮尚未产生首条消息），最后一条 agent-run
+  // 才是真正的流式轮；反过来若门控放宽到任意轮，被 steer 打断的旧轮（尾部是空文本
+  // interim）会挂上会话级流式槽，把新一轮正文在旧轮底部再打印一遍（同一中间回复
+  // 前后双份，2026-08 回归）。
+  // 注意：这个判定只用于 live 挂载门——isLatestRun/busy 仍按「最后一条显示条目」
+  // 判定，否则普通发送的激活等待期（用户消息在末尾）会把上一轮已完成、已提升的
+  // 最终回答重新降级，导致最终回答暂时消失。
+  const lastAgentRunIndex = useMemo(() => {
+    for (let index = displayRuns.length - 1; index >= 0; index -= 1) {
+      if (displayRuns[index].kind === "agent-run") return index;
+    }
+    return -1;
+  }, [displayRuns]);
   const turnWindowActive = shouldWindowTimelineTurns(
     countAgentRunItems(reconciledRuns),
-    followingForTurnWindow,
-    TIMELINE_MOUNTED_TURN_LIMIT,
+    turnWindowTurns,
   );
-  // 从「窗口裁剪」扩到「全量挂载」时内容加在上方，需补偿 scrollTop，避免视口跳到错误位置。
-  const turnWindowStateRef = useRef<{ windowed: boolean; height: number }>({
+  // 窗口轮数变化（上滚 3→15、点「显示更早」扩大）会在顶部插入内容，需补偿 scrollTop
+  // 保持视口内容不动；数据 prepend 的补偿由 controller 的 loadMoreAnchorRef 负责，
+  // 两者按「窗口轮数变化 / 数据变化」分工，不会同帧双重补偿。贴底时由引擎接管不补偿。
+  const turnWindowStateRef = useRef<{ windowed: boolean; height: number; turns: number }>({
     windowed: false,
     height: 0,
+    turns: 0,
   });
   useLayoutEffect(() => {
     const timeline = timelineRef.current;
     if (!timeline) return;
     const prev = turnWindowStateRef.current;
     const nextHeight = timeline.scrollHeight;
-    if (prev.windowed && !turnWindowActive) {
-      const delta = nextHeight - prev.height;
-      if (delta > 0) {
+    if (
+      prev.windowed &&
+      prev.turns !== turnWindowTurns &&
+      nextHeight > prev.height &&
+      !followingForTurnWindow
+    ) {
+      // 顶部（≤HISTORY_AUTO_LOAD_THRESHOLD）不补偿：插入内容在视口上方时
+      // 浏览器无滚动锚定（overflow-anchor:none），scrollTop 原位不动即可看到
+      // 新展开的内容；补偿会把新内容推出视口上方，表现为「点「显示更早」没反应」。
+      // 与数据 prepend 补偿共用 resolveTimelineTopCompensation 决策（2026-02 修复）。
+      const nextTop = resolveTimelineTopCompensation(
+        timeline.scrollTop,
+        nextHeight - prev.height,
+      );
+      if (nextTop !== null) {
         // 标记程序化滚动：补偿的 scrollTop 位移会派发 scroll 事件，
-        // 必须让自动加载监听忽略（补偿后视口可能落在 ≤240px 顶部区间）
+        // 必须让自动加载监听忽略（补偿后视口可能落在顶部区间）
         controller.markProgrammaticScroll?.();
-        timeline.scrollTop += delta;
+        timeline.scrollTop = nextTop;
       }
     }
-    turnWindowStateRef.current = { windowed: turnWindowActive, height: timeline.scrollHeight };
-  }, [controller, displayRuns, timelineRef, turnWindowActive]);
+    turnWindowStateRef.current = {
+      windowed: turnWindowActive,
+      height: nextHeight,
+      turns: turnWindowTurns,
+    };
+  }, [controller, displayRuns, followingForTurnWindow, timelineRef, turnWindowActive, turnWindowTurns]);
   // 文件修改展示已下沉到每轮 TurnRow 底部（TurnFileChanges），此处不再做全局汇总
   const lastUserMessageId = useMemo(() => {
     for (let index = activeMessages.length - 1; index >= 0; index -= 1) {
@@ -497,7 +540,8 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
       followOutput={controller.autoScroll}
       followThreshold={56}
       smooth
-      // 整段 agent 忙碌（含工具执行/流式）期间追底用 instant，避免工具卡弹出弹簧滞后砰抖。
+      // busy 只驱动 aria-busy 和结束后的 150ms instant 窗口；流式增高是否弹簧
+      // 由 MessageScroller 的 resize + 28px 阈值决定，不再整段忙碌硬贴底。
       busy={isAgentBusy || isAwaitingAssistant}
       onFollowChange={controller.setAutoScrollFromScroller}
       viewportProps={{
@@ -505,7 +549,7 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
         onScroll: controller.handleTimelineScroll,
       }}
     >
-      {hasMoreMessages && canLoadMoreMessages && (
+      {(turnWindowActive || (hasMoreMessages && canLoadMoreMessages)) && (
         <div
           style={{
             display: "flex",
@@ -515,9 +559,22 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
           }}
         >
           <button
-            onClick={loadMoreMessages}
+            onClick={() => {
+              // 窗口裁剪生效时先扩大渲染窗口（显示已加载的更早内容）；
+              // 窗口已覆盖全部已加载数据且还有历史时才翻数据页。
+              // 数据翻页补偿（loadMoreAnchorRef）与窗口扩大补偿（turnWindowStateRef）
+              // 发生在不同帧，不会双重补偿。
+              if (turnWindowActive) {
+                controller.expandWindow();
+              } else if (hasMoreMessages && canLoadMoreMessages) {
+                loadMoreMessages();
+              }
+            }}
             disabled={isLoadingMoreMessages}
             style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
               padding: "6px 16px",
               border: "1px solid var(--border-color)",
               borderRadius: "6px",
@@ -529,13 +586,21 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
               transition: "all 0.2s",
             }}
           >
-            {isLoadingMoreMessages
-              ? t("timeline.loadingMore")
-              : controller.nextLoadIsHistory
-                ? t("timeline.loadMoreTurns")
-                : t("timeline.loadMoreHistory", {
-					count: totalMessageCount - paginatedMessages.length,
-                })}
+            {isLoadingMoreMessages ? (
+              // 加载动画：点击后立即出现，真正加载完成（finally 复位 isLoadingMessagePage）才消失
+              <>
+                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                {t("timeline.loadingMore")}
+              </>
+            ) : turnWindowActive
+                ? t("timeline.loadEarlierTurns", {
+                    count: countAgentRunItems(reconciledRuns) - turnWindowTurns,
+                  })
+                : controller.nextLoadIsHistory
+                  ? t("timeline.loadMoreTurns")
+                  : t("timeline.loadMoreHistory", {
+										count: totalMessageCount - paginatedMessages.length,
+									})}
           </button>
         </div>
       )}
@@ -612,13 +677,13 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
                     liveThinkingId={liveThinkingId}
                     agentRunning={isRunStreaming}
                     isLatestRun={index === displayRuns.length - 1}
+                    isLastAgentRun={index === lastAgentRunIndex}
                     onOpenExternal={props.onOpenExternal}
                     onOpenFile={props.onOpenFile}
                     onDiffFile={props.onDiffFile}
                     onEditMessage={props.onEditMessage}
                     onDeleteMessage={props.onDeleteMessage}
                     onEnterMultiSelect={() => setMultiSelectOpen(true)}
-                    onProcessAutoCollapsed={controller.scrollFinalAnswerIntoView}
                   />
                 );
               }
@@ -693,6 +758,8 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
           {props.runtimeUi}
         </div>
       ) : null}
+
+      {/* 发送清屏垫片（pin-to-top）已于 2026 移除：其与流式跟随有冲突、偶发页面抖动。 */}
 
       {multiSelectOpen && (
         <MultiSelectModal

@@ -31,6 +31,7 @@ import {
 	DialogTitle,
 } from "../ui-shadcn/dialog";
 import { cn } from "../../lib/utils";
+import { computeModelDisplay, formatModelRef, type ModelPending } from "../../utils/modelPendingDisplay";
 import { computeThinkingDisplay, type ThinkingLevelPending } from "../../utils/thinkingDisplay";
 import { CommandPickerGroup, CommandPickerPanel } from "../ui-shadcn/command-picker";
 import { THINKING_LEVELS, groupModelsByProvider } from "./sessionPickerOptions";
@@ -149,8 +150,12 @@ export function ComposerBottomBar(props: {
 	/** thinking 按钮专用禁用：与 disabled 不同，busy（生成进行中）时仍可切换思考强度
 	 *  （issue #146：pi 的 set_thinking_level 支持下一轮生成生效）。 */
 	thinkingDisabled?: boolean;
+	/** 模型按钮专用禁用：生成进行中仍可选（pi 不支持运行中切模型，只记下下一轮）。 */
+	modelDisabled?: boolean;
 	/** 流式生成中已请求、下一轮才生效的思考档位切换（显示为 from→to）。 */
 	thinkingPending?: ThinkingLevelPending;
+	/** 生成进行中已选定、本轮结束后才套到 Agent 的模型（显示为 from→to）。 */
+	modelPending?: ModelPending;
 	composerAgentMode: ComposerAgentMode;
 	gitInfo?: GitBranchInfo;
 	/** Draft sessions do not have a runtime yet, so retain their persisted settings in the bar. */
@@ -191,11 +196,28 @@ export function ComposerBottomBar(props: {
 	const modeLabel = isPlanMode
 		? t("app.composerModePlan")
 		: t("app.composerModeNormal");
-	const modelProvider = props.state?.provider ?? props.record?.model?.provider;
-	const modelName = props.state?.modelName ?? props.record?.model?.modelId;
+	const liveModel = {
+		provider: props.state?.provider ?? props.record?.model?.provider ?? "",
+		modelId: props.state?.modelId ?? props.record?.model?.modelId ?? "",
+		modelName: props.state?.modelName ?? props.record?.model?.modelId,
+	};
+	const modelDisplay = computeModelDisplay(
+		liveModel.modelId ? liveModel : undefined,
+		props.modelPending,
+	);
+	const modelFrom = modelDisplay.from;
+	const modelTo = modelDisplay.to;
+	const modelProvider = modelFrom?.provider;
+	const modelName = modelFrom?.modelName || modelFrom?.modelId;
 	const modelLabel = modelName
-		? `${modelProvider ? `${modelProvider}/` : ""}${modelName}`
+		? formatModelRef(modelFrom ?? { provider: "", modelId: "" })
 		: `${t("app.model")}: -`;
+	const modelPendingTitle = props.modelPending
+		? t("app.modelPendingTitle", {
+			from: formatModelRef(props.modelPending.from),
+			to: formatModelRef(props.modelPending.to),
+		})
+		: undefined;
 	// 底栏只承载当前状态和直接操作，快捷键说明留给设置页，避免再次挤压编辑器。
 	// shrink-0：面板缩到最小时底栏不被输入区挤扁/挤出滚动条
 	return (
@@ -261,10 +283,10 @@ export function ComposerBottomBar(props: {
 						variant="ghost"
 						size="sm"
 						className="composer-bar-btn model flex h-7 min-w-0 max-w-[42ch] truncate rounded-md px-2 font-brand text-caption font-medium italic text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-						disabled={props.disabled}
+						disabled={props.modelDisabled ?? props.disabled}
 						onClick={props.onPickModel}
 						aria-haspopup="dialog"
-						title={t("app.modelPickerTitle")}
+						title={modelPendingTitle ?? t("app.modelPickerTitle")}
 					>
 						{modelName ? (
 							<>
@@ -273,6 +295,12 @@ export function ComposerBottomBar(props: {
 								)}
 								{modelProvider && <span className="text-muted-foreground/50">/</span>}
 								<span className="min-w-0 truncate">{modelName}</span>
+								{modelDisplay.pending && modelTo && (
+									<>
+										<span className="text-muted-foreground/50"> → </span>
+										<span className="min-w-0 truncate">{modelTo.modelName || modelTo.modelId}</span>
+									</>
+								)}
 							</>
 						) : (
 							<span className="text-muted-foreground">{modelLabel}</span>

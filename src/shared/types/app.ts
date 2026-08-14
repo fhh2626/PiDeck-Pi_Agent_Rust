@@ -69,6 +69,8 @@ export type PiExtensionSummary = {
 	scope: "user" | "project" | "unknown";
 	/** PiDeck 内置扩展，不可卸载 */
 	builtIn?: boolean;
+	/** 过滤式安装（pi list 的 "(filtered)" 标记）：包完整安装但只选择性加载指定资源 */
+	filtered?: boolean;
 	/** 是否启用（未在 disabledExtensions 列表中） */
 	enabled?: boolean;
 	currentVersion?: string;

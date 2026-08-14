@@ -2091,7 +2091,9 @@ select:focus-visible {
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-caption);
+  /* 与 SessionTree JSX 的 text-micro 对齐（默认 11px）：层级低于会话行 text-body，
+     又比早前 10px 更清晰；勿回退 caption，否则 medium 档位会抢会话行层级。 */
+  font-size: var(--font-size-micro);
   text-align: left;
 }
 .agent-more-row::before,
@@ -2277,27 +2279,32 @@ select:focus-visible {
   right: -5px;
   pointer-events: none;
 }
-/* hover/拖拽态：不画更粗的硬线，改为 3px 水平渐变淡化扩散 + 柔影，
-   纯中性灰（text-tertiary 系），任何主题色下都不发绿 */
+/* hover/拖拽态：保持单线，仅增强明度与柔光。
+   曾用 3px 水平渐变（transparent→20%→transparent）+14px 柔影，
+   高分屏下中间亮带 + 两侧淡晕观感像“双线”，改为实色单线（1.5px），
+   位置不变（left:0）避免拖拽时线条跳动。 */
 .splitter:hover::before,
 .splitter:active::before,
 .splitter[data-separator="active"]::before {
-  left: -1px;
-  width: 3px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    color-mix(in srgb, var(--color-text-tertiary) 20%, transparent) 50%,
-    transparent
-  );
-  box-shadow: 0 0 14px color-mix(in srgb, var(--color-text-tertiary) 15%, transparent);
-  opacity: 0.9;
+  left: 0;
+  width: 1.5px;
+  background: color-mix(in srgb, var(--color-text-tertiary) 55%, transparent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-text-tertiary) 30%, transparent);
+  opacity: 1;
 }
 
 /* 换肤壁纸模式：启用背景图（data-bg-image="on"）时主容器透明，
    bg 系列 token 的半透明由 App.tsx 注入（覆盖所有面板/输入框，整体协调）；
    未启用时保持原不透明背景（零回归） */
 :root[data-bg-image="on"] .wechat-shell {
+  background: transparent;
+}
+/* 壁纸模式项目栏文件夹图标底：project-avatar 默认是 muted/panel 混色灰块，
+   半透明注入后仍透不干净；透明化后只留 Folder 图标本色。
+   选中态（active）的 accent-soft 高亮靠更高特异性保留（不透明化），维持选中区分。
+   此处放 legacy 层（而非 utilities）：active 规则同层特异性更高能自然压过，
+   若放 utilities 会因层序（utilities > legacy）误杀 active 高亮。 */
+:root[data-bg-image="on"] .project-avatar {
   background: transparent;
 }
 /* 壁纸模式输入区一体性：composer 区域不再叠半透明白（半透明白 + 白色遮罩 = 视觉纯白），
@@ -2314,15 +2321,10 @@ select:focus-visible {
 :root[data-bg-image="on"] .session-start-surface {
   background: transparent;
 }
-/* 壁纸模式 Git 抽屉一体性：.git-panel / drawer-header / 内部控件各叠一层
-   bg-background，在 .detail-drawer（与聊天区同档）上叠加后会比聊天区更白；
-   只保留 .detail-drawer 一层，让右侧与输出区透明度一致。
-   --git-panel-bg 同时被各折叠 pane / 提交区背景引用，一并透明化。 */
-:root[data-bg-image="on"] .shell-panel-drawer .drawer-header,
-:root[data-bg-image="on"] .shell-panel-drawer .git-panel,
-:root[data-bg-image="on"] .shell-panel-drawer .git-panel .bg-background {
-  background: transparent;
-}
+/* 壁纸模式 Git 抽屉一体性：git-panel 各折叠 pane / 提交区引用 --git-panel-bg，
+   一并透明化，让右侧抽屉透出 detail-drawer 一层、与聊天区同档。
+   注意：git-panel 等容器上的 bg-background/bg-bg-subtle utility 叠层透明化
+   在 tailwind.css 的 utilities 层处理（legacy 层规则压不过 utility，见层序）。 */
 :root[data-bg-image="on"] .shell-panel-drawer .git-panel {
   --git-panel-bg: transparent;
   --git-input-bg: transparent;
@@ -2346,7 +2348,8 @@ select:focus-visible {
    关键：在 dialog-content 上局部覆盖 bg 系列变量（CSS 变量继承）——
    弹窗内 section 卡片/控件引用同一档位，消除 Header 透、Body 实的多层叠加。 */
 :root[data-bg-image="on"] [data-slot="dialog-content"],
-/* 草稿本同理：不跟随壁纸半透明，header(bg-muted)/body(bg-panel) 同基色同档位，顶部一体。 */
+/* 草稿本：与弹框共享同基色令牌注入（header/body 同基色顶部一体）；
+   最终透明度由下方独立规则覆盖为面板档（跟随背景图滑块）。 */
 :root[data-bg-image="on"] .scratch-pad-panel {
   /* 弹窗下方仍是页面正文，透明度过低会把 Markdown 文字透进设置内容；普通弹框
      保持 90% 基线，业务工作台可在本规则之后单独降到页面面板档。 */
@@ -2361,6 +2364,19 @@ select:focus-visible {
   --color-bg-input: color-mix(in srgb, var(--wallpaper-base, var(--color-bg-app)) var(--wallpaper-dialog-alpha), transparent);
   --color-bg-popover: color-mix(in srgb, var(--wallpaper-base, var(--color-bg-app)) var(--wallpaper-dialog-alpha), transparent);
 }
+/* 壁纸模式 widget 弹层（todo/plan）跟随面板透明度：App.tsx 为所有浮层保留
+   92%+ 底色防止下拉内容透出误读；widget 弹层内容少、用户期望毛玻璃一体感，
+   单独降回页面面板档（与侧栏/抽屉同档），文字可读性由壁纸取色兜底。 */
+:root[data-bg-image="on"] .widget-popover {
+  --color-bg-popover: color-mix(in srgb, var(--wallpaper-base, var(--color-bg-app)) var(--wallpaper-panel-alpha, 30%), transparent);
+}
+/* 同类浮层降档：上下文详情（ctx-detail-tooltip）与消息复制菜单（copy-menu-popover）
+   同为内容少量、用户期望随壁纸透明的一体感浮层；默认 92% 底色在图片背景上
+   观感像磨砂灰白卡片。降回面板档后透出壁纸，与 widget-popover 同档。 */
+:root[data-bg-image="on"] .ctx-detail-tooltip,
+:root[data-bg-image="on"] .copy-menu-popover {
+  --color-bg-popover: color-mix(in srgb, var(--wallpaper-base, var(--color-bg-app)) var(--wallpaper-panel-alpha, 30%), transparent);
+}
 /* Pi 配置管理是工作台式弹框，header、layout、sidebar、main、content 全部覆盖
    通用 Dialog 的 90% 基线，最终共享同一个页面透明度。 */
 :root[data-bg-image="on"] [data-slot="dialog-content"].config-modal,
@@ -2370,14 +2386,31 @@ select:focus-visible {
 :root[data-bg-image="on"] [data-slot="dialog-content"].environment-dialog {
   /* 这些都是完整工作台弹框，header 与内容必须共享页面面板档透明度。 */
   --wallpaper-dialog-alpha: var(--wallpaper-panel-alpha, 30%);
+  /* 弹窗内卡片/列表项透明化：弹窗自身已有 panel-alpha 底色，内部元素若再叠一层
+     bg-panel/muted（同样 30%）会形成双层半透明白（≈51%），观感像磨砂灰白补丁。
+     默认态透明透出弹窗底色（单层）；hover/active/输入框保留底色提供交互反馈与边界。
+     --color-bg-subtle 经 @theme inline 映射到 --color-bg-muted，随之一同透明。 */
+  --color-bg-panel: transparent;
+  --color-card: transparent;
+  --color-bg-muted: transparent;
 }
-/* 草稿本是独立书写平面：壁纸模式下遮罩与面板使用同一不透明底色，
-   避免圆角抗锯齿边缘露出深色遮罩而形成黑角。 */
+/* 草稿本是独立书写平面：壁纸模式下遮罩用与面板同档的半透明底色
+   （面板本身 100% 不透明）。遮罩若用纯色会把背景图整个盖住，
+   表现为“点开草稿本整页变空白”；半透明后背景图与会话界面仍隐约可见，
+   圆角边缘外是同基色半透明遮罩，也不会形成黑角。 */
 :root[data-bg-image="on"] .scratch-pad-overlay {
-  background: var(--wallpaper-base, var(--color-bg-app));
+  background: color-mix(
+    in srgb,
+    var(--wallpaper-base, var(--color-bg-app)) var(--wallpaper-panel-alpha, 30%),
+    transparent
+  );
 }
 :root[data-bg-image="on"] .scratch-pad-panel {
-  --wallpaper-dialog-alpha: 100%;
+  /* 草稿本是独立书写平面，但底色统一为系统面板色并跟随背景图透明度：
+     内部控件（工具条/textarea 等）经 BG_TOKENS 内联注入已与滑块联动（30% 档），
+     面板底色此前被 100% 强改纯白，视觉突兀且滑块失效；改为同档半透明后
+     三者同色同档，背景图透出，可读性由壁纸取色兜底。 */
+  --wallpaper-dialog-alpha: var(--wallpaper-panel-alpha, 30%);
 }
 
 /* 大弹框内容级联入场（DialogContent stagger prop）：content 整体淡入的同时，
@@ -2801,7 +2834,7 @@ select:focus-visible {
   box-shadow: 0 1px 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
 }
 .chat-header-actions.loading {
-  min-height: 36px;
+  /* 不要写 min-height：顶栏已是 h-7（28px），36px 会把整栏顶高一截造成抖动。 */
   opacity: 0.5;
   pointer-events: none;
   transition: opacity 0.2s;

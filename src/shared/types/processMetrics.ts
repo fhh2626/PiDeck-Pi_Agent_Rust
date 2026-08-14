@@ -10,6 +10,10 @@
 export type AgentProcessMetric = {
 	/** pi agent 会话标识（AgentManager 内唯一） */
 	agentId: string;
+	/** 关联的会话 id（可点击跳转）；匿名/终端 agent 无绑定时为 undefined */
+	sessionId?: string;
+	/** 关联会话标题（catalog 有记录时提供，展示用） */
+	sessionTitle?: string;
 	/** agent 子进程 pid */
 	pid: number;
 	/** 常驻内存（字节）；系统命令采样失败时 undefined */

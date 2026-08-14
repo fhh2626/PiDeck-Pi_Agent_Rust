@@ -15,24 +15,24 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "../../ui-shadcn/context-menu";
-import { readClipboardHtmlConsistent, readClipboardText } from "../../../utils/clipboard";
+import { htmlToPlainText, readClipboardHtmlConsistent, readClipboardText } from "../../../utils/clipboard";
+import { insertComposerPlainTextFromEditor } from "./tiptap/insertComposerPlainText";
 import { t } from "../../../i18n";
 
 export type TipTapComposerProps = ComposerEditorProps;
 
-/** 粘贴：剪贴板有 HTML 时插入富文本（TipTap 按 schema 过滤未知标签），否则降级纯文本 */
+/**
+ * 右键粘贴：始终落到纯文本。
+ * 即便 HTML 与 text 槽同源，也不走 TipTap HTML 插入——mention chip / &amp;
+ * 会被 TipTap 解析成原子节点或重复 &，后续每个按键再同步一次就「输入一个字多一个 &」。
+ * 同源 HTML 只用来还原换行结构（htmlToPlainText），再按纯文本插入。
+ */
 function insertClipboard(editor: Editor) {
-  // 只接受与当前纯文本同源的 HTML：Windows 剪贴板纯文本复制不会更新 HTML 槽，
-  // 直接用 readClipboardHtml 会粘出上一次富文本复制的残留内容
-  const html = readClipboardHtmlConsistent();
-  if (html) {
-    editor.commands.insertContent(html);
-    return;
-  }
   const text = readClipboardText();
-  if (!text) return;
-  // 用 ProseMirror 文本节点而非 HTML 字符串，避免 `<`/`&` 被当作标签解析
-  editor.commands.insertContent({ type: "text", text });
+  const html = readClipboardHtmlConsistent();
+  const payload = html ? htmlToPlainText(html) : text;
+  if (!payload) return;
+  insertComposerPlainTextFromEditor(editor, payload);
 }
 
 export const TipTapComposer = forwardRef<HTMLDivElement, TipTapComposerProps>(
@@ -71,7 +71,14 @@ export const TipTapComposer = forwardRef<HTMLDivElement, TipTapComposerProps>(
 					<ContextMenuItem
 						onSelect={() => {
 							if (!editor) return;
-							insertClipboard(editor);
+							void (async () => {
+								// 图片/文件路径由 controller 统一处理（与 Ctrl+V 同一优先级链）；
+								// 纯文本返回 false，走本地纯文本插入（不解析 HTML）
+								const handled = await props.onPasteClipboard?.();
+								if (!handled) insertClipboard(editor);
+								// 菜单点击会让编辑器失焦，无论哪条路径都恢复焦点保证后续输入/光标可见
+								editor.commands.focus();
+							})();
 						}}
 					>
 						<ClipboardPaste size={13} strokeWidth={2} aria-hidden="true" />

@@ -19,7 +19,10 @@ const sessionRowClass =
 
 /** 行右侧「更多操作（三个点）」按钮：absolute 浮层，不参与布局（不挤压标题文字），
  * 默认隐藏（pointer-events 一并关闭防误触），行 hover / 行内聚焦时显现——
- * 与 WorktreeTree 的 workspace-tree-actions 同一套虚化模式。 */
+ * 与 WorktreeTree 的 workspace-tree-actions 同一套虚化模式。
+ * 窄侧栏（<256px）时按钮会盖住标题：conversation-body 上
+ * @max-[255px]:group-hover/row:pr-7 在 hover 时压出 28px 留白（一个按钮宽），
+ * 标题截断让位但保持可见（淡出到透明会让标题不可读，须点击激活才能看到，已弃用）。 */
 const rowMoreActionsClass =
 	"row-more-actions pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100";
 
@@ -193,7 +196,7 @@ export function SessionTree(props: {
             onDoubleClick={() => openSession(session.id, "permanent")}
             {...sessionDragProps(session.id)}
           >
-            <div className="conversation-body min-w-0 flex-1"><div className="conversation-title flex min-w-0 items-center gap-1.5">{label}</div></div>
+            <div className="conversation-body min-w-0 flex-1 transition-[padding-right] @max-[255px]:group-hover/row:pr-7 @max-[255px]:group-focus-within/row:pr-7"><div className="conversation-title flex min-w-0 items-center gap-1.5">{label}</div></div>
           </button>
         </PathTooltip>
         <Button
@@ -265,7 +268,7 @@ export function SessionTree(props: {
               {...(agentSession ? sessionDragProps(agentSession.id) : {})}
             >
               {renderRuntimeStatusDot(child.agent.status)}
-              <div className="conversation-body min-w-0 flex-1"><div className="conversation-title flex min-w-0 items-center gap-1.5">
+              <div className="conversation-body min-w-0 flex-1 transition-[padding-right] @max-[255px]:group-hover/row:pr-7 @max-[255px]:group-focus-within/row:pr-7"><div className="conversation-title flex min-w-0 items-center gap-1.5">
                 <strong className="min-w-0 flex-1 truncate font-medium">{child.agent.title}</strong>
                 {child.agent.noSession && <span className="anonymous-indicator" title={t("app.anonymousChat")}><HatGlasses size={11} aria-hidden="true" /></span>}
                 {renderToggle(groupKey, childCount)}
@@ -316,7 +319,7 @@ export function SessionTree(props: {
             {...sessionDragProps(child.session.id)}
           >
           {renderRuntimeStatusDot(runtimeSnapshot?.status)}
-          <div className="conversation-body min-w-0 flex-1"><div className="conversation-title flex min-w-0 items-center gap-1.5">
+          <div className="conversation-body min-w-0 flex-1 transition-[padding-right] @max-[255px]:group-hover/row:pr-7 @max-[255px]:group-focus-within/row:pr-7"><div className="conversation-title flex min-w-0 items-center gap-1.5">
             {/* 历史会话（无运行态）文字降一级，与活跃 Agent/运行中会话形成层级差 */}
             <strong className={cn("min-w-0 flex-1 truncate", runtime ? "font-medium" : "font-normal text-muted-foreground/90")}>{child.session.name || t("common.untitled")}</strong>
             {child.session.source && child.session.source !== "pi" && <SessionSourceBadge source={child.session.source} />}
@@ -371,7 +374,7 @@ export function SessionTree(props: {
               onDoubleClick={() => openSession(session.id, "permanent")}
               {...sessionDragProps(session.id)}
             >
-              <div className="conversation-body min-w-0 flex-1"><div className="conversation-title flex min-w-0 items-center gap-1.5">
+              <div className="conversation-body min-w-0 flex-1 transition-[padding-right] @max-[255px]:group-hover/row:pr-7 @max-[255px]:group-focus-within/row:pr-7"><div className="conversation-title flex min-w-0 items-center gap-1.5">
                 {renderRuntimeStatusDot(runtime?.status)}
                 <strong className="min-w-0 flex-1 truncate font-medium">{session.title}</strong>
               </div></div>
@@ -394,7 +397,7 @@ export function SessionTree(props: {
 
       {display.hiddenChildCount > 0 ? (
         <Button
-          variant="ghost" size="sm" className={`h-auto justify-start px-2 text-[10px] opacity-60 transition-opacity hover:opacity-100 ${props.nested ? "worktree-sessions-more" : "session-more-row"}`}
+          variant="ghost" size="sm" className={`h-auto justify-start px-2 text-micro opacity-80 transition-opacity hover:opacity-100 ${props.nested ? "worktree-sessions-more" : "session-more-row"}`}
           onClick={props.onShowMore ?? (() => props.controller.showMoreChildren(props.project.id))}
         >
           <span>{props.nested
@@ -405,7 +408,7 @@ export function SessionTree(props: {
       ) : props.controller.hasExpandedChildren(props.project.id) ? (
         /* 展开过「查看更多」后提供收起入口，与展开按钮同款样式 */
         <Button
-          variant="ghost" size="sm" className={`h-auto justify-start px-2 text-[10px] opacity-60 transition-opacity hover:opacity-100 ${props.nested ? "worktree-sessions-more" : "session-more-row"}`}
+          variant="ghost" size="sm" className={`h-auto justify-start px-2 text-micro opacity-80 transition-opacity hover:opacity-100 ${props.nested ? "worktree-sessions-more" : "session-more-row"}`}
           onClick={() => props.controller.collapseChildren(props.project.id)}
         >
           <span>{t("app.projectCollapseChildren")}</span>

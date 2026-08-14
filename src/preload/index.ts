@@ -202,6 +202,11 @@ const api = {
 		// readText 读纯文本；readHtml 读富文本（无 HTML 时返回空串，调用方降级纯文本）
 		readText: () => clipboard.readText(),
 		readHtml: () => clipboard.readHTML(),
+		// 读剪贴板位图槽（截图/复制图片），无图返回空串；PNG data URL
+		readImage: () => {
+			const image = clipboard.readImage();
+			return image.isEmpty() ? "" : image.toDataURL();
+		},
 	},
 	editors: {
 		list: () => ipcRenderer.invoke(ipcChannels.editorsList) as Promise<ExternalEditor[]>,
@@ -469,6 +474,11 @@ const api = {
 			ipcRenderer.invoke(ipcChannels.sessionsRuntimeCommands, target) as Promise<
 				SessionCommandResult<SessionTargetedValue<PiCommand[]>>
 			>,
+		/** 运行中 Agent 快照里的模型；不在此列表 = 新加配置，切过去要重启。 */
+		listRuntimeModels: (target: SessionRuntimeTarget) =>
+			ipcRenderer.invoke(ipcChannels.sessionsRuntimeListModels, target) as Promise<
+				SessionCommandResult<SessionTargetedValue<AvailableModel[]>>
+			>,
 		exportRuntimeHtml: (target: SessionRuntimeTarget) =>
 			ipcRenderer.invoke(ipcChannels.sessionsRuntimeExportHtml, target) as Promise<
 				SessionCommandResult<SessionTargetedValue<unknown>>
@@ -526,13 +536,12 @@ const api = {
 		/** 从指定 entryId fork 新会话（pi /fork），成功后会替换当前 runtime 绑定。 */
 		forkRuntimeSession: (target: SessionRuntimeTarget, entryId: string) =>
 			ipcRenderer.invoke(ipcChannels.sessionsRuntimeFork, target, entryId) as Promise<
-				SessionCommandResult<
-					{
-						cancelled?: boolean;
-						text?: string;
-						[key: string]: unknown;
-					}
-				>
+				SessionCommandResult<{
+					cancelled?: boolean;
+					text?: string;
+					targetSessionId?: string;
+					[key: string]: unknown;
+				}>
 			>,
 	},
 	usageStats: {

@@ -43,7 +43,8 @@ export function useAskPanel() {
 				return session.id;
 			} catch (error) {
 				setOpen(false);
-				showNotice(error instanceof Error ? error.message : String(error), 4000, "error");
+				// 会话创建失败属异常，常驻提示直到用户手动关闭
+				showNotice(error instanceof Error ? error.message : String(error), Number.POSITIVE_INFINITY, "error");
 				return null;
 			} finally {
 				setCreating(false);
@@ -77,7 +78,8 @@ export function useAskPanel() {
 			setCreating(true);
 			try {
 				if (!(await waitRuntimeReady(id))) {
-					showNotice(t("askPanel.runtimeTimeout"), 4000, "error");
+					// 启动超时提示含「请重试」指引，常驻直到用户手动关闭
+					showNotice(t("askPanel.runtimeTimeout"), Number.POSITIVE_INFINITY, "error");
 					return false;
 				}
 				// 直接投递：用户消息由主进程按 sessionId 广播进消息缓存，无需乐观写入
@@ -88,7 +90,8 @@ export function useAskPanel() {
 				});
 				return true;
 			} catch (error) {
-				showNotice(error instanceof Error ? error.message : String(error), 4000, "error");
+				// 发送失败属会话异常，常驻提示直到用户手动关闭
+				showNotice(error instanceof Error ? error.message : String(error), Number.POSITIVE_INFINITY, "error");
 				return false;
 			} finally {
 				setCreating(false);

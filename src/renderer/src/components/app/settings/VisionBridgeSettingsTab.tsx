@@ -39,6 +39,9 @@ import { SettingRow, SettingSwitchRow } from "./SettingRows";
 const DEFAULT_PROMPT =
 	"请详细描述这张图片的内容。如果图片中有文字（代码、报错、UI 文案、文档等），请完整准确地转录所有可见文字；如果是图表，请说明类型、坐标轴含义和关键数值；如果涉及界面，请描述布局与元素。输出使用中文。";
 
+/** 超时默认值（ms），与主进程/扩展 DEFAULT_CONFIG 保持一致；UI 以秒为单位展示。 */
+const DEFAULT_TIMEOUT_MS = 120_000;
+
 /** 配置文件路径（来自主进程返回的 configDir，与扩展读取路径一致）。 */
 function configFilePath(configDir: string): string {
 	return `${configDir}/pi-deck-vision.json`;
@@ -378,6 +381,28 @@ export function VisionBridgeSettingsTab(props: {
 						max={16}
 						value={draft?.concurrency ?? 2}
 						onChange={(event) => updateDraft({ concurrency: Number(event.target.value) || undefined })}
+					/>
+				</SettingRow>
+
+				{/* 单图转换超时：UI 以秒为单位（用户直觉），落盘转毫秒与配置文件/扩展一致；
+				    清空/非法输入回退默认（undefined → 展示层回显默认值）。 */}
+				<SettingRow
+					title={<span>{t("settings.vision.timeout")}</span>}
+					description={t("settings.vision.timeoutDesc")}
+					alignEnd={false}
+				>
+					<Input
+						type="number"
+						min={1}
+						max={300}
+						value={Math.round((draft?.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000)}
+						onChange={(event) => {
+							const seconds = Number(event.target.value);
+							updateDraft({
+								timeoutMs:
+									Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : undefined,
+							});
+						}}
 					/>
 				</SettingRow>
 

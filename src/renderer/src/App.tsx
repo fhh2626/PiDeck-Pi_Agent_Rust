@@ -1670,6 +1670,21 @@ export function App() {
     showNotice(message, duration, kind);
   }
 
+  /**
+   * clone / fork 会把同一个 Agent 换绑到新的 SessionRecord。
+   * 必须先刷新 catalog 再登记 Tab：否则 chrome 的 prune 看到 records 里还没有新 id，会立刻清掉刚打开的 Tab。
+   * 选中与登记都在这里组合——selectSession 本身不碰 Tab。
+   */
+  async function openReplacedRuntimeSession(
+    projectId: string | undefined,
+    targetSessionId: string | undefined,
+  ) {
+    if (!projectId || !targetSessionId) return;
+    await refreshProjectSessions(projectId);
+    workspaceChrome.registerOpenSession(targetSessionId, "permanent");
+    selectSessionCommand(projectId, targetSessionId, true);
+  }
+
   async function cloneAgentSession(agentId: string) {
     try {
       const target = getRuntimeTargetForAgent(agentId);
@@ -1682,10 +1697,7 @@ export function App() {
       showToast(t("app.currentSessionCopied"));
       await refreshRuntimeState(agentId);
       const projectId = agents.find((agent) => agent.id === agentId)?.projectId ?? activeProjectId;
-      if (projectId) await refreshProjectSessions(projectId);
-      if (result.targetSessionId && projectId) {
-        selectSessionCommand(projectId, result.targetSessionId, true);
-      }
+      await openReplacedRuntimeSession(projectId, result.targetSessionId);
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), 5000);
     }
@@ -2118,7 +2130,8 @@ export function App() {
   /**
    * 从用户消息 fork 新会话（pi /fork）。
    * 忙碌中不展示入口；点击时再解析 entryId（meta 缺失时走 getForkMessages 回退）。
-   * 成功后主进程会替换 sessionPath 并重载消息，这里把原 prompt 预填回输入框供修改再发。
+   * 成功后主进程把 Agent 换绑到新 SessionRecord；这里必须切焦点并登记常驻 Tab，
+   * 否则 Tab 栏仍停在原会话，runtime 已在新 id 上，点 Tab 会对不上。
    */
   async function forkFromUserMessage(message: ChatMessage) {
     if (!activeAgentId || isAgentCurrentlyBusy()) return;
@@ -2135,25 +2148,27 @@ export function App() {
       const result = requireSessionCommand(
         await api.sessions.forkRuntimeSession(target, entryId),
       );
-      if ((result as { cancelled?: boolean })?.cancelled) {
+      if (result.cancelled) {
         showToast(t("app.forkCancelled"), 3500);
         return;
       }
       const promptText =
-        typeof (result as { text?: string })?.text === "string" &&
-        (result as { text?: string }).text!.length > 0
-          ? (result as { text: string }).text
+        typeof result.text === "string" && result.text.length > 0
+          ? result.text
           : message.text;
-      // 直接写 Session draft atom（session-first 真源），再派发事件做 caret/focus。
-      // 仅靠事件时，若 currentSessionId 在 fork 刷新瞬间短暂为空，setPrompt 会静默丢草稿。
-      const draftTarget = currentSessionIdRef.current ?? activeAgentIdRef.current;
+      const projectId =
+        agents.find((agent) => agent.id === activeAgentId)?.projectId ?? activeProjectId;
+      const targetSessionId = result.targetSessionId;
+      await openReplacedRuntimeSession(projectId, targetSessionId);
+      // 草稿必须写到新会话。selectSession 的 setState 还没刷 ref，
+      // 先改 currentSessionIdRef，后面的 user-message-edit 才不会写回旧会话。
+      const draftTarget =
+        targetSessionId ?? currentSessionIdRef.current ?? activeAgentIdRef.current;
+      if (targetSessionId) currentSessionIdRef.current = targetSessionId;
       if (draftTarget) setPromptForAgent(draftTarget, promptText);
       window.dispatchEvent(
         new CustomEvent("user-message-edit", { detail: { text: promptText } }),
       );
-      if (activeProjectId) {
-        void refreshProjectSessions(activeProjectId).catch(() => undefined);
-      }
       showToast(t("app.forkDone"), 3500);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -2546,7 +2561,8 @@ export function App() {
       settingsExpandedProjectIds={settings.sidebarExpandedProjectIds}
       settingsLoaded={settingsLoaded}
       onExpandedProjectsReady={() => setExpandedProjectsReady(true)}
-      onOpenHomepage={() => void api.app.openExternal("https://ayuayue.github.io/PiDeck/")}
+      // 官网主页是品牌入口，强制系统浏览器打开：不受「链接打开方式=内置浏览器」设置影响
+      onOpenHomepage={() => void api.app.openExternal("https://github.com/fhh2626/PiDeck-Pi_Agent_Rust", true)}
     />
   );
 
@@ -3093,7 +3109,7 @@ export function App() {
             active: scratchPad.isOpen,
             label: t("scratchPad.openTooltip"),
             onClick: () => scratchPad.toggle(),
-            icon: <Pencil size={17} />,
+            icon: <Pencil size={14} />,
           }}
           // 终端按钮绑定 owner（agent 或项目），不再要求 agent 已激活；
           // web 预览 / 无可用目标（纯聊天无项目）时隐藏，避免指向无处可开的终端
@@ -3103,7 +3119,7 @@ export function App() {
             onClick: () => {
               setTerminalOpenForOwner(!terminalOpen);
             },
-            icon: <Terminal size={17} />,
+            icon: <Terminal size={14} />,
           } : undefined}
           filesAction={undefined}
           gitAction={undefined}
@@ -3122,7 +3138,7 @@ export function App() {
                 : undefined;
               workspace.openExternalEditorChooser(projectPath || "", anchor);
             },
-            icon: <Code size={17} />,
+            icon: <Code size={14} />,
           }}
           browserAction={undefined}
         />

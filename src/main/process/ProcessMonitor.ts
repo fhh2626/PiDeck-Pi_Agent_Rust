@@ -85,11 +85,17 @@ export async function sampleProcessMemoryBytes(
  * agent 内存采样失败项不计入汇总，避免"查不到就少一块"造成总和误导。
  */
 export async function getProcessSnapshot(
-  agents: Array<{ agentId: string; pid: number }>,
+  agents: Array<{
+    agentId: string;
+    pid: number;
+    sessionId?: string;
+    sessionTitle?: string;
+  }>,
 ): Promise<ProcessMetricsSnapshot> {
   const sampled = await Promise.all(
     agents.map(async (agent) => {
       const memoryBytes = await sampleProcessMemoryBytes(agent.pid);
+      // 展开保留会话身份字段（sessionId/sessionTitle），供监控表展示
       return { ...agent, memoryBytes } as AgentProcessMetric;
     }),
   );

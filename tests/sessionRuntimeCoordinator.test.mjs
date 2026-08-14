@@ -1039,12 +1039,15 @@ test("runtime thinking failure does not persist an unsupported requested level",
   assert.equal(harness.calls.update, 0);
 });
 
-test("runtime model preference is persisted before AgentManager failure", async () => {
+test("runtime model preference is not persisted when AgentManager fails", async () => {
+  // 先写 catalog 再调 pi：用户取消「重启生效」后，下次启动仍会套上未确认模型。
+  // 失败路径不得改会话记录；needsRestart 由渲染层在用户确认后再 updateRecord。
   const { SessionRuntimeCoordinator } = loadCoordinator();
   const harness = createHarness({
     tabs: [{ id: "agent-a", status: "idle", createdAt: 1 }],
     modelError: "model apply failed",
   });
+  const previousModel = harness.entry.model ? { ...harness.entry.model } : undefined;
   const coordinator = new SessionRuntimeCoordinator(harness.catalog, harness.agents, harness.sender);
   const runtimeGeneration = coordinator.bindExistingAgent("session-1", "agent-a");
   const result = await coordinator.setRuntimeModel(
@@ -1054,9 +1057,8 @@ test("runtime model preference is persisted before AgentManager failure", async 
   );
   assert.equal(result.ok, false);
   assert.equal(result.error.code, "SESSION_COMMAND_FAILED");
-  assert.equal(harness.entry.model.provider, "openai");
-  assert.equal(harness.entry.model.modelId, "gpt-test");
-  assert.equal(harness.calls.update, 1);
+  assert.deepEqual(harness.entry.model, previousModel);
+  assert.equal(harness.calls.update, 0);
   assert.equal(harness.calls.setModel, 1);
 });
 
@@ -1122,9 +1124,38 @@ test("commandFailure classifies message-not-found separately from session-not-fo
   const sessionMiss = coordinator.commandFailure(new Error("Session not found: session-1"));
   assert.equal(sessionMiss.ok, false);
   assert.equal(sessionMiss.error.code, "SESSION_NOT_FOUND");
-  // 其他 not found 前缀（模型/项目/agent）不受影响
+  // 其他 not found 前缀（agent/项目）不受影响
   const agentMiss = coordinator.commandFailure(new Error("Agent not found: agent-1"));
   assert.equal(agentMiss.error.code, "SESSION_NOT_FOUND");
+});
+
+test("commandFailure classifies model-not-found as SESSION_MODEL_NOT_FOUND (not session gone)", () => {
+  const { SessionRuntimeCoordinator } = loadCoordinator();
+  const harness = createHarness();
+  const coordinator = new SessionRuntimeCoordinator(
+    harness.catalog,
+    harness.agents,
+    harness.sender,
+  );
+  // set_model 报 "Model not found: provider/model"（本地 models.json 也没有该模型，
+  // 如手误/解析错位产生的假模型）→ 模型不存在，绝不误报「会话已不存在」。
+  const modelMiss = coordinator.commandFailure(
+    new Error("Model not found: grok.weishiair.de/copy"),
+  );
+  assert.equal(modelMiss.ok, false);
+  assert.equal(modelMiss.error.code, "SESSION_MODEL_NOT_FOUND");
+  // {model} 参数提取：i18n 文案「模型未找到：{model}」有值
+  assert.equal(modelMiss.error.params?.model, "grok.weishiair.de/copy");
+  // 注意：vm 沙箱里主 realm 的 Error 不满足 instanceof，needsRestart 分支无法行为级验证，
+  // 用源码断言确认该分支同样提取 model 参数（本地有模型时引导重启而非误报会话不存在）
+  const coordinatorSource = readFileSync(
+    "src/main/sessions/SessionRuntimeCoordinator.ts",
+    "utf8",
+  );
+  assert.match(
+    coordinatorSource,
+    /needsRestart: true,[\s\S]*?params: \{ model: this\.extractModelFromNotFound\(error\.message\) \?\? error\.message \}/,
+  );
 });
 
 test("SessionCommandIpcError maps MESSAGE_NOT_FOUND to the dedicated copy key", () => {

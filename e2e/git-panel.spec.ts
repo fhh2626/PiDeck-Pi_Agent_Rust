@@ -40,7 +40,7 @@ test("git panel: status -> diff -> stage -> commit", async ({ window }) => {
 	const projectRow = window.locator(".conversation", { hasText: "pideck-git-e2e" }).first();
 	await projectRow.click();
 	await projectRow.locator('.project-action[title="新建 Agent"]').click();
-	await expect(window.locator(".composer .rich-input")).toHaveAttribute("aria-disabled", "false", { timeout: 15_000 });
+	await expect(window.locator(".composer .rich-input")).toHaveAttribute("contenteditable", "true", { timeout: 15_000 });
 
 	// 先展开抽屉（rail 只在抽屉打开期间渲染），再切到 Git tab
 	await window.locator(".header-drawer-toggle").first().click();

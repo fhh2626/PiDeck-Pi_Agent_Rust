@@ -23,7 +23,7 @@ test("visual tour: live session states", async ({ window }) => {
 	await expect(window.locator("#boot-overlay")).toHaveCount(0, { timeout: 20_000 });
 	await window.getByRole("button", { name: "启动 Agent" }).click();
 	const composer = window.locator(".composer .rich-input");
-	await expect(composer).toHaveAttribute("aria-disabled", "false", { timeout: 30_000 });
+	await expect(composer).toHaveAttribute("contenteditable", "true", { timeout: 30_000 });
 	const timeline = window.locator(".message-timeline");
 
 	// 1. 流式输出中（慢速流，抓中间态 + 停止按钮）
@@ -37,7 +37,8 @@ test("visual tour: live session states", async ({ window }) => {
 
 	// 2. 完整对话 + composer 状态栏（等本轮结束）
 	await expect(timeline).toContainText("SLOW 视觉巡检」流式渲染验证完成", { timeout: 20_000 });
-	await expect(window.locator(".composer-bar-btn.send")).toBeVisible({ timeout: 10_000 });
+	// 发送按钮已从 composer-bar-btn.send 迁到 send-behavior-primary（ComposerPanels）
+	await expect(window.locator(".send-behavior-primary")).toBeVisible({ timeout: 10_000 });
 	// compact chip 应出现（mock 占比 45%）
 	await expect(window.locator(".composer-bar-btn.compact")).toBeVisible({ timeout: 10_000 });
 	await shot(window, "31-session-idle-composer");
@@ -76,7 +77,7 @@ test("visual tour: live session states", async ({ window }) => {
 	await window.keyboard.type("MDEMO 元素巡检");
 	await window.keyboard.press("Enter");
 	await expect(timeline).toContainText("渲染元素巡检", { timeout: 15_000 });
-	await expect(window.locator(".composer-bar-btn.send")).toBeVisible({ timeout: 15_000 });
+	await expect(window.locator(".send-behavior-primary")).toBeVisible({ timeout: 15_000 });
 	await shot(window, "36-markdown-elements");
 
 	// 7. 暗色主题下的会话页：切主题后重截一张完整对话 + markdown 元素

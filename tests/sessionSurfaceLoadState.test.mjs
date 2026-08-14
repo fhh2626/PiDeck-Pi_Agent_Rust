@@ -27,7 +27,10 @@ const composerAtoms = compile("src/renderer/src/atoms/composer-atoms.ts", {
   "./session-atoms": sessionAtoms,
 });
 const timeline = compile("src/renderer/src/hooks/useSessionTimelineController.ts", {
-  react: {}, jotai: { atom: (value) => ({ _mockInit: value }) }, "jotai/utils": {}, "../atoms": {}, "../desktopApi": {},
+  react: {}, jotai: { atom: (value) => ({ _mockInit: value }) }, "jotai/utils": {}, "../atoms": {}, "../desktopApi": {},  "../components/session/timeline/turnRenderWindow": {
+    TIMELINE_SCROLLED_TURN_LIMIT: 15,
+    TIMELINE_WINDOW_EXPAND_STEP: 10,
+  },
 });
 
 test("session load and send selectors retain current references across background patches", () => {
@@ -48,12 +51,14 @@ test("session load and send selectors retain current references across backgroun
 
 test("modern surface state covers cached loading, activation before binding, and unknown", () => {
   const cachedLoading = timeline.deriveSessionSurfaceRuntime(0, "loading", "idle", undefined, undefined);
-  const activating = timeline.deriveSessionSurfaceRuntime(0, "ready", "activating", undefined, undefined);
+  const activating = timeline.deriveSessionSurfaceRuntime(0, "ready", "activating", undefined, undefined, true);
   const unknown = timeline.deriveSessionSurfaceRuntime(0, "ready", "unknown", undefined, undefined);
   assert.equal(cachedLoading.isLoading, true);
-  assert.equal(activating.isLoading, true);
+  // 空会话已读完磁盘：发送 activating 只表示进程在起，不能把起始页换成骨架屏。
+  assert.equal(activating.isLoading, false);
   assert.equal(activating.status, "starting");
   assert.equal(activating.isBusy, true);
+  assert.equal(activating.isStarting, true);
   assert.equal(unknown.status, undefined);
   assert.equal(unknown.isStarting, false);
   assert.equal(unknown.isBusy, false);

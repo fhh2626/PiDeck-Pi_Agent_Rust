@@ -55,9 +55,10 @@ test("契约: thinking 按钮 busy 时可点（仅 Agent 启动中禁用）", ()
     "src/renderer/src/components/session/ComposerComponents.tsx",
     "utf8",
   );
-  // 其他按钮仍随 disabled 禁用；thinking 按钮改用 thinkingDisabled
+  // 模板/模式仍随 disabled 禁用；thinking / 模型按钮有独立禁用位
   assert.match(components, /disabled=\{props\.disabled\}/);
   assert.match(components, /disabled=\{props\.thinkingDisabled\}/);
+  assert.match(components, /disabled=\{props\.modelDisabled \?\? props\.disabled\}/);
   // 待生效指示必须接入底栏展示
   assert.match(components, /thinkingPending\?: ThinkingLevelPending/);
   assert.match(components, /thinkingDisplay\.levels\.map/);
@@ -68,10 +69,10 @@ test("契约: ComposerArea 传 thinkingDisabled=isStarting（不含 isBusy）", 
     "src/renderer/src/components/session/ComposerArea.tsx",
     "utf8",
   );
-  // 全局禁用保留 isBusy（模型/模板等按钮行为不变）
+  // 全局禁用仍含 isBusy（模板/附件等）；思考与模型按钮只被启动中禁用
   assert.match(area, /disabled=\{composer\.isBusy \|\| composer\.isStarting\}/);
-  // 思考按钮只被启动中禁用
   assert.match(area, /thinkingDisabled=\{composer\.isStarting\}/);
+  assert.match(area, /modelDisabled=\{composer\.isStarting\}/);
   // 流式结束（没有进行中的生成）时清除待生效指示
   assert.match(area, /!isStreaming && thinkingPendingMap\[props\.sessionId\]/);
 });

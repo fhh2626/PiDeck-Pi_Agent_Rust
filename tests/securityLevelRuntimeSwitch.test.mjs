@@ -21,11 +21,12 @@ test("契约: SecurityLevelMenu 运行中不再置灰（仅 Agent 启动中禁�
     area,
     /<SecurityLevelMenu sessionId=\{props\.sessionId\} disabled=\{composer\.isStarting\} \/>/,
   );
-  // 其他按钮（模型/思考/模板）仍保留全局 busy 禁用，未被连带放开
+  // 模板/附件仍走全局 busy 禁用；思考与模型已单独放开运行中
   assert.match(
     area,
     /disabled=\{composer\.isBusy \|\| composer\.isStarting\}/,
   );
+  assert.match(area, /modelDisabled=\{composer\.isStarting\}/);
 });
 
 test("契约: SecurityLevelMenu 自身仍以 props.disabled 为准（不做运行态特判）", () => {

@@ -297,6 +297,106 @@ test("parser rejects empty, invalid UTF-8, malformed JSON, duplicate IDs, header
   }
 });
 
+/**
+ * 复刻 pi SessionManager._buildIndex + buildSessionPath 的活动分支投影。
+ * tombstone 若没有 id/parentId，leaf 会落在删除记录上，get_messages 整页变空。
+ */
+function piActiveMessageTexts(entries) {
+  const byId = new Map();
+  let leafId;
+  for (const entry of entries) {
+    if (entry.type === "session") continue;
+    byId.set(entry.id, entry);
+    leafId = entry.id;
+  }
+  let leaf = leafId ? byId.get(leafId) : undefined;
+  if (!leaf) {
+    leaf = [...entries].reverse().find((entry) => entry.type !== "session");
+  }
+  const path = [];
+  let current = leaf;
+  while (current) {
+    path.unshift(current);
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+  return path
+    .filter((entry) => entry.type === "message")
+    .map((entry) => entry.message?.content);
+}
+
+test("deleting the current leaf must not empty pi's remaining active branch", async () => {
+  const entries = [
+    header(),
+    message("u1", null, "user", "keep me"),
+    message("a1", "u1", "assistant", "keep answer"),
+    message("u2", "a1", "user", "delete leaf"),
+    message("a2", "u2", "assistant", "leaf answer"),
+  ];
+  await withTempSession(entries, {}, async ({ path }) => {
+    const editor = new SessionFileEditor({ now: () => 123 });
+    await editor.deleteMessage({
+      file: fileRef(path),
+      target: target({ entryId: "a2", role: "assistant", text: "leaf answer", activeLeafId: "a2" }),
+      reload: async () => undefined,
+    });
+    const next = parseLines(await readFile(path, "utf8"));
+    const tombstone = byOriginalOrId(next, "a2");
+    assert.equal(tombstone.type, "deleted");
+    // pi _buildIndex 用 entry.id 当 leaf；没有 id 时 leaf 落在 tombstone 上，整页变空。
+    assert.equal(tombstone.id, "a2");
+    assert.equal(tombstone.parentId, "u2");
+    assert.deepEqual(piActiveMessageTexts(next), ["keep me", "keep answer", "delete leaf"]);
+  });
+});
+
+test("resending the latest user turn must keep earlier turns visible to pi", async () => {
+  const entries = [
+    header(),
+    message("u1", null, "user", "first"),
+    message("a1", "u1", "assistant", "first answer"),
+    message("u2", "a1", "user", "resend me"),
+    message("a2", "u2", "assistant", "second answer"),
+  ];
+  await withTempSession(entries, {}, async ({ path }) => {
+    const editor = new SessionFileEditor({ now: () => 123 });
+    await editor.truncateForResend({
+      file: fileRef(path),
+      target: target({ entryId: "u2", role: "user", text: "resend me", activeLeafId: "a2" }),
+      reload: async () => undefined,
+    });
+    const next = parseLines(await readFile(path, "utf8"));
+    assert.deepEqual(piActiveMessageTexts(next), ["first", "first answer"]);
+  });
+});
+
+test("deleting an assistant answer also tombstones that turn's thinking and tools", async () => {
+  // 一轮常态：user → thinking-only → toolResult → 最终回答 → 下一轮 user → 回答
+  // 只墓碑最终回答时，思考/工具会改挂到下一轮，分组后就会串台。
+  const entries = [
+    header(),
+    message("u1", null, "user", "first question"),
+    message("think1", "u1", "assistant", [{ type: "thinking", thinking: "plan A" }]),
+    message("tool1", "think1", "toolResult", "ok"),
+    message("a1", "tool1", "assistant", "answer one"),
+    message("u2", "a1", "user", "second question"),
+    message("a2", "u2", "assistant", "answer two"),
+  ];
+  await withTempSession(entries, {}, async ({ path }) => {
+    const editor = new SessionFileEditor({ now: () => 123 });
+    await editor.deleteMessage({
+      file: fileRef(path),
+      target: target({ entryId: "a1", role: "assistant", text: "answer one", activeLeafId: "a2" }),
+      reload: async () => undefined,
+    });
+    const next = parseLines(await readFile(path, "utf8"));
+    assert.equal(byOriginalOrId(next, "a1").type, "deleted");
+    assert.equal(byOriginalOrId(next, "think1").type, "deleted");
+    assert.equal(byOriginalOrId(next, "tool1").type, "deleted");
+    assert.equal(byOriginalOrId(next, "u2").parentId, "u1");
+    assert.deepEqual(piActiveMessageTexts(next), ["first question", "second question", "answer two"]);
+  });
+});
+
 test("delete tombstones the target, reparents direct children and leaves grandchildren and siblings intact", async () => {
   const entries = [
     header(),

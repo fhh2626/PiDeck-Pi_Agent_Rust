@@ -525,9 +525,11 @@ function FileNode(props: {
 	}, [node.path, props.onDropFiles, props.onMoveFiles, props.onDragOverDirChange]);
 	const isDragOver = props.dragOverDir === node.path;
 	/* 树行用原生 button，不用 shadcn Button：后者基类强制子 SVG size-4，
-	   会压掉 Seti --file-type-icon-size 与 lucide size，靠 ! 反压是补丁。 */
+	   会压掉 Seti --file-type-icon-size 与 lucide size，靠 ! 反压是补丁。
+	   2027-01：hover 高亮加与侧栏行同款的过渡动画（transition-[background-color,
+	   border-color,box-shadow] duration-200），移入文件列表时背景平滑渐变而非瞬切。 */
 	const fileRowButtonClass =
-		"file-node-row inline-flex h-[28px] min-h-0 w-full items-center justify-start gap-1.5 rounded-sm border-0 bg-transparent py-0 text-left text-body font-normal text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset";
+		"file-node-row inline-flex h-[28px] min-h-0 w-full items-center justify-start gap-1.5 rounded-sm border-0 bg-transparent py-0 text-left text-body font-normal text-foreground transition-[background-color,border-color,box-shadow] duration-200 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset";
 	if (node.type === "file")
 		return (
 			<div className="file-node" style={rowStyle}>

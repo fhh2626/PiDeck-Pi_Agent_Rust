@@ -137,7 +137,10 @@ export function SidebarContent(props: SidebarContentProps) {
 
   return (
     <aside
-      className="chat-list-pane v3-braun flex h-full min-w-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground"
+      // @container：侧栏宽度容器查询基准——行操作按钮（绝对浮层）按侧栏实际宽度
+      // 决定 hover 时文本是否压缩让位（pr 留出按钮空间 + 截断，见各树的 @max-[255px] 变体），
+      // 不用把宽度穿进树组件
+      className="chat-list-pane v3-braun @container flex h-full min-w-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground"
       aria-label={t("app.search")}
     >
       {/* 品牌区提到 body 外：贴侧栏顶边，不被 sidebar-body 的 px/py 顶开（logo 怼左上）。 */}

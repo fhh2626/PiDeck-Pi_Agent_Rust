@@ -621,8 +621,10 @@ function reconcileHistoryPrefix(
   slideOut?: ChatMessage[],
 ): SessionMessageCacheEntry["history"] {
   if (!history && (!slideOut || slideOut.length === 0)) return undefined;
-  if (fileVersion && history?.version && fileVersion !== history.version) {
-    // 压缩改写：前缀下标空间失效；无滑出轮时整段丢弃，有滑出轮时以其重建前缀
+  // fileVersion 变化 = 文件被改写（编辑/删除/压缩/外部变更）。此时前缀内容可能已失效：
+  // 编辑落在窗口外时，全量 flush 只带尾部窗口段，若旧前缀（尤其无 version 的异常前缀）
+  // 继续拼回去，用户会看到「编辑了不刷新，再编一条才看到」。故 version 缺失或不同都丢弃。
+  if (fileVersion && (!history?.version || fileVersion !== history.version)) {
     history = undefined;
   }
   const segmentKeys = new Set(segment.map(messageEntryKey));

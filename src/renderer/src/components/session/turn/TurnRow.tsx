@@ -1,5 +1,5 @@
-import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronUp, Share, SquarePen, Trash } from "lucide-react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronUp, Clock, Share, SquarePen, Trash } from "lucide-react";
 import { atom, useAtomValue } from "jotai";
 import type { ImageContent } from "../../../../../shared/types";
 import { liveTextStreamingBySessionAtom, newTurnCollapseTickBySessionIdAtomFamily } from "../../../atoms/session-atoms";
@@ -11,6 +11,7 @@ import { formatDuration, formatTime, stripAnsi, stripThinkingTags } from "../Tim
 import { LiveDuration } from "../LiveDuration";
 import { CopyMenu, stripMarkdown } from "../SurfaceComponents";
 import { buildTurnDisplay, hasFoldableContent } from "../timeline/buildTurnDisplay";
+import { resolveLiveInterimId } from "../timeline/liveMount";
 import { buildProcessSummary } from "../timeline/segmentSummary";
 import type {
 	AgentRunItem,
@@ -61,15 +62,12 @@ export type TurnRowProps = {
 	onDeleteMessage?: (messageId: string) => void;
 	/** Agent 正在处理请求或流式输出中时禁用编辑/删除等操作按钮 */
 	agentRunning?: boolean;
+	/** 是否时间线最新一轮（非最新不自动收起） */
+	isLatestRun?: boolean;
+	/** 是否为时间线上最后一个 agent-run（live 正文挂载门：仅它可挂会话级流式槽） */
+	isLastAgentRun?: boolean;
 	/** 打开多选分享弹框 */
 	onEnterMultiSelect?: () => void;
-	/**
-	 * 自动收起执行过程后回调（仅自动收起，不含用户手动折叠）。
-	 * 时间线用来把视口对准最终回答开头。
-	 */
-	onProcessAutoCollapsed?: (runId: string) => void;
-	/** 是否时间线最新一轮（非最新不自动收起对准） */
-	isLatestRun?: boolean;
 };
 
 export const TurnRow = memo(
@@ -120,26 +118,35 @@ export const TurnRow = memo(
 	}, [displayItems]);
 
 	// 末条 Live 正文：挂在折叠容器外常显（避免 Radix Collapsible 卸载/收起导致无 DOM）。
-	// 要求「存在活动正文流」才挂 live：中间回复 message_end 后槽删（streaming=false）
-	// 立即落回容器内 settled，消除双失明消失窗口（live 读空 + 容器内被跳过）；
+	// 要求「存在活动正文流」且「本轮是最后一个 agent-run」才挂 live：
+	// - 中间回复 message_end 后槽删（streaming=false）立即落回容器内 settled，
+	//   消除双失明消失窗口（live 读空 + 容器内被跳过）；
+	// - 被 steer 打断的旧轮尾部是空文本 interim（骨架挂载点），若允许旧轮挂 live，
+	//   新一轮流式时旧轮会把会话槽里的新一轮正文再打印一遍——同一中间回复前后双份
+	//   （2026-08 回归：判定逻辑见 resolveLiveInterimId，按轮级门控）。
 	// 流式期间 content 每 50ms 变化但 streaming 不变 → 派生 boolean 引用稳定 → 零额外重渲染。
 	const liveTextActive = useAtomValue(
 		props.sessionId ? liveTextStreamingBySessionAtom(props.sessionId) : NO_LIVE_TEXT_ATOM,
 	);
 	const liveInterimId = useMemo(() => {
-		if (!props.sessionId || !lastInterimId) return undefined;
-		if (!liveTextActive) return undefined;
 		const last = displayItems.find(
 			(item) => item.kind === "interim-answer" && item.id === lastInterimId,
 		);
 		if (!last || last.kind !== "interim-answer") return undefined;
-		const emptySkeleton = !last.message.text.trim();
-		if (emptySkeleton || props.agentRunning || props.isStreaming) return lastInterimId;
-		return undefined;
+		return resolveLiveInterimId({
+			sessionId: props.sessionId,
+			lastInterimId,
+			liveTextActive,
+			lastMessageText: last.message.text,
+			agentRunning: props.agentRunning,
+			isStreaming: props.isStreaming,
+			isLastAgentRun: props.isLastAgentRun,
+		});
 	}, [
 		props.sessionId,
 		props.agentRunning,
 		props.isStreaming,
+		props.isLastAgentRun,
 		lastInterimId,
 		displayItems,
 		liveTextActive,
@@ -172,7 +179,7 @@ export const TurnRow = memo(
 			? newTurnCollapseTickBySessionIdAtomFamily(props.sessionId)
 			: NO_TURN_TICK_ATOM,
 	);
-	const { stepsVisible, setStepsVisibleFromUser, toggleSteps, autoCollapseTick } =
+	const { stepsVisible, setStepsVisibleFromUser, toggleSteps } =
 		useTurnExecution({
 			agentRunning: props.agentRunning,
 			isComplete,
@@ -182,24 +189,6 @@ export const TurnRow = memo(
 			collapsePrevRunsOnNewTurn: flowSettings.collapsePrevRunsOnNewTurn,
 			newTurnCollapseTick,
 		});
-
-	// 自动收起后：等折叠负增高 / stick 近底重锁完成，再对准最终回答开头。
-	useLayoutEffect(() => {
-		if (autoCollapseTick === 0) return;
-		const runId = run.id;
-		const onCollapsed = props.onProcessAutoCollapsed;
-		if (!onCollapsed) return;
-		let cancelled = false;
-		const outerId = requestAnimationFrame(() => {
-			requestAnimationFrame(() => {
-				if (!cancelled) onCollapsed(runId);
-			});
-		});
-		return () => {
-			cancelled = true;
-			cancelAnimationFrame(outerId);
-		};
-	}, [autoCollapseTick, run.id, props.onProcessAutoCollapsed]);
 
 	// 中间内容（思考/工具/中间回答）与最终回答分组：
 	// 中间内容统一收进执行过程折叠容器（stepsVisible 整体控制显隐），
@@ -260,20 +249,11 @@ export const TurnRow = memo(
 		>
 			<div className="flex min-w-0 flex-col gap-3">
 				{/* 行头：logo 用字号 token（text-brand 18px），随 data-ui-font-size 整体缩放；
-				    日期/耗时用 text-body（14px），比思考字号（text-micro）大但小于 logo。 */}
+				    时间用 text-body（14px）。耗时不放行头——回复生成时用户视线在底部，
+				    统一显示在 turn 尾部（见底部耗时行），不用翻回开头看跑了多久。 */}
 				<div className="mb-1 inline-flex items-center gap-2 text-muted-foreground tabular-nums">
 					<span className="shrink-0 font-mono text-brand font-semibold leading-none text-foreground/80">pi</span>
 					<time className="shrink-0 font-mono text-body leading-none">{formatTime(run.endedAt)}</time>
-					{showDuration && (
-						<span className="shrink-0 font-mono text-body leading-none text-muted-foreground">
-							{isRunLive ? (
-								// 流式中：run 未结束，LiveDuration 实时计时（100ms 连续跳动）
-								<LiveDuration startedAt={run.startedAt} isStreaming />
-							) : (
-								formatDuration(duration)
-							)}
-						</span>
-					)}
 				</div>
 
 				{/* 执行过程折叠栏：中间内容（思考/工具/中间回答）统一收进容器，
@@ -440,6 +420,22 @@ export const TurnRow = memo(
 					</div>
 				)}
 
+				{/* 尾部耗时：回复生成中由 LiveDuration 实时计时（100ms 连续跳动，用户视线在底部），
+				    回复结束后固定为总耗时。全轮只有一个耗时显示点（行头只留时间戳），
+				    避免开头结尾重复；无最终回答的轮（纯工具/思考）同样可见。 */}
+				{showDuration && (
+					<div className="flex items-center gap-1.5 text-muted-foreground">
+						<Clock size={12} className="shrink-0" aria-hidden="true" />
+						<span className="font-mono text-body leading-none tabular-nums">
+							{isRunLive ? (
+								<LiveDuration startedAt={run.startedAt} isStreaming />
+							) : (
+								formatDuration(duration)
+							)}
+						</span>
+					</div>
+				)}
+
 				{/* 本轮文件修改：固定显示在本轮底部（后续发送新消息不清除），
 				    点击行展开内联 diff，行尾按钮打开右侧差异查看器 */}
 				<TurnFileChanges
@@ -461,7 +457,7 @@ turnRowPropsEqual,
  * - run：深度比较内容（sameAgentRunForRender），未变化的 run 不重渲染；
  * - 标量 props（fresh/showThinking/isStreaming/liveThinkingId/agentRunning）：=== 比较；
  * - 回调函数（onPreviewImage/onOpenExternal/onOpenFile/onDiffFile/onEditMessage/onDeleteMessage/
- *   onEnterMultiSelect/onProcessAutoCollapsed）：行为稳定（读 ref/setState），引用变化不影响渲染结果，忽略（同 FinalAnswer 惯例）。
+ *   onEnterMultiSelect）：行为稳定（读 ref/setState），引用变化不影响渲染结果，忽略（同 FinalAnswer 惯例）。
  */
 function turnRowPropsEqual(prev: TurnRowProps, next: TurnRowProps): boolean {
 	// 流式 run：Live AnswerOutput 随 atom 更新；父级仍需在 isStreaming 边沿重渲染折叠态。
@@ -473,6 +469,7 @@ function turnRowPropsEqual(prev: TurnRowProps, next: TurnRowProps): boolean {
 		prev.showThinking === next.showThinking &&
 		prev.liveThinkingId === next.liveThinkingId &&
 		prev.agentRunning === next.agentRunning &&
-		prev.isLatestRun === next.isLatestRun
+		prev.isLatestRun === next.isLatestRun &&
+		prev.isLastAgentRun === next.isLastAgentRun
 	);
 }

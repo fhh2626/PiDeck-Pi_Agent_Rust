@@ -71,6 +71,8 @@ export const ipcChannels = {
 	sessionsRuntimeCompact: "sessions:runtime-compact",
 	sessionsRuntimeState: "sessions:runtime-state",
 	sessionsRuntimeCommands: "sessions:runtime-commands",
+	/** 运行中 Agent 启动快照里的模型（get_available_models），用于判断新加模型要不要重启。 */
+	sessionsRuntimeListModels: "sessions:runtime-list-models",
 	sessionsRuntimeExportHtml: "sessions:runtime-export-html",
 	sessionsRuntimeEditMessage: "sessions:runtime-edit-message",
 	sessionsRuntimeDeleteMessage: "sessions:runtime-delete-message",
