@@ -1710,6 +1710,7 @@ function registerIpc() {
 	registerGitIpc({
 		appLogger,
 		mainCopy: mainCopy as (key: string, params?: Record<string, string | number>) => string,
+		getLocale: currentMainProcessLocale,
 		gitService,
 		piLocator,
 		projectStore,

@@ -1,6 +1,10 @@
 import { ipcMain } from "electron";
 import { resolve } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
+import {
+	getDefaultGitCommitMessagePrompt,
+	resolveGitCommitMessagePromptLocale,
+} from "../../shared/gitCommitMessagePrompt";
 import { ipcChannels } from "../../shared/ipc";
 import type { GitGenerateCommitMessageResult, GitWorkspaceDiffGroup } from "../../shared/types";
 import type { GitService } from "../git/GitService";
@@ -14,6 +18,7 @@ import type { WorktreeService } from "../git/WorktreeService";
 export type GitIpcDeps = {
 	appLogger: Pick<AppLogger, "warn" | "info" | "error">;
 	mainCopy: (key: string, params?: Record<string, string | number>) => string;
+	getLocale: () => string;
 	gitService: GitService;
 	piLocator: PiLocator;
 	projectStore: ProjectStore;
@@ -216,6 +221,7 @@ async function quickGenerate(
 export function registerGitIpc({
 	appLogger,
 	mainCopy,
+	getLocale,
 	gitService,
 	piLocator,
 	projectStore,
@@ -537,8 +543,9 @@ export function registerGitIpc({
 			}
 
 			// 从设置中读取提示词模板，替换 {diff} 为实际 diff 内容
-			const promptTemplate = settings.gitCommitMessagePrompt ||
-				"请根据以下 git diff 生成一条中文 git commit message。\n\n{diff}\n\n直接输出 commit 消息。";
+			const promptTemplate = settings.gitCommitMessagePrompt || getDefaultGitCommitMessagePrompt(
+				resolveGitCommitMessagePromptLocale(getLocale()),
+			);
 			const prompt = promptTemplate.replace("{diff}", diff.slice(0, 8000));
 
 			try {
