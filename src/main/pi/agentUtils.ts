@@ -3,7 +3,43 @@
  * Phase 1.3: 从 AgentManager.ts 中提取，无副作用，不依赖实例状态。
  */
 
-import type { ChatMessage, Project } from "../../shared/types";
+import type { AvailableModel, ChatMessage, Project } from "../../shared/types";
+
+/** 校验 get_available_models RPC，避免把协议失败伪装成成功的空列表。 */
+export function parseAvailableModelsResponse(response: {
+	success: boolean;
+	data?: unknown;
+	error?: string;
+}): AvailableModel[] {
+	if (!response.success) {
+		throw new Error(response.error?.trim() || "get_available_models failed");
+	}
+	if (!response.data || typeof response.data !== "object" || Array.isArray(response.data)) return [];
+	const models = Reflect.get(response.data, "models");
+	if (!Array.isArray(models)) return [];
+
+	return models.flatMap((value): AvailableModel[] => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+		const id = Reflect.get(value, "id");
+		const provider = Reflect.get(value, "provider");
+		if (typeof id !== "string" || !id || typeof provider !== "string" || !provider) return [];
+
+		const name = Reflect.get(value, "name");
+		const contextWindow = Reflect.get(value, "contextWindow");
+		const maxTokens = Reflect.get(value, "maxTokens");
+		const reasoning = Reflect.get(value, "reasoning");
+		const images = Reflect.get(value, "images");
+		return [{
+			id,
+			provider,
+			...(typeof name === "string" ? { name } : {}),
+			...(typeof contextWindow === "number" && Number.isFinite(contextWindow) ? { contextWindow } : {}),
+			...(typeof maxTokens === "number" && Number.isFinite(maxTokens) ? { maxTokens } : {}),
+			...(typeof reasoning === "boolean" ? { reasoning } : {}),
+			...(typeof images === "boolean" ? { images } : {}),
+		}];
+	});
+}
 
 /** 去除 ANSI 转义码，用于清洗 thinking 中的终端颜色控制序列。 */
 export function stripAnsi(text: string): string {

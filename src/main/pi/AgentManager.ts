@@ -54,6 +54,7 @@ import {
 import { createCacheHitStatsReader, type CacheHitStats, type CacheHitStatsReader } from "./cacheHitStats";
 import {
 	stripAnsi,
+	parseAvailableModelsResponse,
 	pickNumber,
 	clampPercent,
 	trimHistoryMessages,
@@ -2017,7 +2018,7 @@ export class AgentManager {
 			{ type: "get_available_models" },
 			60_000,
 		);
-		return ((response.data as any)?.models ?? []) as AvailableModel[];
+		return parseAvailableModelsResponse(response);
 	}
 
 	async setModel(agentId: string, provider: string, modelId: string) {

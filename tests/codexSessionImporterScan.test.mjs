@@ -238,3 +238,28 @@ test("codex import: multi-hundred-MB session streams without loading it whole", 
 		rmSync(home, { recursive: true, force: true });
 	}
 });
+
+test("codex import: failed repeat import preserves the previous target atomically", async () => {
+	const home = mkdtempSync(join(tmpdir(), "codex-import-atomic-"));
+	try {
+		const project = join(home, "proj");
+		const sessions = join(home, ".codex", "sessions");
+		mkdirSync(sessions, { recursive: true });
+		const sourcePath = join(sessions, "repeat.jsonl");
+		writeFileSync(sourcePath, sessionJsonl("repeat", project));
+
+		const { CodexSessionImporter } = loadImporter(home);
+		const importer = new CodexSessionImporter();
+		const first = await importer.import(project, [sourcePath]);
+		assert.equal(first.results[0].success, true);
+		const targetPath = first.results[0].targetPath;
+		const previous = readFileSync(targetPath, "utf8");
+
+		writeFileSync(sourcePath, sessionJsonl("repeat", project) + "not-json\n");
+		const second = await importer.import(project, [sourcePath]);
+		assert.equal(second.results[0].success, false);
+		assert.equal(readFileSync(targetPath, "utf8"), previous);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});

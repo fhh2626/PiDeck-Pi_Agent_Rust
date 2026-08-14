@@ -36,6 +36,12 @@ export const SingleLinePreview = memo(function SingleLinePreview(props: {
 		const ro = new ResizeObserver(follow);
 		ro.observe(el);
 		return () => ro.disconnect();
+	}, [props.running]);
+
+	// 文本增量只更新滚动位置，不重复创建 ResizeObserver。
+	useEffect(() => {
+		const el = scrollRef.current;
+		if (el && props.running) el.scrollLeft = el.scrollWidth - el.clientWidth;
 	}, [props.running, summary]);
 
 	return (

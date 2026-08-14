@@ -87,7 +87,7 @@ export class PiLocator {
     const home = app.getPath("home");
     const appData = process.env.APPDATA ?? join(home, "AppData", "Roaming");
     const localAppData = process.env.LOCALAPPDATA ?? join(home, "AppData", "Local");
-    // mise 数据目录可被 MISE_DATA_DIR 覆盖（安装目录可再被 MISE_INSTALL_PATH 覆盖）。
+    // mise 数据目录可被 MISE_DATA_DIR 覆盖，工具版本目录由 MISE_INSTALLS_DIR 覆盖。
     // 只扫硬编码默认目录会漏掉自定义安装（如 D:\mise-data），且非 Windows 默认是
     // ~/.local/share/mise 而非 AppData；npm 全局 bin（pi.cmd）默认就装在
     // <mise 数据目录>/installs/node/<version>/ 下，与 node.exe 同目录。
@@ -96,7 +96,7 @@ export class PiLocator {
         ? join(localAppData, "mise")
         : join(home, ".local", "share", "mise")
     );
-    const miseInstallsDir = process.env.MISE_INSTALL_PATH || join(miseDataDir, "installs");
+    const miseInstallsDir = process.env.MISE_INSTALLS_DIR || join(miseDataDir, "installs");
     const dirs = [
       ...this.pathDirs(),
       join(appData, "npm"),

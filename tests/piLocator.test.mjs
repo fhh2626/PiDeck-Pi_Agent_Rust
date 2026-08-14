@@ -47,7 +47,7 @@ function loadPiLocatorModule(platform = process.platform, envOverrides = {}, hom
 	// 宿主开发机可能已设置 MISE_DATA_DIR 等变量（如 D:\mise-data），
 	// 未显式覆盖时剔除，保证每个用例从“干净环境”出发验证默认路径逻辑。
 	if (!("MISE_DATA_DIR" in envOverrides)) delete sandbox.process.env.MISE_DATA_DIR;
-	if (!("MISE_INSTALL_PATH" in envOverrides)) delete sandbox.process.env.MISE_INSTALL_PATH;
+	if (!("MISE_INSTALLS_DIR" in envOverrides)) delete sandbox.process.env.MISE_INSTALLS_DIR;
 	vm.runInNewContext(outputText, sandbox, {
 		filename: "PiLocator.ts",
 	});
@@ -105,7 +105,7 @@ test("uses the pi cmd shim bin directory as PATH prefix on Windows when node.exe
 	}
 });
 
-test("getSearchDirs honors MISE_DATA_DIR and MISE_INSTALL_PATH on Windows", () => {
+test("getSearchDirs honors MISE_DATA_DIR and MISE_INSTALLS_DIR on Windows", () => {
 	const root = join(tmpdir(), `pi-desktop-locator-mise-${process.pid}-${Date.now()}`);
 	const miseData = join(root, "mise-data");
 	const miseInstalls = join(root, "custom-installs");
@@ -116,7 +116,7 @@ test("getSearchDirs honors MISE_DATA_DIR and MISE_INSTALL_PATH on Windows", () =
 			"win32",
 			{
 				MISE_DATA_DIR: miseData,
-				MISE_INSTALL_PATH: miseInstalls,
+				MISE_INSTALLS_DIR: miseInstalls,
 				LOCALAPPDATA: join(root, "Local"),
 				APPDATA: join(root, "Roaming"),
 			},

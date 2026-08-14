@@ -1,8 +1,8 @@
 import { app } from "electron";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, open, readFile, readdir, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { mkdir, open, readFile, readdir, rename, stat, unlink } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import type {
 	CodexImportReport,
@@ -424,8 +424,15 @@ export class CodexSessionImporter {
 		let messageCount = 0;
 		let pendingThinking = "";
 
-		// 目标文件打开于 try 外，任何异常路径都由 finally 关闭
-		const handle = await open(targetPath, "w");
+		// 不能直接截断正式会话：源 JSONL 可能在转换中途损坏或磁盘写入失败。
+		// 先在同目录完整写入并落盘，再原子替换；失败时旧导入结果始终可用。
+		const tempPath = join(
+			dirname(targetPath),
+			`.${basename(targetPath)}.${process.pid}.${randomUUID()}.tmp`,
+		);
+		const handle = await open(tempPath, "wx");
+		let handleClosed = false;
+		let renamed = false;
 		// 1MB 写缓冲：巨型会话可达几十万行，逐行系统调用太慢
 		let writeBuffer = "";
 		const flushBuffer = async () => {
@@ -633,6 +640,11 @@ export class CodexSessionImporter {
 				cwd: projectPath,
 			});
 			await flushBuffer();
+			await handle.sync();
+			await handle.close();
+			handleClosed = true;
+			await rename(tempPath, targetPath);
+			renamed = true;
 
 			return {
 				title,
@@ -640,7 +652,8 @@ export class CodexSessionImporter {
 				messageCount,
 			};
 		} finally {
-			await handle.close();
+			if (!handleClosed) await handle.close().catch(() => undefined);
+			if (!renamed) await unlink(tempPath).catch(() => undefined);
 		}
 	}
 

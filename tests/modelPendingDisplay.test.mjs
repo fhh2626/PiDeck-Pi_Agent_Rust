@@ -81,6 +81,8 @@ test("契约: 生成中可选模型，快照内只记下一轮，新加模型仍
   // 本轮结束后套到仍活着的 Agent，避免同一会话下一轮仍用旧模型。
   assert.match(hook, /setRuntimeModel/);
   assert.match(hook, /needsRestart/);
+  assert.match(hook, /pendingModelRetryDelay/);
+  assert.match(hook, /setRetryRevision/);
 
   assert.match(ipc, /sessionsRuntimeListModels: "sessions:runtime-list-models"/);
   assert.match(sessionIpc, /ipcChannels\.sessionsRuntimeListModels/);
