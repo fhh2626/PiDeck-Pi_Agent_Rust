@@ -1,10 +1,5 @@
 # 更新日志
 
-完整更新日志仍维护在仓库根目录：
-
-- [中文 CHANGELOG](https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/blob/main/CHANGELOG.zh-CN.md)
-- [English CHANGELOG](https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/blob/main/CHANGELOG.md)
-
 ## v0.7.0
 
 发布时间：2026-08-11

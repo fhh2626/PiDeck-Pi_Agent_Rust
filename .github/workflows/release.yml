@@ -62,46 +62,9 @@ jobs:
           echo "ref=${REF}" >> $GITHUB_OUTPUT
           echo "target_commitish=${TARGET_COMMITISH}" >> $GITHUB_OUTPUT
 
-  extract-changelog:
-    name: Extract changelog
-    needs: resolve-version
-    runs-on: ubuntu-latest
-    outputs:
-      release_body: ${{ steps.changelog.outputs.body }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.resolve-version.outputs.ref || '' }}
-
-      - name: Extract changelog for this version
-        id: changelog
-        run: |
-          VERSION="${{ needs.resolve-version.outputs.version }}"
-          TAG="${{ needs.resolve-version.outputs.tag }}"
-          echo "Extracting changelog for v${VERSION}..."
-          
-          # 提取该版本的 changelog 内容
-          BODY=$(awk -v ver="v${VERSION}" '/^## v[0-9]/{if(found) exit; if($2==ver) found=1; next} found{print}' CHANGELOG.zh-CN.md)
-          if [ -z "$BODY" ]; then
-            BODY=$(awk -v ver="v${VERSION}" '/^## v[0-9]/{if(found) exit; if($2==ver) found=1; next} found{print}' CHANGELOG.md)
-          fi
-          
-          if [ -z "$BODY" ]; then
-            BODY="Release v${VERSION}"
-          fi
-          
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          echo "$BODY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          
-          echo "--- Changelog preview ---"
-          echo "$BODY"
-          echo "------------------------"
-
   build-release:
     name: Build ${{ matrix.name || matrix.platform }} packages
-    needs: [resolve-version, extract-changelog]
+    needs: [resolve-version]
     strategy:
       fail-fast: false
       matrix:
@@ -168,7 +131,7 @@ jobs:
           tag_name: ${{ needs.resolve-version.outputs.tag }}
           # 仅「留空 tag」模式有值，把 tag 指到本次构建的分支 HEAD；其它模式留空不覆盖
           target_commitish: ${{ needs.resolve-version.outputs.target_commitish }}
-          body: ${{ needs.extract-changelog.outputs.release_body }}
+          body: Release v${{ needs.resolve-version.outputs.version }}
           fail_on_unmatched_files: false
           draft: false
           files: |
