@@ -27,7 +27,7 @@ export const WebUserBubble = memo(function WebUserBubble(props: { message: UIMes
 		.join("");
 	if (!text.trim()) return null;
 	return (
-		<article className="user-turn group/user mb-4 flex w-full min-w-0 max-w-full flex-col items-end">
+		<article className="user-turn group/user flex w-full min-w-0 max-w-full flex-col items-end">
 			<div className="w-fit min-w-0 max-w-[min(82%,64ch)] rounded-[14px] border border-border bg-muted/60 px-3 py-2 text-sm text-foreground [overflow-wrap:anywhere] break-words">
 				<div className="text-chat leading-[1.6] text-text-primary whitespace-pre-wrap break-words">
 					{text}
@@ -48,10 +48,10 @@ export const WebThinkingBlock = memo(function WebThinkingBlock(props: {
 	const [expanded, setExpanded] = useState(false);
 	if (!props.text.trim()) return null;
 	return (
-		<TimelineMarker kind="thinking" tone="neutral">
+		<TimelineMarker kind="thinking" tone="neutral" contentClassName="pb-0">
 		<section className="w-full min-w-0 overflow-hidden rounded-md border-0">
 			<button
-				className="flex min-h-8 w-full cursor-pointer items-center gap-2 border-0 bg-transparent p-1.5 pl-2.5 text-left text-control leading-5 text-text-secondary transition-colors duration-150 hover:bg-[color:color-mix(in_srgb,var(--color-bg-hover)_50%,var(--color-bg))] focus-visible:-outline-offset-2 focus-visible:outline-2 [&_svg]:shrink-0 [&_svg]:text-[var(--color-info)]"
+				className="flex min-h-6 w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-2 py-0.5 text-left text-control leading-5 text-text-secondary transition-colors duration-150 hover:bg-[color:color-mix(in_srgb,var(--color-bg-hover)_50%,var(--color-bg))] focus-visible:-outline-offset-2 focus-visible:outline-2 [&_svg]:shrink-0 [&_svg]:text-[var(--color-info)]"
 				onClick={() => setExpanded((value) => !value)}
 				aria-expanded={expanded}
 			>
@@ -124,7 +124,11 @@ export const WebToolCard = memo(function WebToolCard(props: { part: WebToolPart 
 	const error = state === "output-error" || state === "error" || Boolean(part.errorText);
 	const preview = formatToolPreview(error ? part.errorText : running ? part.input : part.output);
 	return (
-		<TimelineMarker kind="tool" tone={error ? "error" : running ? "active" : "success"}>
+		<TimelineMarker
+			kind="tool"
+			tone={error ? "error" : running ? "active" : "success"}
+			contentClassName="pb-0"
+		>
 		<section
 			className={cn(
 				"tool-card inline-flex w-fit max-w-full min-w-0 overflow-hidden rounded-md border border-border-subtle bg-bg-panel transition-[border-color,background-color] duration-150",
@@ -134,7 +138,7 @@ export const WebToolCard = memo(function WebToolCard(props: { part: WebToolPart 
 			data-status={error ? "error" : running ? "running" : "done"}
 			data-tool-name={toolName}
 		>
-			<div className="flex min-h-8 max-w-full items-center p-1.5 pl-2.5">
+			<div className="flex min-h-6 max-w-full items-center px-2 py-0.5">
 				<span className="tool-card-trigger flex min-w-0 max-w-full items-center gap-2 text-control leading-5 text-text-secondary">
 					<span className="tool-card-icon">
 						<Wrench size={14} aria-hidden="true" />
@@ -267,7 +271,7 @@ export function WebTimeline(props: {
 			ref={timelineRef}
 			onScroll={updateScrollState}
 		>
-			<div className="message-list flex flex-col gap-4 p-4">
+			<div className="message-list flex flex-col gap-2 p-4">
 				{!hasActiveSession && messages.length === 0 ? (
 					<div className="empty-state">
 						<div className="empty-logo">
@@ -291,7 +295,7 @@ export function WebTimeline(props: {
 				) : (
 					<>
 						{messages.map((message) => (
-							<div key={message.id}>
+							<div key={message.id} className="mt-0">
 								{message.role === "user" ? (
 									<WebUserBubble message={message} />
 								) : (
@@ -309,7 +313,7 @@ export function WebTimeline(props: {
 
 				{/* 流式响应指示器 */}
 				{streaming && (
-					<div className="responding-indicator" data-kind="waiting">
+					<div className="responding-indicator mt-0" data-kind="waiting">
 						<span className="responding-indicator-dots flex gap-1" aria-hidden="true">
 							<span className="size-1.5 rounded-full" />
 							<span className="size-1.5 rounded-full" />
@@ -321,7 +325,7 @@ export function WebTimeline(props: {
 
 				{/* 错误诊断卡 */}
 				{error ? (
-					<div className="diagnostic-card tone-error p-3 text-control text-danger">
+					<div className="diagnostic-card tone-error mt-0 p-3 text-control text-danger">
 						{error}
 					</div>
 				) : null}

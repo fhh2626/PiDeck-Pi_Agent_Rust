@@ -64,6 +64,15 @@ test("Web tool cards stay compact and keep a visible settled status", () => {
 	assert.match(webTimeline, /formatToolPreview/);
 });
 
+test("Web timeline does not double-space tool and thinking steps", () => {
+	assert.match(webTimeline, /message-list flex flex-col gap-2 p-4/);
+	assert.match(webTimeline, /<div key=\{message\.id\} className="mt-0">/);
+	assert.doesNotMatch(webTimeline, /user-turn group\/user mb-4/);
+	assert.match(webTimeline, /<TimelineMarker kind="thinking" tone="neutral" contentClassName="pb-0">/);
+	assert.match(webTimeline, /<TimelineMarker[\s\S]*?kind="tool"[\s\S]*?contentClassName="pb-0"/);
+	assert.match(webTimeline, /flex min-h-6 max-w-full items-center px-2 py-0\.5/);
+});
+
 test("Project actions are sibling buttons instead of nested controls", () => {
 	assert.match(webSidebar, /project-row-actions[\s\S]*?<Button/);
 	assert.doesNotMatch(webSidebar, /project-row-actions[\s\S]*?<span[\s\S]*?role="button"/);
