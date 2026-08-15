@@ -46,6 +46,7 @@ export class PiEventToUiMessageStream {
 	private textBlockId: string | null = null;
 	private reasoningBlockId: string | null = null;
 	private currentMessageId: string | null = null;
+	private lastPiMessageId: string | null = null;
 	private readonly knownToolCallIds = new Set<string>();
 	private finished = false;
 
@@ -61,11 +62,20 @@ export class PiEventToUiMessageStream {
 		if (type === "message_start") {
 			const role = event.message?.role;
 			if (role === "assistant") {
-				this.finished = false;
-				this.currentMessageId = String(
-					(event.message?.id as string | undefined) ?? `msg_${Date.now()}`,
-				);
-				frames.push({ type: "start", messageId: this.currentMessageId });
+				const incomingId = typeof event.message?.id === "string"
+					? event.message.id
+					: this.currentMessageId ?? `msg_${Date.now()}`;
+				if (this.currentMessageId === null) {
+					this.currentMessageId = incomingId;
+					this.lastPiMessageId = incomingId;
+					frames.push({ type: "start", messageId: this.currentMessageId });
+				} else if (incomingId !== this.lastPiMessageId) {
+					this.lastPiMessageId = incomingId;
+					// 一个 agent run 可能包含多个 assistant 段（工具调用前后、自动重试）。
+					// AI SDK 的一个 POST 响应应保持一条 UIMessage；新的 pi message
+					// 只能作为同一条消息的新 step，否则 useChat 会渲染重复回复。
+					frames.push({ type: "start-step" });
+				}
 			}
 			return frames;
 		}

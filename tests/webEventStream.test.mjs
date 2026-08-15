@@ -174,6 +174,27 @@ test("message_update.done closes the current block but not the whole run", () =>
 	assert.equal(adapter.push({ type: "agent_settled" }).at(-1).type, "finish");
 });
 
+test("multiple assistant message starts stay in one UI message with step boundaries", () => {
+	const adapter = new PiEventToUiMessageStream();
+	const first = adapter.push({
+		type: "message_start",
+		message: { role: "assistant", id: "assistant-1" },
+	});
+	const second = adapter.push({
+		type: "message_start",
+		message: { role: "assistant", id: "assistant-2" },
+	});
+	const repeated = adapter.push({
+		type: "message_start",
+		message: { role: "assistant", id: "assistant-2" },
+	});
+
+	assert.equal(first[0].type, "start");
+	assert.equal(first[0].messageId, "assistant-1");
+	assert.equal(second[0].type, "start-step");
+	assert.equal(repeated.length, 0);
+});
+
 test("finish() closes open text/reasoning blocks", () => {
 	const adapter = new PiEventToUiMessageStream();
 	adapter.push({
