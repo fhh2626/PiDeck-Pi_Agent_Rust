@@ -9,6 +9,11 @@ import {
 } from "../../shared/gitCommitMessagePrompt";
 import { createDefaultExternalEditorSettings, type AppSettings } from "../../shared/types";
 import { getAppLogger } from "../logging/sharedLogger";
+import {
+	BUILT_IN_EXTENSION_DEFAULTS_VERSION,
+	DEFAULT_DISABLED_BUILT_IN_EXTENSIONS,
+	migrateBuiltInExtensionDefaults,
+} from "../extensions/builtInExtensions";
 
 /** 桌面端 settings.json（userData），与 pi agent settings 分离 */
 function desktopSettingsPath() {
@@ -136,7 +141,8 @@ const defaultSettings: AppSettings = {
 
   // ── 扩展管理 ──
   /** 用户手动移除的内置扩展，启动时跳过自动部署 */
-  removedBuiltInExtensions: [],
+  removedBuiltInExtensions: [...DEFAULT_DISABLED_BUILT_IN_EXTENSIONS],
+  builtInExtensionDefaultsVersion: BUILT_IN_EXTENSION_DEFAULTS_VERSION,
   /** 用户删除的内置 Prompt 模板名称；找回默认模板时清空 */
   hiddenBuiltinPromptNames: [],
 
@@ -171,6 +177,7 @@ export class SettingsStore {
   private settings: AppSettings = { ...defaultSettings };
 
   async load() {
+    let migratedBuiltInExtensionDefaults = false;
     try {
       const raw = await readFile(this.filePath, "utf8");
       // 磁盘 JSON 无类型；旧版匿名统计字段只读兼容，加载时剥离后不再写回。
@@ -194,6 +201,13 @@ export class SettingsStore {
           ...(parsed.externalEditors ?? {}),
         },
       };
+      const migratedBuiltIns = migrateBuiltInExtensionDefaults(
+        this.settings.removedBuiltInExtensions,
+        parsed.builtInExtensionDefaultsVersion,
+      );
+      this.settings.removedBuiltInExtensions = migratedBuiltIns.removedBuiltInExtensions;
+      this.settings.builtInExtensionDefaultsVersion = migratedBuiltIns.version;
+      migratedBuiltInExtensionDefaults = migratedBuiltIns.migrated;
       const migratedGitCommitMessagePrompt = this.applyLocalizedDefaultGitCommitMessagePrompt(parsed);
       // 兼容迁移：内置 CommitMono 字体已移除（打包瘦身），旧设置里的 "commit-mono"
       // 不再存在于 AppFontMonoMode 枚举，统一回退到系统等宽字体，避免类型漂移。
@@ -206,7 +220,7 @@ export class SettingsStore {
       // 语义从「最大宽度 px」变为「占面板百分比」，无法精确换算（面板宽度可变），
       // 用线性映射保留旧值感觉：800→60%、1400→84%、1800(不限)→100%。
       this.migrateContentWidth();
-      if (hadLegacyTelemetry || migratedGitCommitMessagePrompt) {
+      if (hadLegacyTelemetry || migratedGitCommitMessagePrompt || migratedBuiltInExtensionDefaults) {
         void this.save().catch(() => undefined);
       }
     } catch {

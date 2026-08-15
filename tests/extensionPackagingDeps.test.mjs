@@ -56,3 +56,14 @@ test("extension runtime deps are packaged next to extensions", () => {
 		);
 	}
 });
+
+test("pi-better-compaction keeps its relative runtime files in extraResources", () => {
+	const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+	const resource = (pkg.build?.extraResources ?? []).find(
+		(entry) => entry.from === "resources/extensions/pi-better-compaction",
+	);
+	assert.deepEqual(resource?.filter, ["**/*.ts", "LICENSE"]);
+	assert.equal(resource?.to, "extensions/pi-better-compaction");
+	assert.ok(existsSync(join("resources", "extensions", "pi-better-compaction", "extension-runtime.ts")));
+	assert.ok(existsSync(join("resources", "extensions", "pi-better-compaction", "LICENSE")));
+});

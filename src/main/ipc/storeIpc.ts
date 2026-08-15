@@ -17,6 +17,7 @@ import type { PromptManager } from "../prompts/PromptManager";
 import type { SkillManager } from "../skills/SkillManager";
 import type { XuePromptManager } from "../prompts/XuePromptManager";
 import type { ExtensionManager } from "../extensions/ExtensionManager";
+import { isBuiltInExtensionName } from "../extensions/builtInExtensions";
 import { createUniquePrompt } from "../prompts/createUniquePrompt";
 import { isPromptAlreadyExistsError } from "../prompts/PromptManager";
 
@@ -440,7 +441,7 @@ export function registerStoreIpc({
 	});
 	ipcMain.handle(ipcChannels.extensionsToggle, async (_event, source: string, enabled: boolean) => {
 		// 内置扩展走 removedBuiltInExtensions + RPC -e，不再写用户扩展目录 / pi disabledExtensions。
-		if (source.startsWith("pi-deck-") && source.endsWith(".ts")) {
+		if (isBuiltInExtensionName(source)) {
 			if (enabled) await extensionManager.restoreBuiltIn(source);
 			else await extensionManager.disableBuiltIn(source);
 		} else {

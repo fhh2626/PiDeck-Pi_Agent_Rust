@@ -8,7 +8,7 @@ import type { AppSettings, PiCliUpdateResult, PiExtensionListResult, PiExtension
 import type { PiLocator } from "../pi/PiLocator";
 import { toWindowsHostPath, type WslEnvironment } from "../wsl/WslPaths";
 import type { MainProcessTranslationKey } from "../../shared/i18n/mainProcessCopy";
-import { BUILT_IN_EXTENSIONS } from "./builtInExtensions";
+import { BUILT_IN_EXTENSIONS, isBuiltInExtensionName } from "./builtInExtensions";
 import { detectPiRuntimeKind } from "../../shared/piCompatibility";
 
 export { BUILT_IN_EXTENSIONS } from "./builtInExtensions";
@@ -223,7 +223,7 @@ export class ExtensionManager {
 
 		// 已标记移除但磁盘仍有残留时主动清掉，修复「UI 已禁用但仍冲突」的历史状态。
 		for (const builtInName of removedBuiltIn) {
-			if (!builtInName.startsWith("pi-deck-")) continue;
+			if (!isBuiltInExtensionName(builtInName)) continue;
 			await this.removeBuiltInFile(builtInName).catch(() => undefined);
 		}
 
@@ -268,7 +268,7 @@ export class ExtensionManager {
 				}
 			}
 
-			const isBuiltIn = name.startsWith("pi-deck-");
+			const isBuiltIn = isBuiltInExtensionName(source);
 			result.push({
 				id: `local:${source}`,
 				source,
@@ -323,18 +323,18 @@ export class ExtensionManager {
 
 	/**
 	 * 删除用户扩展目录中的内置扩展文件。
-	 * 只允许 pi-deck-* 单层 basename，防止路径穿越。
+	 * 只允许当前内置白名单中的单层 basename，防路径穿越。
 	 * force: 文件本就不存在时静默成功（幂等，适合启动残留清理）。
 	 */
 	async removeBuiltInFile(source: string): Promise<void> {
 		const extensionsDir = join(this.homeDir, ".pi", "agent", "extensions");
 		const trimmed = source.trim();
 		const name = basename(trimmed);
-		if (!name || name !== trimmed || !name.startsWith("pi-deck-") || name === "." || name === "..") {
+		if (!name || name !== trimmed || !isBuiltInExtensionName(name)) {
 			throw new Error("非法内置扩展路径");
 		}
 		await rm(join(extensionsDir, name), { force: true });
-		// 启动残留清理的硬删（非用户主动删除，仅限 pi-deck-* 内置白名单）：记日志便于审计。
+		// 启动残留清理的硬删仅限内置白名单，记日志便于审计。
 		getAppLogger()?.info("extension", "Built-in extension file removed", { name, path: join(extensionsDir, name) });
 	}
 
@@ -348,7 +348,7 @@ export class ExtensionManager {
 	 */
 	async disableBuiltIn(source: string): Promise<void> {
 		const normalized = source.trim();
-		if (!normalized.startsWith("pi-deck-")) {
+		if (!isBuiltInExtensionName(normalized)) {
 			throw new Error("只能操作内置扩展");
 		}
 		const current = this.getPiDeckSettings().removedBuiltInExtensions ?? [];
@@ -362,7 +362,7 @@ export class ExtensionManager {
 
 	async removeBuiltIn(source: string): Promise<void> {
 		const normalized = source.trim();
-		if (!normalized.startsWith("pi-deck-")) {
+		if (!isBuiltInExtensionName(normalized)) {
 			throw new Error("只能操作内置扩展");
 		}
 		await this.disableBuiltIn(normalized);
@@ -374,6 +374,9 @@ export class ExtensionManager {
 	 */
 	async restoreBuiltIn(source: string): Promise<void> {
 		const normalized = source.trim();
+		if (!isBuiltInExtensionName(normalized)) {
+			throw new Error("只能操作内置扩展");
+		}
 		const current = this.getPiDeckSettings().removedBuiltInExtensions ?? [];
 		const next = current.filter((s) => s !== normalized);
 		if (next.length === current.length) return;
@@ -386,8 +389,8 @@ export class ExtensionManager {
 	async uninstall(source: string, scope: PiExtensionSummary["scope"] = "user"): Promise<void> {
 		const normalized = source.trim();
 		if (!normalized) throw new Error(this.translate("mainExtension.sourceRequired"));
-		// 阻止卸载 PiDeck 内置扩展（如 pi-deck-file-capture）
-		if (normalized.startsWith("pi-deck-")) {
+		// 阻止卸载内置扩展；同时保留对历史 pi-deck-* 名称的保护。
+		if (isBuiltInExtensionName(normalized) || normalized.startsWith("pi-deck-")) {
 			throw new Error(this.translate("mainExtension.builtInCannotUninstall"));
 		}
 		// 本地 .ts/目录扩展不在 pi package 列表里，pi remove 会报 No matching package；

@@ -242,6 +242,8 @@ export type StartupWindowMode =
 	 * 下次启动跳过自动部署，并清理用户目录残留文件，避免 pi 仍加载导致工具冲突。
 	 */
 	removedBuiltInExtensions: string[];
+	/** 内置扩展默认值迁移版本；仅用于保证新增的默认关闭扩展不影响老配置。 */
+	builtInExtensionDefaultsVersion?: number;
 
 	/**
 	 * 用户从设置页删除的内置 Prompt 模板名称（如 commit、review）。

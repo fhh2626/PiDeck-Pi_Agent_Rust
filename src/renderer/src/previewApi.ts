@@ -146,7 +146,7 @@ let previewSettings: AppSettings = {
 	fontFamilyBaseCustom: "",
 	fontFamilyMono: "system-mono",
 	fontFamilyMonoCustom: "",
-	removedBuiltInExtensions: [],
+	removedBuiltInExtensions: ["pi-better-compaction.ts"],
 	hiddenBuiltinPromptNames: [],
 	disableUpdateCheck: false,
 	piRpcOffline: true,

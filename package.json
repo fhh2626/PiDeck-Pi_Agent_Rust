@@ -126,6 +126,14 @@
         ]
       },
       {
+        "from": "resources/extensions/pi-better-compaction",
+        "to": "extensions/pi-better-compaction",
+        "filter": [
+          "**/*.ts",
+          "LICENSE"
+        ]
+      },
+      {
         "from": "node_modules/undici",
         "to": "extensions/node_modules/undici"
       },
