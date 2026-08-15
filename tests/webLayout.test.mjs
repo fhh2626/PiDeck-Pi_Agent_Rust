@@ -6,6 +6,8 @@ const webCss = readFileSync("src/renderer/src/web/web.css", "utf8");
 const webSidebar = readFileSync("src/renderer/src/web/WebSidebar.tsx", "utf8");
 const webHeader = readFileSync("src/renderer/src/web/WebHeader.tsx", "utf8");
 const webChatApp = readFileSync("src/renderer/src/web/WebChatApp.tsx", "utf8");
+const webComposer = readFileSync("src/renderer/src/web/WebComposer.tsx", "utf8");
+const webHtml = readFileSync("src/renderer/web.html", "utf8");
 
 test("Web shell keeps sidebar and chat pane in a horizontal split", () => {
 	assert.match(
@@ -58,4 +60,28 @@ test("Web starts with no selected session and exposes a scroll-to-bottom action"
 test("Project actions are sibling buttons instead of nested controls", () => {
 	assert.match(webSidebar, /project-row-actions[\s\S]*?<Button/);
 	assert.doesNotMatch(webSidebar, /project-row-actions[\s\S]*?<span[\s\S]*?role="button"/);
+});
+
+test("Web shell tracks the visual viewport so mobile chrome cannot crop the header or composer", () => {
+	assert.match(webChatApp, /visualViewport/);
+	assert.match(webChatApp, /--web-viewport-height/);
+	assert.match(webChatApp, /--web-viewport-width/);
+	assert.match(webChatApp, /--web-viewport-offset-left/);
+	assert.match(webChatApp, /--web-viewport-offset-top/);
+	assert.match(webChatApp, /offsetLeft/);
+	assert.match(webChatApp, /offsetTop/);
+	assert.match(webCss, /position:\s*fixed/);
+	assert.match(webCss, /--web-viewport-width/);
+	assert.match(webCss, /--web-viewport-offset-left/);
+	assert.match(webCss, /--web-viewport-offset-top/);
+	assert.match(webCss, /height:\s*100dvh/);
+	assert.match(webCss, /--web-viewport-height/);
+	assert.match(webCss, /safe-area-inset-top/);
+	assert.match(webCss, /safe-area-inset-bottom/);
+	assert.match(webCss, /@media\s*\(max-width:\s*900px\)/);
+	assert.match(webCss, /\.chat-list-pane[\s\S]*height:\s*var\(--web-viewport-height/);
+	assert.match(webCss, /\.mobile-sidebar-backdrop[\s\S]*height:\s*var\(--web-viewport-height/);
+	assert.match(webComposer, /composer[\s\S]*shrink-0/);
+	assert.match(webCss, /\.app\.wechat-shell\s*>\s*\.chat-pane\s*>\s*\.composer[\s\S]*margin-bottom:\s*0/);
+	assert.match(webHtml, /viewport-fit=cover/);
 });

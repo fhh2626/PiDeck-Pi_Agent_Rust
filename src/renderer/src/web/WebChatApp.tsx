@@ -59,6 +59,37 @@ export function WebChatApp() {
 	// 手机端默认把聊天作为主画面，项目树通过抽屉按需打开，避免列表占满首屏。
 	const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
+	// Mobile Safari/Chrome keep 100vh on the layout viewport. The address bar and
+	// keyboard change visualViewport metrics; syncing the whole rectangle keeps
+	// the shell and its drawer aligned with what the user can actually see.
+	useEffect(() => {
+		const updateViewportMetrics = () => {
+			const viewport = window.visualViewport;
+			const height = viewport?.height ?? window.innerHeight;
+			const width = viewport?.width ?? window.innerWidth;
+			const offsetTop = Math.max(0, viewport?.offsetTop ?? 0);
+			const offsetLeft = Math.max(0, viewport?.offsetLeft ?? 0);
+			document.documentElement.style.setProperty("--web-viewport-height", `${height}px`);
+			document.documentElement.style.setProperty("--web-viewport-width", `${width}px`);
+			document.documentElement.style.setProperty("--web-viewport-offset-left", `${offsetLeft}px`);
+			document.documentElement.style.setProperty("--web-viewport-offset-top", `${offsetTop}px`);
+		};
+		const viewport = window.visualViewport;
+		updateViewportMetrics();
+		viewport?.addEventListener("resize", updateViewportMetrics);
+		viewport?.addEventListener("scroll", updateViewportMetrics);
+		window.addEventListener("resize", updateViewportMetrics);
+		return () => {
+			viewport?.removeEventListener("resize", updateViewportMetrics);
+			viewport?.removeEventListener("scroll", updateViewportMetrics);
+			window.removeEventListener("resize", updateViewportMetrics);
+			document.documentElement.style.removeProperty("--web-viewport-height");
+			document.documentElement.style.removeProperty("--web-viewport-width");
+			document.documentElement.style.removeProperty("--web-viewport-offset-left");
+			document.documentElement.style.removeProperty("--web-viewport-offset-top");
+		};
+	}, []);
+
 	// ── 本组件自持的 per-session 消息缓存（useChat 切换 id 会重建 Chat 实例） ──
 	const messagesBySessionRef = useRef<Record<string, UIMessage[]>>({});
 	const loadedSessionsRef = useRef<Set<string>>(new Set());
@@ -376,7 +407,7 @@ export function WebChatApp() {
 		: 0;
 
 	return (
-		<div className="app wechat-shell flex h-screen w-full min-w-0 overflow-hidden bg-background text-foreground">
+		<div className="app wechat-shell flex h-full w-full min-w-0 overflow-hidden bg-background text-foreground">
 			<WebSidebar
 				state={state}
 				activeSessionId={activeSessionId}

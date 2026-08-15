@@ -28,7 +28,7 @@ export function WebComposer(props: {
 
 	return (
 		<form
-			className="composer w-full min-w-0 flex-col gap-2 bg-background px-3 pb-3"
+			className="composer w-full min-w-0 shrink-0 flex-col gap-2 bg-background px-3 pb-3"
 			onSubmit={(event) => {
 				event.preventDefault();
 				submit();

@@ -2,9 +2,22 @@
  * web.css — Web 端专用布局覆盖。
  *
  * 基础布局在 WebChatApp 用 flex 完成（桌面三栏风格：侧栏 + 主区），
- * 这里只补移动端（≤760px）断点：聊天作为主画面，项目树改为可关闭抽屉，
- * 与旧 A1/A2 的 760px 断点语义保持一致。
+ * 这里只补移动端/窄平板断点：聊天作为主画面，项目树改为可关闭抽屉。
+ * 视口高度使用 visualViewport + 100dvh，避免移动浏览器地址栏变化时裁掉首尾。
  */
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
 
 /* 桌面遗留的「整行按压缩放」反馈（foundation.css 的
    .project-group > .conversation:first-child:active 会 scale(0.985)）：
@@ -16,9 +29,26 @@
 }
 
 /* Web 页面复用了桌面 .wechat-shell，但这里是二栏布局；桌面默认纵向 flex 会把 chat-pane 挤出视口。 */
+/* Pin the Web shell to the visual viewport rectangle. Height-only 100vh/100dvh
+   still leaves the page glued to the layout viewport, so iOS/Android address-bar
+   or keyboard panning crops either the header or the composer. */
 .app.wechat-shell {
+  position: fixed;
+  top: var(--web-viewport-offset-top, 0px);
+  left: var(--web-viewport-offset-left, 0px);
+  right: auto;
   flex-direction: row;
+  width: var(--web-viewport-width, 100vw);
+  height: var(--web-viewport-height, 100vh);
+  min-height: 0;
 }
+
+@supports (height: 100dvh) {
+  .app.wechat-shell {
+    height: var(--web-viewport-height, 100dvh);
+  }
+}
+
 .app.wechat-shell > .chat-list-pane {
   flex: 0 0 280px;
   width: 280px;
@@ -27,6 +57,18 @@
 .app.wechat-shell > .chat-pane {
   flex: 1 1 0;
   min-width: 0;
+  min-height: 0;
+  height: auto;
+}
+
+.app.wechat-shell > .chat-pane > .composer {
+  flex: 0 0 auto;
+  min-height: 0;
+  margin-bottom: 0;
+}
+
+.app.wechat-shell .chat-header {
+  flex: 0 0 auto;
   min-height: 0;
 }
 
@@ -37,16 +79,19 @@
   display: none;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .app.wechat-shell {
     flex-direction: row;
   }
   .app.wechat-shell > .chat-list-pane {
     position: fixed;
-    inset: 0 auto 0 0;
+    top: var(--web-viewport-offset-top, 0px);
+    left: var(--web-viewport-offset-left, 0px);
+    bottom: auto;
+    right: auto;
     z-index: 50;
     width: min(88vw, 320px);
-    height: 100%;
+    height: var(--web-viewport-height, 100vh);
     max-height: none;
     min-height: 0;
     flex: 0 0 auto;
@@ -70,10 +115,12 @@
   }
   .mobile-sidebar-backdrop {
     position: fixed;
-    inset: 0;
+    top: var(--web-viewport-offset-top, 0px);
+    left: var(--web-viewport-offset-left, 0px);
     z-index: 40;
     display: block;
-    width: 100%;
+    width: var(--web-viewport-width, 100vw);
+    height: var(--web-viewport-height, 100vh);
     border: 0;
     padding: 0;
     background: rgb(0 0 0 / 32%);
@@ -87,10 +134,17 @@
   }
   .app.wechat-shell .chat-header {
     align-items: flex-start;
+    padding-top: max(0.5rem, env(safe-area-inset-top));
   }
   .app.wechat-shell .chat-header-actions {
+    flex: 1 1 100%;
     width: 100%;
+    min-height: 32px;
+    flex-wrap: nowrap;
     justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 1px;
   }
   .app.wechat-shell .project-row-actions .project-action {
     min-width: 32px;
@@ -102,7 +156,7 @@
   .app.wechat-shell .composer {
     padding-right: 8px;
     padding-left: 8px;
-    padding-bottom: 8px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
   }
   .app.wechat-shell .composer-box {
     min-height: 6rem;
