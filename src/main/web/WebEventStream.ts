@@ -29,7 +29,12 @@ export type PiEvent = {
 	// tool_execution_*
 	toolName?: string;
 	toolCallId?: string;
+	tool_call_id?: string;
+	id?: string;
 	args?: unknown;
+	input?: unknown;
+	output?: unknown;
+	result?: unknown;
 	isError?: boolean;
 	// agent_end
 	stopReason?: string;
@@ -41,6 +46,7 @@ export class PiEventToUiMessageStream {
 	private textBlockId: string | null = null;
 	private reasoningBlockId: string | null = null;
 	private currentMessageId: string | null = null;
+	private readonly knownToolCallIds = new Set<string>();
 	private finished = false;
 
 	/**
@@ -157,31 +163,20 @@ export class PiEventToUiMessageStream {
 
 		// 工具调用（message_update 路径：toolcall_start / toolcall_end）。
 		if (eventType === "toolcall_start") {
-			const toolCall = ev.toolCall as Record<string, unknown> | undefined;
-			if (toolCall && typeof toolCall.id === "string" && typeof toolCall.name === "string") {
-				frames.push({
-					type: "tool-input-start",
-					toolCallId: toolCall.id,
-					toolName: toolCall.name,
-				});
-				frames.push({
-					type: "tool-input-available",
-					toolCallId: toolCall.id,
-					toolName: toolCall.name,
-					input: toolCall.input ?? {},
-				});
-			}
-			return frames;
+			const toolCall = this.readToolCall(ev);
+			return toolCall
+				? this.ensureToolInput(toolCall.id, toolCall.name, toolCall.input)
+				: frames;
 		}
 		if (eventType === "toolcall_end") {
-			const toolCall = ev.toolCall as Record<string, unknown> | undefined;
-			if (toolCall && typeof toolCall.id === "string") {
-				frames.push({
-					type: "tool-output-available",
-					toolCallId: toolCall.id,
-					output: toolCall.output ?? {},
-				});
-			}
+			const toolCall = this.readToolCall(ev);
+			if (!toolCall) return frames;
+			frames.push(...this.ensureToolInput(toolCall.id, toolCall.name, toolCall.input));
+			frames.push({
+				type: "tool-output-available",
+				toolCallId: toolCall.id,
+				output: toolCall.output,
+			});
 			return frames;
 		}
 
@@ -196,21 +191,59 @@ export class PiEventToUiMessageStream {
 
 	private startTool(event: PiEvent): UiMessageStreamFrame[] {
 		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
-		const toolCallId = typeof event.toolCallId === "string"
-			? event.toolCallId
-			: `tool_${toolName}_${Date.now()}`;
-		return [
-			{ type: "tool-input-start", toolCallId, toolName },
-			{ type: "tool-input-available", toolCallId, toolName, input: event.args ?? {} },
-		];
+		const toolCallId = this.readToolCallId(event) ?? `tool_${toolName}_${Date.now()}`;
+		return this.ensureToolInput(toolCallId, toolName, event.args ?? event.input ?? {});
 	}
 
 	private endTool(event: PiEvent): UiMessageStreamFrame[] {
-		const toolCallId = typeof event.toolCallId === "string"
-			? event.toolCallId
-			: undefined;
+		const toolCallId = this.readToolCallId(event);
 		if (!toolCallId) return [];
-		return [{ type: "tool-output-available", toolCallId, output: event.isError ? { error: true } : {} }];
+		const frames = this.ensureToolInput(
+			toolCallId,
+			typeof event.toolName === "string" ? event.toolName : "tool",
+			event.args ?? event.input ?? {},
+		);
+		frames.push({
+			type: "tool-output-available",
+			toolCallId,
+			output: event.isError ? { error: true } : event.result ?? event.output ?? {},
+		});
+		return frames;
+	}
+
+	private readToolCallId(event: PiEvent): string | undefined {
+		const value = event.toolCallId ?? event.tool_call_id ?? event.id;
+		return typeof value === "string" && value.trim() ? value : undefined;
+	}
+
+	private readToolCall(event: Record<string, unknown>): {
+		id: string;
+		name: string;
+		input: unknown;
+		output: unknown;
+	} | undefined {
+		const nested = event.toolCall;
+		const toolCall = nested && typeof nested === "object" && !Array.isArray(nested)
+			? nested as Record<string, unknown>
+			: event;
+		const id = toolCall.id ?? toolCall.toolCallId ?? toolCall.tool_call_id;
+		if (typeof id !== "string" || !id.trim()) return undefined;
+		const name = typeof toolCall.name === "string" ? toolCall.name : "tool";
+		return {
+			id,
+			name,
+			input: toolCall.input ?? toolCall.arguments ?? {},
+			output: toolCall.output ?? toolCall.result ?? {},
+		};
+	}
+
+	private ensureToolInput(toolCallId: string, toolName: string, input: unknown): UiMessageStreamFrame[] {
+		if (this.knownToolCallIds.has(toolCallId)) return [];
+		this.knownToolCallIds.add(toolCallId);
+		return [
+			{ type: "tool-input-start", toolCallId, toolName },
+			{ type: "tool-input-available", toolCallId, toolName, input: input ?? {} },
+		];
 	}
 
 	private finishMessage(event: PiEvent): UiMessageStreamFrame[] {

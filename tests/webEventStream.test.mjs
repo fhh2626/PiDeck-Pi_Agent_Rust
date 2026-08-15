@@ -103,6 +103,38 @@ test("tool_execution_start/end produces tool-input-available and tool-output-ava
 	assert.equal(end[0].toolCallId, "call_1");
 });
 
+test("late tool output backfills the missing invocation before updating it", () => {
+	const adapter = new PiEventToUiMessageStream();
+	const frames = adapter.push({
+		type: "tool_execution_end",
+		toolName: "bash",
+		toolCallId: "late-call",
+		isError: false,
+	});
+
+	assert.equal(frames[0].type, "tool-input-start");
+	assert.equal(frames[1].type, "tool-input-available");
+	assert.equal(frames[2].type, "tool-output-available");
+	assert.equal(frames[0].toolCallId, "late-call");
+	assert.equal(frames[2].toolCallId, "late-call");
+});
+
+test("message toolcall_end also backfills a missing invocation", () => {
+	const adapter = new PiEventToUiMessageStream();
+	const frames = adapter.push({
+		type: "message_update",
+		assistantMessageEvent: {
+			type: "toolcall_end",
+			toolCall: { id: "late-message-call", output: { ok: true } },
+		},
+	});
+
+	assert.equal(frames[0].type, "tool-input-start");
+	assert.equal(frames[1].type, "tool-input-available");
+	assert.equal(frames[2].type, "tool-output-available");
+	assert.equal(frames[2].toolCallId, "late-message-call");
+});
+
 test("agent_end waits for the final agent_settled event", () => {
 	const adapter = new PiEventToUiMessageStream();
 
