@@ -101,6 +101,11 @@ type MessageLoadOptions = {
 	preserveRuntimeMessages?: boolean;
 };
 
+type CreateAgentInputWithHistory = CreateAgentInput & {
+	/** 重启/重开同一会话时保留 renderer 已展示的历史前缀。 */
+	preserveHistoryOnLoad?: boolean;
+};
+
 /** 从 RPC 返回的未知 ask 记录中安全读取字段，避免批量答案转换扩散 any 强转。 */
 function readAskField(input: unknown, key: string): unknown {
 	if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
@@ -929,7 +934,7 @@ export class AgentManager {
 		return nextMessages;
 	}
 
-	async create(rawInput: CreateAgentInput) {
+	async create(rawInput: CreateAgentInputWithHistory) {
 		const input = rawInput.sessionPath
 			? { ...rawInput, sessionPath: this.toSessionProtocolPath(rawInput.sessionPath) }
 			: rawInput;
@@ -1007,7 +1012,7 @@ export class AgentManager {
 		);
 	}
 
-	private async createUnlocked(input: CreateAgentInput) {
+	private async createUnlocked(input: CreateAgentInputWithHistory) {
 		const t0 = Date.now();
 		const project = this.getProject(input.projectId);
 		if (!project) throw new Error(`Project not found: ${input.projectId}`);
@@ -1160,11 +1165,19 @@ export class AgentManager {
 				? client.request({ type: "get_messages" }, this.rpcTimeoutMs)
 				: undefined;
 			const preserveMessagesAfter = Date.now();
+			// 重开已有会话（停止后再启动、restart）时，新进程只会投影尾部窗口。
+			// 必须保留 renderer 已展示的前缀，并暂时阻止回底清理把中间轮次立刻收走。
+			const historyLoadOptions: MessageLoadOptions = {
+				preserveMessagesAfter,
+				...((input.sessionPath || input.preserveHistoryOnLoad)
+					? { preserveHistory: true, stickyHistory: true }
+					: {}),
+			};
 			if (messagesPromise) {
-				void this.loadMessages(id, true, messagesPromise, { preserveMessagesAfter })
+				void this.loadMessages(id, true, messagesPromise, historyLoadOptions)
 					.catch(() =>
 						new Promise<void>((resolve) => setTimeout(resolve, 800))
-							.then(() => this.loadMessages(id, true, undefined, { preserveMessagesAfter })),
+							.then(() => this.loadMessages(id, true, undefined, historyLoadOptions)),
 					)
 					.then(() => {
 						void this.appLogger?.info("agent", "Agent history loaded in background", {
@@ -1199,7 +1212,7 @@ export class AgentManager {
 						input.sessionPath,
 						AgentManager.MAX_HISTORY_LOAD_TURNS,
 					),
-					{ preserveMessagesAfter },
+					historyLoadOptions,
 				)
 					.then(() => {
 						void this.appLogger?.info("agent", "Agent recent history loaded from file", {
@@ -2578,6 +2591,9 @@ export class AgentManager {
 			wslUser,
 			importedSourceId,
 			noSession,
+			// 重启只换 pi 进程，不改会话文件。新进程只会投影尾部窗口，
+			// 必须保留 renderer 已经展示的前缀，否则多次停止/重启会把中间历史“吃掉”。
+			preserveHistoryOnLoad: true,
 		});
 	}
 

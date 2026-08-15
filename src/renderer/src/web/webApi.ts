@@ -319,6 +319,20 @@ function sameUiMessage(left: UIMessage, right: UIMessage): boolean {
 		&& JSON.stringify(left.parts) === JSON.stringify(right.parts);
 }
 
+function isEmptyUiMessage(message: UIMessage): boolean {
+	return uiMessageText(message).trim().length === 0
+		&& !message.parts.some((part) => part.type !== "text" && part.type !== "reasoning");
+}
+
+/**
+ * 只把「局部文本 → 完整文本」用在助手回复上。用户消息即便正文相同，
+ * 也必须靠稳定 id / entryId 对齐；前缀匹配会把空的本地乐观气泡、
+ * 以及「继续」「好」这类短句误判成同一条。
+ */
+function canMatchPartialText(role: ChatMessage["role"]): boolean {
+	return role === "assistant" || role === "tool" || role === "system" || role === "error";
+}
+
 /**
  * 用主进程运行时快照补偿 Web 本地 useChat 缓存。
  *
@@ -334,6 +348,9 @@ export function mergeAuthoritativeUiMessages(
 	const merged = [...current];
 	const matchedCurrent = new Set<number>();
 	let changed = false;
+	// 权威快照是时间顺序。本地 useChat 消息通常没有 timestamp，
+	// 漏掉的旧回复如果按时间戳插入会落到末尾，表现为“上一条没回、下一条回了两次”。
+	let lastPlacedIndex = -1;
 
 	for (const incoming of authoritative) {
 		let matchIndex = -1;
@@ -373,7 +390,7 @@ export function mergeAuthoritativeUiMessages(
 		}
 
 		// 流式缓存可能只保留了前缀，而轮询快照已经拿到完整正文。
-		if (matchIndex < 0 && incomingText) {
+		if (matchIndex < 0 && incomingText && canMatchPartialText(incomingRole)) {
 			for (let index = merged.length - 1; index >= 0; index -= 1) {
 				const candidateText = uiMessageText(merged[index]);
 				if (
@@ -393,10 +410,13 @@ export function mergeAuthoritativeUiMessages(
 				merged[matchIndex] = incoming;
 				changed = true;
 			}
+			lastPlacedIndex = matchIndex;
 			continue;
 		}
 
-		const insertionIndex = findTimestampInsertionIndex(merged, incoming);
+		const insertionIndex = lastPlacedIndex >= 0
+			? lastPlacedIndex + 1
+			: findTimestampInsertionIndex(merged, incoming);
 		// matchedCurrent tracks indexes in the mutable merged array. Inserting before
 		// an already matched item shifts its index, so update the set before marking
 		// the newly inserted message as consumed.
@@ -411,6 +431,16 @@ export function mergeAuthoritativeUiMessages(
 		}
 		merged.splice(insertionIndex, 0, incoming);
 		matchedCurrent.add(insertionIndex);
+		lastPlacedIndex = insertionIndex;
+		changed = true;
+	}
+
+	// useChat 会先插入一条尚无正文的本地 user 气泡。若权威快照已经带上了
+	// 同一轮用户消息，这条空气泡必须丢掉，否则时间线上会出现两条用户消息。
+	for (let index = merged.length - 1; index >= 0; index -= 1) {
+		if (matchedCurrent.has(index)) continue;
+		if (uiMessageRole(merged[index]) !== "user" || !isEmptyUiMessage(merged[index])) continue;
+		merged.splice(index, 1);
 		changed = true;
 	}
 

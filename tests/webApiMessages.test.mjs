@@ -30,13 +30,11 @@ test("maps user role to user and text part", () => {
 	assert.equal(result[0].parts[0].type, "text");
 	assert.equal(result[0].parts[0].text, "hi");
 });
-
 test("maps assistant role to assistant and text part", () => {
 	const result = chatMessagesToUiMessages([message({ role: "assistant", text: "hi" })]);
 	assert.equal(result[0].role, "assistant");
 	assert.equal(result[0].parts[0].type, "text");
 });
-
 test("falls back non-user roles to assistant", () => {
 	for (const role of ["system", "tool", "error"]) {
 		const result = chatMessagesToUiMessages([message({ role })]);
@@ -174,5 +172,81 @@ test("unmatched authoritative messages are inserted by their timeline timestamp"
 	assert.equal(
 		merged.map((item) => item.parts[0]?.text).join("\u0000"),
 		["first", "retrying", "last"].join("\u0000"),
+	);
+});
+
+test("does not treat a later assistant reply as the same as an earlier prefix", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "web-user-1", role: "user", text: "第一问", timestamp: 100 }),
+		message({ id: "web-user-2", role: "user", text: "第二问", timestamp: 200 }),
+		message({ id: "web-assistant-2", role: "assistant", text: "第二问的完整答复", timestamp: 300 }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-user-2", role: "user", text: "第二问", timestamp: 200 }),
+		message({ id: "runtime-assistant-2", role: "assistant", text: "第二问的完整答复还有后续", timestamp: 300 }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.deepEqual(
+		Array.from(merged, (item) => item.parts[0]?.text),
+		["第一问", "第二问", "第二问的完整答复还有后续"],
+	);
+});
+
+test("drops an empty local user bubble once the runtime snapshot has the real user message", () => {
+	const current = [
+		...chatMessagesToUiMessages([
+			message({ id: "history-user", role: "user", text: "第一问", timestamp: 100 }),
+		]),
+		{ id: "local-empty-user", role: "user", parts: [] },
+	];
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-user", role: "user", text: "第二问", timestamp: 200 }),
+		message({ id: "runtime-assistant", role: "assistant", text: "答复", timestamp: 300 }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.deepEqual(
+		Array.from(merged, (item) => item.parts[0]?.text ?? ""),
+		["第一问", "第二问", "答复"],
+	);
+});
+
+test("does not collapse two identical user messages into one", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "web-user-1", role: "user", text: "继续", timestamp: 100 }),
+		message({ id: "web-user-2", role: "user", text: "继续", timestamp: 200 }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-user-2", role: "user", text: "继续", timestamp: 200 }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.length, 2);
+	assert.equal(merged[0].id, "web-user-1");
+	assert.equal(merged[1].id, "runtime-user-2");
+});
+
+
+
+test("inserts a missed assistant reply before the next local turn", () => {
+	const current = [
+		...chatMessagesToUiMessages([
+			message({ id: "web-user-1", role: "user", text: "第一问" }),
+		]),
+		{ id: "web-user-2", role: "user", parts: [{ type: "text", text: "第二问" }] },
+		{ id: "web-assistant-2", role: "assistant", parts: [{ type: "text", text: "第二问答复" }] },
+	];
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-user-1", role: "user", text: "第一问", timestamp: 100 }),
+		message({ id: "runtime-assistant-1", role: "assistant", text: "第一问答复", timestamp: 150 }),
+		message({ id: "runtime-user-2", role: "user", text: "第二问", timestamp: 200 }),
+		message({ id: "runtime-assistant-2", role: "assistant", text: "第二问答复", timestamp: 300 }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.deepEqual(
+		Array.from(merged, (item) => item.parts[0]?.text),
+		["第一问", "第一问答复", "第二问", "第二问答复"],
 	);
 });

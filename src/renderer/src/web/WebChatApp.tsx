@@ -124,8 +124,10 @@ export function WebChatApp() {
 		messagesBySessionRef.current[sessionId] = merged;
 		// 流式期间由 SSE/useChat 保持逐 token 画面；状态快照只更新缓存，
 		// 等状态变为空闲后再替换为主进程的最终消息。
+		// 主进程运行时快照只含尾部窗口。空闲后如果直接整表替换，
+		// 刚结束的 SSE 回复可能被更早的投影片段覆盖，表现为“这条没回、下一条回了两次”。
 		if (!streamingRef.current && activeSessionIdRef.current === sessionId && merged !== current) {
-			setMessages(merged);
+			setMessages((visible) => mergeAuthoritativeUiMessages(visible, merged));
 		}
 	}, [setMessages]);
 

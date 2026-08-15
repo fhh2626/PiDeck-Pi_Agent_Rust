@@ -73,7 +73,6 @@ test("stores catalog records and selection by stable session ID", () => {
   assert.equal(store.get(atoms.currentSessionAtom).id, "session-b");
   assert.equal(store.get(atoms.sessionIdsByProjectAtom)["project-1"].join(","), "session-a,session-b");
 });
-
 test("keeps catalog atom identities stable when polling returns equivalent records", () => {
   const atoms = loadAtoms();
   const store = createStore();
@@ -100,7 +99,6 @@ test("keeps catalog atom identities stable when polling returns equivalent recor
   assert.notEqual(store.get(atoms.sessionRecordsAtom), recordsBefore);
   assert.notEqual(store.get(atoms.sessionIdsByProjectAtom), idsBefore);
 });
-
 test("keeps only the 8 most recently written session message caches", () => {
   const atoms = loadAtoms();
   const store = createStore();
@@ -1114,4 +1112,66 @@ test("late continuation page after bottom-settle clear is rejected; fresh first 
     },
   }), true);
   assert.equal(entry().history.messages.length, 1);
+});
+
+test("restart-style full flush with a new fileVersion keeps already shown history", () => {
+  const atoms = loadAtoms();
+  const store = createStore();
+  const emit = (payload) =>
+    store.set(atoms.applySessionRuntimeEventAtom, {
+      sessionId: "session-a",
+      agentId: payload.agentId ?? "agent-a",
+      runtimeGeneration: payload.runtimeGeneration ?? 1,
+      sourceChannel: "agents:message",
+      payload,
+    });
+  const entry = () => store.get(atoms.sessionMessagesCacheAtom)["session-a"];
+
+  emit({
+    agentId: "agent-a",
+    windowStart: 2,
+    totalLength: 4,
+    fileVersion: "100:2000",
+    messages: [
+      { id: "r1", role: "user", text: "中间问题", meta: { entryId: "e3" } },
+      { id: "r2", role: "assistant", text: "中间回答", meta: { entryId: "e4" } },
+    ],
+  });
+  store.set(atoms.prependSessionHistoryPageAtom, {
+    sessionId: "session-a",
+    expectedRevision: entry().revision,
+    before: undefined,
+    page: {
+      messages: [
+        { id: "h1", role: "user", text: "最早问题", meta: { entryId: "e1" } },
+        { id: "h2", role: "assistant", text: "最早回答", meta: { entryId: "e2" } },
+      ],
+      total: 4,
+      nextBefore: 1,
+      indexVersion: "100:2000",
+    },
+  });
+
+  emit({
+    agentId: "agent-b",
+    runtimeGeneration: 2,
+    windowStart: 2,
+    totalLength: 4,
+    fileVersion: "101:2100",
+    preserveHistory: true,
+    stickyHistory: true,
+    messages: [
+      { id: "n1", role: "user", text: "最新问题", meta: { entryId: "e5" } },
+      { id: "n2", role: "assistant", text: "最新回答", meta: { entryId: "e6" } },
+    ],
+  });
+
+  assert.deepEqual(
+    [...entry().history.messages.map((message) => message.meta.entryId)],
+    ["e1", "e2", "e3", "e4"],
+  );
+  assert.deepEqual(
+    [...entry().messages.map((message) => message.meta.entryId)],
+    ["e5", "e6"],
+  );
 });

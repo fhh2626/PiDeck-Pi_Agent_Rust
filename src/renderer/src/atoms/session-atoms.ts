@@ -1375,6 +1375,17 @@ export const applySessionRuntimeEventAtom = atom(
           const slideOut = Array.isArray(payload.slideOut)
             ? (payload.slideOut as ChatMessage[])
             : undefined;
+          // restart / 重开同一会话时，主进程已经丢掉旧 agent 的窗口段，
+          // 不会再带 slideOut。压缩路径会显式下发 slideOut，不能把旧窗口再并一次。
+          const previousWindow = preserveHistory &&
+            stickyHistory &&
+            (!slideOut || slideOut.length === 0) &&
+            current?.source === "runtime"
+            ? current.messages
+            : undefined;
+          const combinedSlideOut = previousWindow && previousWindow.length > 0
+            ? previousWindow
+            : slideOut;
           set(cacheSessionMessagesAtom, {
             sessionId: event.sessionId,
             messages: segment,
@@ -1385,7 +1396,7 @@ export const applySessionRuntimeEventAtom = atom(
               current?.history,
               segment,
               fileVersion,
-              slideOut,
+              combinedSlideOut,
               preserveHistory,
               stickyHistory,
               payloadWindowStartFilePos,
