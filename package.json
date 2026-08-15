@@ -138,10 +138,6 @@
         "to": "extensions/node_modules/undici"
       },
       {
-        "from": "resources/yao-prompts",
-        "to": "yao-prompts"
-      },
-      {
         "from": "resources/xueprompts.db",
         "to": "xueprompts.db"
       },
