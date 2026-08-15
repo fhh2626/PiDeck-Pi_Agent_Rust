@@ -2750,6 +2750,10 @@ select:focus-visible {
   background: color-mix(in srgb, var(--color-success) 16%, transparent);
   color: var(--color-success);
 }
+.editor-logo.sublime {
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-warning);
+}
 .chat-header-actions button,
 .panel-action-row button {
   flex: 0 0 auto;

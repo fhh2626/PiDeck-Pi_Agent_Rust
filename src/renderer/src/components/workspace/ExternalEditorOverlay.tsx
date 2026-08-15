@@ -6,6 +6,7 @@ const EDITOR_LOGO_URLS: Record<string, string> = {
   vscode: new URL("../../assets/editors/vscode.png", import.meta.url).href,
   cursor: new URL("../../assets/editors/cursor.png", import.meta.url).href,
   zed: new URL("../../assets/editors/zed.png", import.meta.url).href,
+  sublime: new URL("../../assets/editors/sublime.svg", import.meta.url).href,
   idea: new URL("../../assets/editors/idea.svg", import.meta.url).href,
   webstorm: new URL("../../assets/editors/webstorm.svg", import.meta.url).href,
   phpstorm: new URL("../../assets/editors/phpstorm.svg", import.meta.url).href,
