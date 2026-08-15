@@ -357,7 +357,7 @@ test("trimRuntimeCache slides out the old window head and keeps anonymous headOf
     const slidePayload = payloads.find((p) => p.slideOut !== undefined);
     assert.ok(slidePayload, "full flush must carry slideOut");
     assert.deepEqual(
-      slidePayload.slideOut.map((m) => m.meta.entryId),
+      Array.from(slidePayload.slideOut, (m) => m.meta.entryId),
       ["u10", "a10", "u11", "a11", "u12", "a12"],
     );
     assert.equal(slidePayload.windowStart, 18, "trim 后窗口 = q13 起（新空间下标 18）");
@@ -365,6 +365,35 @@ test("trimRuntimeCache slides out the old window head and keeps anonymous headOf
     assert.equal(manager.pendingSlideOutByAgent.get("agent-1"), undefined, "flush 后待发滑出已清空");
     // M2：-1 保持 -1（修复前被递增成 5 的伪造游标）
     assert.equal(manager.messageHeadOffsetByAgent.get("agent-1"), -1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("trimRuntimeCache appends window slide-out onto a pending compaction slideOut", async () => {
+  const { manager, directory } = await createHarness();
+  try {
+    const many = [];
+    for (let i = 1; i <= 15; i += 1) {
+      many.push({ id: `m-u${i}`, agentId: "agent-1", role: "user", text: `q${i}`, timestamp: 1, meta: { entryId: `u${i}` } });
+      many.push({ id: `m-a${i}`, agentId: "agent-1", role: "assistant", text: `a${i}`, timestamp: 1, meta: { entryId: `a${i}` } });
+    }
+    manager.messages.set("agent-1", many);
+    manager.displayWindowStartByAgent.set("agent-1", 18);
+    manager.pendingSlideOutByAgent.set("agent-1", [
+      { id: "kept", agentId: "agent-1", role: "assistant", text: "compaction-kept", timestamp: 1, meta: { entryId: "kept" } },
+    ]);
+    const payloads = [];
+    manager.onOutput((channel, payload) => {
+      if (channel === "agents:message") payloads.push(payload);
+    });
+    manager.trimRuntimeCache("agent-1");
+    const slidePayload = payloads.find((p) => p.slideOut !== undefined);
+    assert.ok(slidePayload, "full flush must carry the combined slideOut");
+    assert.deepEqual(
+      Array.from(slidePayload.slideOut, (m) => m.meta.entryId),
+      ["kept", "u10", "a10", "u11", "a11", "u12", "a12"],
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

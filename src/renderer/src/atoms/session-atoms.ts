@@ -623,6 +623,7 @@ function findCoveredMessageIndexes(
   oldMessages: ChatMessage[],
   incomingMessages: ChatMessage[],
   fingerprintTailOnly: boolean,
+  allowFingerprint = true,
 ): Set<number> {
   const covered = new Set<number>();
   const oldByEntryKey = new Map<string, number[]>();
@@ -655,6 +656,10 @@ function findCoveredMessageIndexes(
       }
     }
     if (matchedIndex === undefined) {
+      // 指纹只用于压缩改写：运行期副本没有 entryId，投影后 id 会变。
+      // 同一文件版本下的窗口右移不能走指纹——Pi 短回复（「好的」「继续」）
+      // 很容易同文同秒，否则中间那条会从历史前缀里被吃掉。
+      if (!allowFingerprint) continue;
       const fingerprintCandidates = oldByFingerprint.get(messageFingerprint(incoming)) ?? [];
       for (let index = fingerprintCandidates.length - 1; index >= 0; index--) {
         const candidate = fingerprintCandidates[index];
@@ -699,16 +704,25 @@ function reconcileHistoryPrefix(
     history = undefined;
   }
   const hasCurrentSummaryCard = segment.some(isSummaryCard);
+  // 仅压缩改写（文件版本变了但仍要保留已看过的对话）才允许用内容指纹
+  // 去重；普通窗口右移只认 entryId / 运行期 id。
+  const allowFingerprint = versionChanged && preserveHistory;
   const slideCandidates = (slideOut ?? []).filter(
     (message) => !hasCurrentSummaryCard || !isSummaryCard(message),
   );
-  const coveredSlideIndexes = findCoveredMessageIndexes(slideCandidates, segment, false);
+  const coveredSlideIndexes = findCoveredMessageIndexes(
+    slideCandidates,
+    segment,
+    false,
+    allowFingerprint,
+  );
   const slideMessages = slideCandidates.filter((_message, index) => !coveredSlideIndexes.has(index));
   const prefixCandidates = history?.messages ?? [];
   const coveredPrefixIndexes = findCoveredMessageIndexes(
     prefixCandidates,
     [...segment, ...slideMessages],
     true,
+    allowFingerprint,
   );
   const prefixMessages = prefixCandidates.filter(
     (message, index) => !coveredPrefixIndexes.has(index) &&

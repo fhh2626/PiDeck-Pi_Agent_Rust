@@ -852,6 +852,57 @@ test("full flush merges trim slide-out turns into the history prefix (H2 regress
   assert.deepEqual([...entry().history.messages.map((m) => m.meta.entryId)], ["n1"]);
 });
 
+test("window slide-out keeps an older identical assistant reply even without a distinct timestamp", () => {
+  const atoms = loadAtoms();
+  const store = createStore();
+  const emit = (payload) =>
+    store.set(atoms.applySessionRuntimeEventAtom, {
+      sessionId: "session-a",
+      agentId: "agent-a",
+      runtimeGeneration: 1,
+      sourceChannel: "agents:message",
+      payload,
+    });
+  const entry = () => store.get(atoms.sessionMessagesCacheAtom)["session-a"];
+
+  emit({
+    agentId: "agent-a",
+    windowStart: 0,
+    totalLength: 4,
+    fileVersion: "100:2000",
+    messages: [
+      { id: "u1", role: "user", text: "继续", timestamp: 2_000_000, meta: { entryId: "e1" } },
+      { id: "a1", role: "assistant", text: "好的。", timestamp: 2_000_000, meta: { entryId: "e2" } },
+      { id: "u2", role: "user", text: "继续", timestamp: 2_000_000, meta: { entryId: "e3" } },
+      { id: "a2", role: "assistant", text: "好的。", timestamp: 2_000_000, meta: { entryId: "e4" } },
+    ],
+  });
+
+  emit({
+    agentId: "agent-a",
+    windowStart: 2,
+    totalLength: 4,
+    fileVersion: "100:2000",
+    slideOut: [
+      { id: "u1", role: "user", text: "继续", timestamp: 2_000_000, meta: { entryId: "e1" } },
+      { id: "a1", role: "assistant", text: "好的。", timestamp: 2_000_000, meta: { entryId: "e2" } },
+    ],
+    messages: [
+      { id: "u2", role: "user", text: "继续", timestamp: 2_000_000, meta: { entryId: "e3" } },
+      { id: "a2", role: "assistant", text: "好的。", timestamp: 2_000_000, meta: { entryId: "e4" } },
+    ],
+  });
+
+  assert.deepEqual(
+    [...entry().history.messages.map((m) => m.meta.entryId)],
+    ["e1", "e2"],
+  );
+  assert.deepEqual(
+    [...entry().messages.map((m) => m.meta.entryId)],
+    ["e3", "e4"],
+  );
+});
+
 test("prependSessionHistoryPageAtom guards revision and cursor continuity, dedupes against segment", () => {
   const atoms = loadAtoms();
   const store = createStore();

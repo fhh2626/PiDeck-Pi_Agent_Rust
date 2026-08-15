@@ -5196,7 +5196,12 @@ export class AgentManager {
 		);
 		if (newWindowStartInList > oldWindowStart) {
 			const slideOut = list.slice(oldWindowStart, newWindowStartInList);
-			if (slideOut.length > 0) this.pendingSlideOutByAgent.set(agentId, slideOut);
+			if (slideOut.length > 0) {
+				// 压缩重载可能已经登记了尚未 flush 的旧运行期消息。
+				// 这里只能追加，不能覆盖，否则压缩刚保住的中间回复会在下一轮 trim 时丢失。
+				const pending = this.pendingSlideOutByAgent.get(agentId) ?? [];
+				this.pendingSlideOutByAgent.set(agentId, [...pending, ...slideOut]);
+			}
 		}
 		this.messages.set(agentId, next);
 		this.displayWindowStartByAgent.set(
