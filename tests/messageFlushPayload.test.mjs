@@ -99,6 +99,17 @@ test("fileVersion is carried through when provided", () => {
   assert.equal(absent.fileVersion, undefined);
 });
 
+test("compaction flags are carried on both full and incremental flush payloads", () => {
+  const all = [msg("a"), msg("b")];
+  const full = buildMessageFlushPayload("agent-1", all, undefined, 0, "123:456", undefined, true, true);
+  assert.equal(full.preserveHistory, true);
+  assert.equal(full.stickyHistory, true);
+
+  const incremental = buildMessageFlushPayload("agent-1", all, 1, 0, "123:456", undefined, true, true);
+  assert.equal(incremental.preserveHistory, true);
+  assert.equal(incremental.stickyHistory, true);
+});
+
 test("dirtyFrom 0 emits a full replacement in incremental form (renderer merges as full overwrite)", () => {
   const all = [msg("a"), msg("b")];
   const payload = buildMessageFlushPayload("agent-1", all, 0);

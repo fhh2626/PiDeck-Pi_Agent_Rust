@@ -30,6 +30,7 @@ function compileModule(filePath, imports = {}) {
 }
 
 function loadAtoms() {
+  const messageFingerprint = compileModule("src/shared/messageFingerprint.ts");
   const sessions = compileModule("src/renderer/src/atoms/session-atoms.ts", {
     "../utils/agentRuntimeState": compileModule(
       "src/renderer/src/utils/agentRuntimeState.ts",
@@ -37,6 +38,7 @@ function loadAtoms() {
     "../utils/sessionRecordIdentity": compileModule(
       "src/renderer/src/utils/sessionRecordIdentity.ts",
     ),
+    "../../../shared/messageFingerprint": messageFingerprint,
   });
   const selectors = compileModule("src/renderer/src/atoms/session-selectors.ts", {
     "./session-atoms": sessions,

@@ -408,3 +408,188 @@ test("cache-miss delete of a message absent from the file rejects with Message n
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("manual compact uses the RPC customInstructions field and always returns to idle", async () => {
+  const requests = [];
+  const runtime = {
+    tab: {
+      id: "agent-compact",
+      projectId: "project-1",
+      cwd: "C:/project",
+      title: "Session",
+      status: "idle",
+      createdAt: 1,
+    },
+    process: {
+      client: {
+        request: async (command) => {
+          requests.push(command);
+          return { success: true, data: {} };
+        },
+      },
+      isRunning: () => true,
+    },
+  };
+  const manager = new AgentManager(
+    () => ({ id: "project-1", name: "Project", path: "C:/project" }),
+    () => null,
+    { get: () => ({}) },
+    {},
+  );
+  manager.agents.set("agent-compact", runtime);
+  manager.loadMessages = async () => {};
+  manager.getRuntimeState = async () => ({});
+
+  await manager.compact("agent-compact", " keep the important decisions ");
+
+  assert.equal(requests[0].type, "compact");
+  assert.equal(requests[0].customInstructions, "keep the important decisions");
+  assert.equal(runtime.tab.status, "idle");
+  assert.equal(manager.compactingAgents.has("agent-compact"), false);
+  assert.equal(manager.rpcCompactingAgents.has("agent-compact"), false);
+});
+
+test("manual compact failure does not leave the runtime stuck in compacting", async () => {
+  const runtime = {
+    tab: {
+      id: "agent-compact-failure",
+      projectId: "project-1",
+      cwd: "C:/project",
+      title: "Session",
+      status: "idle",
+      createdAt: 1,
+    },
+    process: {
+      client: {
+        request: async () => ({ success: false, error: "nothing to compact" }),
+      },
+      isRunning: () => true,
+    },
+  };
+  const manager = new AgentManager(
+    () => ({ id: "project-1", name: "Project", path: "C:/project" }),
+    () => null,
+    { get: () => ({}) },
+    {},
+  );
+  manager.agents.set("agent-compact-failure", runtime);
+  manager.getRuntimeState = async () => ({});
+
+  await assert.rejects(
+    manager.compact("agent-compact-failure"),
+    /nothing to compact/,
+  );
+  assert.equal(runtime.tab.status, "idle");
+  assert.equal(manager.compactingAgents.has("agent-compact-failure"), false);
+  assert.equal(manager.rpcCompactingAgents.has("agent-compact-failure"), false);
+});
+
+test("manual compact does not idle a queued follow-up that starts before RPC cleanup", async () => {
+  let resolveRequest;
+  const request = new Promise((resolve) => { resolveRequest = resolve; });
+  const runtime = {
+    tab: {
+      id: "agent-compact-follow-up",
+      projectId: "project-1",
+      cwd: "C:/project",
+      title: "Session",
+      status: "idle",
+      createdAt: 1,
+    },
+    process: {
+      client: { request: async () => request },
+      isRunning: () => true,
+    },
+  };
+  const manager = new AgentManager(
+    () => ({ id: "project-1", name: "Project", path: "C:/project" }),
+    () => null,
+    { get: () => ({}) },
+    {},
+  );
+  manager.agents.set("agent-compact-follow-up", runtime);
+  manager.loadMessages = async () => {};
+  manager.getRuntimeState = async () => ({});
+
+  const compacting = manager.compact("agent-compact-follow-up");
+  await Promise.resolve();
+  manager.handlePiEvent("agent-compact-follow-up", { type: "agent_start" });
+  resolveRequest({ success: true, data: {} });
+  await compacting;
+
+  assert.equal(runtime.tab.status, "running");
+  assert.equal(manager.compactingAgents.has("agent-compact-follow-up"), false);
+  assert.equal(manager.manualCompactionFollowUpAgents.has("agent-compact-follow-up"), true);
+});
+
+test("manual compact owns the reload while compaction_end is in flight", () => {
+  const runtime = {
+    tab: {
+      id: "agent-compact-reload",
+      projectId: "project-1",
+      cwd: "C:/project",
+      title: "Session",
+      status: "running",
+      createdAt: 1,
+    },
+    process: { client: { request: async () => ({ success: true, data: {} }) } },
+  };
+  const manager = new AgentManager(
+    () => ({ id: "project-1", name: "Project", path: "C:/project" }),
+    () => null,
+    { get: () => ({}) },
+    {},
+  );
+  manager.agents.set("agent-compact-reload", runtime);
+  let reloads = 0;
+  manager.loadMessages = async () => { reloads += 1; };
+  manager.getRuntimeState = async () => ({});
+  manager.compactingAgents.add("agent-compact-reload");
+
+  manager.handlePiEvent("agent-compact-reload", { type: "compaction_end" });
+  assert.equal(reloads, 0);
+
+  manager.compactingAgents.delete("agent-compact-reload");
+  manager.handlePiEvent("agent-compact-reload", { type: "compaction_end" });
+  assert.equal(reloads, 1);
+});
+
+test("automatic compaction reload preserves history and runtime messages", () => {
+  const runtime = {
+    tab: {
+      id: "agent-auto-compact-reload",
+      projectId: "project-1",
+      cwd: "C:/project",
+      title: "Session",
+      status: "running",
+      createdAt: 1,
+    },
+    process: { client: { request: async () => ({ success: true, data: {} }) } },
+  };
+  const manager = new AgentManager(
+    () => ({ id: "project-1", name: "Project", path: "C:/project" }),
+    () => null,
+    { get: () => ({}) },
+    {},
+  );
+  manager.agents.set("agent-auto-compact-reload", runtime);
+  let loadOptions;
+  manager.loadMessages = async (_agentId, _skipEntries, _early, options) => {
+    loadOptions = options;
+  };
+
+  manager.handlePiEvent("agent-auto-compact-reload", { type: "compaction_end" });
+
+  return new Promise((resolve, reject) => {
+    setImmediate(() => {
+      try {
+        assert.equal(loadOptions?.preserveHistory, true);
+        assert.equal(loadOptions?.stickyHistory, true);
+        assert.equal(loadOptions?.preserveRuntimeMessages, true);
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+});

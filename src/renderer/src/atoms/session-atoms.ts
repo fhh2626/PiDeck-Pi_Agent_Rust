@@ -12,6 +12,7 @@ import type {
   SessionRuntimeEvent,
   SessionRuntimeInfo,
 } from "../../../shared/types";
+import { messageFingerprint } from "../../../shared/messageFingerprint";
 import { mergeAgentRuntimeState } from "../utils/agentRuntimeState";
 import { sameProjectSessionList } from "../utils/sessionRecordIdentity";
 
@@ -111,7 +112,8 @@ export type SessionMessageCacheEntry = {
 	windowStartFilePos?: number;
 	/**
 	 * disk 历史前缀（仅 runtime 窗口会话）：prepend-only 轮次页，
-	 * 与运行时窗口段的接缝按 meta.entryId 去重；fileVersion 变化（压缩改写）即整段失效。
+	 * 与运行时窗口段的接缝按 meta.entryId/内容指纹去重；普通改写时旧前缀失效，
+	 * 压缩改写由主进程显式 preserveHistory 后继续保留。
 	 */
 	history?: {
 		messages: ChatMessage[];
@@ -119,6 +121,8 @@ export type SessionMessageCacheEntry = {
 		/** 下一页续页锚点（页最旧条目的 entryId，2026-11 缓存优先路径用） */
 		nextBeforeEntryId?: string | null;
 		version?: string;
+		/** 压缩刚完成时暂缓自动回底清理，避免用户看到的历史立即消失。 */
+		sticky?: boolean;
 	};
 };
 
@@ -607,9 +611,74 @@ function messageEntryKey(message: ChatMessage): string {
   return typeof entryId === "string" && entryId ? `e:${entryId}` : `m:${message.id}`;
 }
 
+function isSummaryCard(message: ChatMessage): boolean {
+  return message.role === "system" &&
+    (message.meta?.type === "compaction" || message.meta?.type === "branchSummary");
+}
+
+const COMPACTION_FINGERPRINT_TIME_TOLERANCE_MS = 5_000;
+
+/** 返回旧消息中被新投影覆盖的下标；精确身份优先，指纹按队列一一消耗。 */
+function findCoveredMessageIndexes(
+  oldMessages: ChatMessage[],
+  incomingMessages: ChatMessage[],
+  fingerprintTailOnly: boolean,
+): Set<number> {
+  const covered = new Set<number>();
+  const oldByEntryKey = new Map<string, number[]>();
+  const oldByFingerprint = new Map<string, number[]>();
+  oldMessages.forEach((message, index) => {
+    if (isSummaryCard(message)) return;
+    const entryKey = messageEntryKey(message);
+    const entryIndices = oldByEntryKey.get(entryKey);
+    if (entryIndices) entryIndices.push(index);
+    else oldByEntryKey.set(entryKey, [index]);
+
+    const fingerprint = messageFingerprint(message);
+    const fingerprintIndices = oldByFingerprint.get(fingerprint);
+    if (fingerprintIndices) fingerprintIndices.push(index);
+    else oldByFingerprint.set(fingerprint, [index]);
+  });
+  const tailStart = fingerprintTailOnly
+    ? Math.max(0, oldMessages.length - 32)
+    : 0;
+
+  for (const incoming of incomingMessages) {
+    if (isSummaryCard(incoming)) continue;
+    let matchedIndex: number | undefined;
+    const entryCandidates = oldByEntryKey.get(messageEntryKey(incoming)) ?? [];
+    for (let index = entryCandidates.length - 1; index >= 0; index--) {
+      const candidate = entryCandidates[index];
+      if (!covered.has(candidate)) {
+        matchedIndex = candidate;
+        break;
+      }
+    }
+    if (matchedIndex === undefined) {
+      const fingerprintCandidates = oldByFingerprint.get(messageFingerprint(incoming)) ?? [];
+      for (let index = fingerprintCandidates.length - 1; index >= 0; index--) {
+        const candidate = fingerprintCandidates[index];
+        if (
+          covered.has(candidate) ||
+          candidate < tailStart ||
+          Math.abs((oldMessages[candidate].timestamp ?? 0) - (incoming.timestamp ?? 0)) >
+            COMPACTION_FINGERPRINT_TIME_TOLERANCE_MS
+        ) {
+          continue;
+        }
+        matchedIndex = candidate;
+        break;
+      }
+    }
+    if (matchedIndex !== undefined) covered.add(matchedIndex);
+  }
+  return covered;
+}
+
 /**
  * 运行时窗口段更新时调和 disk 历史前缀（2026-08 激活分页）：
- * - fileVersion 变化（压缩/外部改写 JSONL）→ 前缀绝对下标空间失效，整段丢弃；
+ * - fileVersion 变化（编辑/删除/压缩改写 JSONL）默认丢弃前缀；
+ *   压缩快照显式 preserveHistory 时保留已经展示的对话；
  * - 窗口右移与前缀尾部重叠 → 按 entryId 去重（重叠部分以运行时窗口段为权威）；
  * - slideOut（trim 窗口右移滑出的旧窗口头部轮次）→ 并入前缀尾部，避免锚点轮空洞。
  */
@@ -618,38 +687,60 @@ function reconcileHistoryPrefix(
   segment: ChatMessage[],
   fileVersion?: string,
   slideOut?: ChatMessage[],
+  preserveHistory = false,
+  stickyHistory = false,
+  historyBefore?: number,
 ): SessionMessageCacheEntry["history"] {
   if (!history && (!slideOut || slideOut.length === 0)) return undefined;
-  // fileVersion 变化 = 文件被改写（编辑/删除/压缩/外部变更）。此时前缀内容可能已失效：
-  // 编辑落在窗口外时，全量 flush 只带尾部窗口段，若旧前缀（尤其无 version 的异常前缀）
-  // 继续拼回去，用户会看到「编辑了不刷新，再编一条才看到」。故 version 缺失或不同都丢弃。
-  if (fileVersion && (!history?.version || fileVersion !== history.version)) {
+  const versionChanged = Boolean(fileVersion && (!history?.version || fileVersion !== history.version));
+  // 编辑/删除等改写会让旧前缀失效；压缩只改写上下文边界，旧对话仍是用户已经
+  // 看到的 transcript，因此由主进程显式标记 preserveHistory 后继续保留。
+  if (versionChanged && !preserveHistory) {
     history = undefined;
   }
-  const segmentKeys = new Set(segment.map(messageEntryKey));
-  // 滑出轮与窗口段去重（防御：理论上不重叠），再与既有前缀去重，避免接缝重复
-  const slideMessages = (slideOut ?? []).filter(
-    (message) => !segmentKeys.has(messageEntryKey(message)),
+  const hasCurrentSummaryCard = segment.some(isSummaryCard);
+  const slideCandidates = (slideOut ?? []).filter(
+    (message) => !hasCurrentSummaryCard || !isSummaryCard(message),
   );
-  const slideKeys = new Set(slideMessages.map(messageEntryKey));
-  // 前缀同时按「窗口段」与「滑出轮」去重：窗口右移时前缀尾部与新段首部重叠，
-  // 重叠部分以运行时窗口段为权威；滑出轮同理（不重叠时无操作）
-  const dropKeys = new Set([...segmentKeys, ...slideKeys]);
-  const prefixMessages = (history?.messages ?? []).filter(
-    (message) => !dropKeys.has(messageEntryKey(message)),
+  const coveredSlideIndexes = findCoveredMessageIndexes(slideCandidates, segment, false);
+  const slideMessages = slideCandidates.filter((_message, index) => !coveredSlideIndexes.has(index));
+  const prefixCandidates = history?.messages ?? [];
+  const coveredPrefixIndexes = findCoveredMessageIndexes(
+    prefixCandidates,
+    [...segment, ...slideMessages],
+    true,
+  );
+  const prefixMessages = prefixCandidates.filter(
+    (message, index) => !coveredPrefixIndexes.has(index) &&
+      !(hasCurrentSummaryCard && isSummaryCard(message)),
   );
   const messages = [...prefixMessages, ...slideMessages];
   if (messages.length === 0) return undefined;
   // 无滑出轮且前缀未被触碰：保留原对象引用，避免无谓的 atom 更新
-  if (slideMessages.length === 0 && messages.length === (history?.messages.length ?? 0)) {
+  if (
+    slideMessages.length === 0 &&
+    !versionChanged &&
+    !history?.sticky &&
+    !stickyHistory &&
+    messages.length === (history?.messages.length ?? 0)
+  ) {
     return history;
   }
+  const nextBefore = history?.nextBefore ?? (
+    preserveHistory &&
+    slideMessages.length > 0 &&
+    typeof historyBefore === "number" &&
+    historyBefore > 0
+      ? historyBefore
+      : null
+  );
   return {
-    nextBefore: history?.nextBefore ?? null,
+    nextBefore,
     ...(history?.nextBeforeEntryId !== undefined
       ? { nextBeforeEntryId: history?.nextBeforeEntryId }
       : {}),
-    version: history?.version ?? fileVersion,
+    version: fileVersion ?? history?.version,
+    ...(stickyHistory ? { sticky: true } : {}),
     messages,
   };
 }
@@ -706,6 +797,7 @@ export const prependSessionHistoryPageAtom = atom(
               // 续页锚点：本次页最旧条目的 entryId（渲染层续页请求携带，缓存优先路径依赖）
               ...(input.page.nextBeforeEntryId ? { nextBeforeEntryId: input.page.nextBeforeEntryId } : {}),
               version: input.page.indexVersion ?? current.history?.version,
+              ...(current.history?.sticky ? { sticky: true } : {}),
             }
           : undefined,
         updatedAt: Date.now(),
@@ -726,6 +818,9 @@ export const clearSessionHistoryAtom = atom(
 	(get, set, sessionId: string) => {
 		const current = get(sessionMessagesCacheAtom)[sessionId];
 		if (!current || current.source !== "runtime" || !current.history) return false;
+		// 压缩刚完成的前缀要先让下一次正常全量 flush 清除 sticky 标记；
+		// 否则用户刚看到的旧回复会在 1.5s 回底定时器里立即消失。
+		if (current.history.sticky) return false;
 		set(sessionMessagesCacheAtom, {
 			...get(sessionMessagesCacheAtom),
 			[sessionId]: { ...current, history: undefined, updatedAt: Date.now() },
@@ -1233,7 +1328,13 @@ export const applySessionRuntimeEventAtom = atom(
         ? payload.windowStartFilePos
         : undefined;
       const fileVersion = typeof payload.fileVersion === "string" ? payload.fileVersion : undefined;
+      const preserveHistory = payload.preserveHistory === true;
+      const stickyHistory = payload.stickyHistory === true;
       if (Array.isArray(messages)) {
+        // Keep the release operation named near the message branch; the actual
+        // call remains after the full/incremental cache update below.
+        const releaseLiveThinking = () =>
+          tryReleaseLiveThinkingAfterHistory(get, set, event.sessionId);
         const current = get(sessionMessagesCacheAtom)[event.sessionId];
         if (upsertFrom !== undefined && totalLength !== undefined) {
           // 增量合并：upsertFrom 为 runtime 数组绝对下标；本地数组 = [系统卡片(c), 窗口段]，
@@ -1280,14 +1381,22 @@ export const applySessionRuntimeEventAtom = atom(
             source: "runtime",
             windowStart: payloadWindowStart,
             cardCount,
-            history: reconcileHistoryPrefix(current?.history, segment, fileVersion, slideOut),
+            history: reconcileHistoryPrefix(
+              current?.history,
+              segment,
+              fileVersion,
+              slideOut,
+              preserveHistory,
+              stickyHistory,
+              payloadWindowStartFilePos,
+            ),
             ...(typeof payloadWindowStartFilePos === "number"
               ? { windowStartFilePos: payloadWindowStartFilePos }
               : {}),
           });
         }
         // message 到达后若已含同段 thinking，安全卸 live（覆盖 done 先到的情况）。
-        tryReleaseLiveThinkingAfterHistory(get, set, event.sessionId);
+        releaseLiveThinking();
       }
     }
 

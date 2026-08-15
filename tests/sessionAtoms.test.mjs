@@ -34,9 +34,11 @@ function compileModule(filePath, imports = {}) {
 function loadAtoms() {
   const runtimeState = compileModule("src/renderer/src/utils/agentRuntimeState.ts");
   const sessionRecordIdentity = compileModule("src/renderer/src/utils/sessionRecordIdentity.ts");
+  const messageFingerprint = compileModule("src/shared/messageFingerprint.ts");
   const sessions = compileModule("src/renderer/src/atoms/session-atoms.ts", {
     "../utils/agentRuntimeState": runtimeState,
     "../utils/sessionRecordIdentity": sessionRecordIdentity,
+    "../../../shared/messageFingerprint": messageFingerprint,
   });
   const composer = compileModule("src/renderer/src/atoms/composer-atoms.ts", {
     "./session-atoms": sessions,
@@ -488,7 +490,7 @@ test("windowed full snapshot stores segment with windowStart and merges later up
   assert.equal(entry().messages.length, 4, "upsert before window start must be discarded");
 });
 
-test("windowed full reconciles disk history prefix: seam dedupe by entryId and version-drop on compaction", () => {
+test("windowed full reconciles disk history prefix and preserves it across compaction", () => {
   const atoms = loadAtoms();
   const store = createStore();
   const emit = (payload) =>
@@ -532,13 +534,154 @@ test("windowed full reconciles disk history prefix: seam dedupe by entryId and v
   ] });
   assert.deepEqual([...entry().history.messages.map((m) => m.meta.entryId)], ["e1"]);
 
-  // 压缩改写 JSONL：fileVersion 变化 → 前缀整段失效
+  // 压缩改写 JSONL：fileVersion 变化，但压缩只改变上下文边界，已加载前缀必须保留。
   emit({ agentId: "agent-a", windowStart: 1, totalLength: 3, fileVersion: "200:800", messages: [
     { id: "c1", role: "user", text: "after-compaction", meta: { entryId: "n1" } },
     { id: "c2", role: "assistant", text: "a", meta: { entryId: "n2" } },
-  ] });
-  assert.equal(entry().history, undefined, "compaction version change must drop the prefix");
+  ], preserveHistory: true });
+  assert.deepEqual([...entry().history.messages.map((m) => m.meta.entryId)], ["e1"]);
   assert.equal(entry().windowStart, 1);
+});
+
+test("compaction full flush keeps the previous runtime answer and a history cursor", () => {
+  const atoms = loadAtoms();
+  const store = createStore();
+  const emit = (payload) =>
+    store.set(atoms.applySessionRuntimeEventAtom, {
+      sessionId: "session-a",
+      agentId: "agent-a",
+      runtimeGeneration: 1,
+      sourceChannel: "agents:message",
+      payload,
+    });
+  const entry = () => store.get(atoms.sessionMessagesCacheAtom)["session-a"];
+
+  emit({
+    agentId: "agent-a",
+    windowStart: 2,
+    totalLength: 4,
+    fileVersion: "100:2000",
+    windowStartFilePos: 2,
+    messages: [
+      { id: "r1", role: "user", text: "old question", meta: { entryId: "e3" } },
+      { id: "r2", role: "assistant", text: "previous answer", meta: { entryId: "e4" } },
+    ],
+  });
+
+  emit({
+    agentId: "agent-a",
+    windowStart: 1,
+    totalLength: 3,
+    fileVersion: "200:800",
+    windowStartFilePos: 2,
+    preserveHistory: true,
+    stickyHistory: true,
+    messages: [
+      { id: "summary", role: "system", text: "compacted", meta: { type: "compaction" } },
+      { id: "n1", role: "user", text: "kept question", meta: { entryId: "n1" } },
+      { id: "n2", role: "assistant", text: "kept answer", meta: { entryId: "n2" } },
+    ],
+    slideOut: [
+      { id: "r1", role: "user", text: "old question", meta: { entryId: "e3" } },
+      { id: "r2", role: "assistant", text: "previous answer", meta: { entryId: "e4" } },
+    ],
+  });
+
+  assert.deepEqual(
+    [...entry().history.messages.map((message) => message.text)],
+    ["old question", "previous answer"],
+  );
+  assert.equal(entry().history.nextBefore, 2, "compaction must retain the numeric history cursor");
+  assert.equal(entry().history.sticky, true);
+  assert.equal(entry().messages[0].text, "compacted");
+});
+
+test("compaction does not duplicate retained messages when projection ids change", () => {
+  const atoms = loadAtoms();
+  const store = createStore();
+  const emit = (payload) =>
+    store.set(atoms.applySessionRuntimeEventAtom, {
+      sessionId: "session-a",
+      agentId: "agent-a",
+      runtimeGeneration: 1,
+      sourceChannel: "agents:message",
+      payload,
+    });
+  const entry = () => store.get(atoms.sessionMessagesCacheAtom)["session-a"];
+
+  emit({
+    agentId: "agent-a",
+    windowStart: 0,
+    totalLength: 2,
+    fileVersion: "100:2000",
+    messages: [
+      { id: "old-q", role: "user", text: "same question", timestamp: 2_000_000 },
+      { id: "old-a", role: "assistant", text: "same answer", timestamp: 2_000_000 },
+    ],
+  });
+  emit({
+    agentId: "agent-a",
+    windowStart: 1,
+    totalLength: 3,
+    fileVersion: "200:800",
+    preserveHistory: true,
+    stickyHistory: true,
+    messages: [
+      { id: "summary", role: "system", text: "compacted", timestamp: 2_000_001, meta: { type: "compaction" } },
+      { id: "new-q", role: "user", text: "same question", timestamp: 2_000_000, meta: { entryId: "new-e1" } },
+      { id: "new-a", role: "assistant", text: "same answer", timestamp: 2_000_000, meta: { entryId: "new-e2" } },
+    ],
+    slideOut: [
+      { id: "old-q", role: "user", text: "same question", timestamp: 2_000_000 },
+      { id: "old-a", role: "assistant", text: "same answer", timestamp: 2_000_000 },
+    ],
+  });
+
+  assert.equal(entry().history, undefined, "old copies are fully covered by the new projection");
+  assert.deepEqual([...entry().messages.map((message) => message.text)], [
+    "compacted",
+    "same question",
+    "same answer",
+  ]);
+});
+
+test("sticky compaction history survives the first bottom-clear timer, then clears after a normal full flush", () => {
+  const atoms = loadAtoms();
+  const store = createStore();
+  const emit = (payload) =>
+    store.set(atoms.applySessionRuntimeEventAtom, {
+      sessionId: "session-a",
+      agentId: "agent-a",
+      runtimeGeneration: 1,
+      sourceChannel: "agents:message",
+      payload,
+    });
+  const entry = () => store.get(atoms.sessionMessagesCacheAtom)["session-a"];
+
+  emit({
+    agentId: "agent-a",
+    windowStart: 1,
+    totalLength: 2,
+    fileVersion: "100:2000",
+    preserveHistory: true,
+    stickyHistory: true,
+    messages: [{ id: "new", role: "assistant", text: "new answer", timestamp: 2_000_000 }],
+    slideOut: [{ id: "old", role: "user", text: "old question", timestamp: 2_000_000 }],
+  });
+  assert.equal(store.set(atoms.clearSessionHistoryAtom, "session-a"), false);
+  assert.equal(entry().history.sticky, true);
+
+  emit({
+    agentId: "agent-a",
+    windowStart: 1,
+    totalLength: 2,
+    fileVersion: "100:2000",
+    preserveHistory: true,
+    messages: [{ id: "new", role: "assistant", text: "new answer", timestamp: 2_000_000 }],
+  });
+  assert.equal(entry().history.sticky, undefined);
+  assert.equal(store.set(atoms.clearSessionHistoryAtom, "session-a"), true);
+  assert.equal(entry().history, undefined);
 });
 
 test("edit/delete fileVersion drop stale history even when the prefix has no version", () => {

@@ -19,9 +19,11 @@ function compile(filePath, imports = {}) {
   });
   return module.exports;
 }
+const messageFingerprint = compile("src/shared/messageFingerprint.ts");
 const sessionAtoms = compile("src/renderer/src/atoms/session-atoms.ts", {
   "../utils/agentRuntimeState": compile("src/renderer/src/utils/agentRuntimeState.ts"),
   "../utils/sessionRecordIdentity": compile("src/renderer/src/utils/sessionRecordIdentity.ts"),
+  "../../../shared/messageFingerprint": messageFingerprint,
 });
 const composerAtoms = compile("src/renderer/src/atoms/composer-atoms.ts", {
   "./session-atoms": sessionAtoms,

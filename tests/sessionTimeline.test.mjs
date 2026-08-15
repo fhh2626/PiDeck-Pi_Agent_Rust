@@ -46,6 +46,7 @@ function loadTimelineHelpers() {
 }
 
 function loadSessionAtoms() {
+  const messageFingerprint = compileModule("src/shared/messageFingerprint.ts");
   return compileModule("src/renderer/src/atoms/session-atoms.ts", {
     "../utils/agentRuntimeState": compileModule(
       "src/renderer/src/utils/agentRuntimeState.ts",
@@ -53,6 +54,7 @@ function loadSessionAtoms() {
     "../utils/sessionRecordIdentity": compileModule(
       "src/renderer/src/utils/sessionRecordIdentity.ts",
     ),
+    "../../../shared/messageFingerprint": messageFingerprint,
   });
 }
 
