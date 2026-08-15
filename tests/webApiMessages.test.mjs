@@ -112,3 +112,43 @@ test("runtime snapshots match the newest repeated message instead of old history
 	assert.equal(merged[0].id, "old-ok");
 	assert.equal(merged[1].id, "runtime-ok");
 });
+
+test("runtime tool snapshots keep their position when display text changes", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "history-user", role: "user", text: "inspect" }),
+		message({ id: "history-assistant", role: "assistant", text: "I will inspect" }),
+		message({ id: "history-tool", role: "tool", text: "✓ read", meta: { toolCallId: "call-1" } }),
+		message({ id: "history-final", role: "assistant", text: "done" }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-user", role: "user", text: "inspect" }),
+		message({ id: "runtime-assistant", role: "assistant", text: "I will inspect" }),
+		message({ id: "runtime-tool", role: "tool", text: "▶ read", meta: { toolCallId: "call-1" } }),
+		message({ id: "runtime-final", role: "assistant", text: "done" }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(
+		merged.map((item) => item.parts[0]?.text).join("\u0000"),
+		["inspect", "I will inspect", "▶ read", "done"].join("\u0000"),
+	);
+	assert.equal(merged.length, 4);
+});
+
+test("unmatched authoritative messages are inserted by their timeline timestamp", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "history-first", role: "user", text: "first", timestamp: 100 }),
+		message({ id: "history-last", role: "assistant", text: "last", timestamp: 300 }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-first", role: "user", text: "first", timestamp: 100 }),
+		message({ id: "runtime-status", role: "system", text: "retrying", timestamp: 200 }),
+		message({ id: "runtime-last", role: "assistant", text: "last", timestamp: 300 }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(
+		merged.map((item) => item.parts[0]?.text).join("\u0000"),
+		["first", "retrying", "last"].join("\u0000"),
+	);
+});

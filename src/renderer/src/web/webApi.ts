@@ -147,11 +147,35 @@ export async function fetchMessagePage(
 	return (await res.json()) as SessionMessagePage;
 }
 
+type WebMessageMetadata = {
+	/** 原始 ChatMessage 角色；UIMessage 只能表达 user/assistant/system。 */
+	chatRole: ChatMessage["role"];
+	/** 用于把历史页与运行时快照放回同一时间线。 */
+	timestamp?: number;
+	/** Pi 活动分支条目身份；运行时/历史投影都可能携带。 */
+	entryId?: string;
+	/** 工具结果的跨投影稳定身份；工具文本会随执行状态改变，不能用文本匹配。 */
+	toolCallId?: string;
+};
+
+function createWebMessageMetadata(message: ChatMessage): WebMessageMetadata {
+	const metadata: WebMessageMetadata = {
+		chatRole: message.role,
+		timestamp: message.timestamp,
+	};
+	const entryId = message.meta?.entryId;
+	if (typeof entryId === "string" && entryId) metadata.entryId = entryId;
+	const toolCallId = message.meta?.toolCallId;
+	if (typeof toolCallId === "string" && toolCallId) metadata.toolCallId = toolCallId;
+	return metadata;
+}
+
 /**
  * 历史 ChatMessage 列表 → useChat 的 UIMessage[]（text-only parts）。
  * 历史消息仅注入正文；流式思考/工具由 useChat 从 SSE 实时构建，避免与
  * 静态历史重复。ChatMessage.thinking 存在时一并注入 reasoning part，
- * 让历史会话也能折叠查看思考过程。
+ * 让历史会话也能折叠查看思考过程。保留少量非展示元数据，供历史页与
+ * 运行时快照合并时识别同一条工具/会话条目，避免把状态更新的工具追加到末尾。
  */
 export function chatMessagesToUiMessages(messages: ChatMessage[]): UIMessage[] {
 	return messages.map((message) => {
@@ -171,9 +195,53 @@ export function chatMessagesToUiMessages(messages: ChatMessage[]): UIMessage[] {
 		return {
 			id: message.id ?? `hist-${message.timestamp ?? Math.random()}`,
 			role,
+			metadata: createWebMessageMetadata(message),
 			parts,
 		};
 	});
+}
+
+function readWebMessageMetadata(message: UIMessage): WebMessageMetadata | undefined {
+	const value = message.metadata;
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const chatRole = Reflect.get(value, "chatRole");
+	if (chatRole !== "user" && chatRole !== "assistant" && chatRole !== "tool" && chatRole !== "system" && chatRole !== "error") {
+		return undefined;
+	}
+	const timestamp = Reflect.get(value, "timestamp");
+	const entryId = Reflect.get(value, "entryId");
+	const toolCallId = Reflect.get(value, "toolCallId");
+	return {
+		chatRole,
+		...(typeof timestamp === "number" ? { timestamp } : {}),
+		...(typeof entryId === "string" && entryId ? { entryId } : {}),
+		...(typeof toolCallId === "string" && toolCallId ? { toolCallId } : {}),
+	};
+}
+
+function uiMessageRole(message: UIMessage): ChatMessage["role"] {
+	return readWebMessageMetadata(message)?.chatRole ?? (message.role === "user" ? "user" : "assistant");
+}
+
+function uiMessageIdentity(message: UIMessage): string | undefined {
+	const metadata = readWebMessageMetadata(message);
+	if (!metadata) return undefined;
+	if (metadata.chatRole === "tool" && metadata.toolCallId) return `tool:${metadata.toolCallId}`;
+	if (metadata.entryId) return `${metadata.chatRole}:entry:${metadata.entryId}`;
+	return undefined;
+}
+
+function findTimestampInsertionIndex(messages: UIMessage[], incoming: UIMessage): number {
+	const timestamp = readWebMessageMetadata(incoming)?.timestamp;
+	if (timestamp === undefined) return messages.length;
+	let firstLaterIndex = messages.length;
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const candidateTimestamp = readWebMessageMetadata(messages[index])?.timestamp;
+		if (candidateTimestamp === undefined) continue;
+		if (candidateTimestamp <= timestamp) return index + 1;
+		firstLaterIndex = index;
+	}
+	return firstLaterIndex;
 }
 
 function uiMessageText(message: UIMessage): string {
@@ -216,13 +284,27 @@ export function mergeAuthoritativeUiMessages(
 			}
 		}
 
+		const incomingIdentity = uiMessageIdentity(incoming);
+		if (matchIndex < 0 && incomingIdentity) {
+			for (let index = 0; index < merged.length; index += 1) {
+				if (
+					!matchedCurrent.has(index)
+					&& uiMessageIdentity(merged[index]) === incomingIdentity
+				) {
+					matchIndex = index;
+					break;
+				}
+			}
+		}
+
 		const incomingText = uiMessageText(incoming);
+		const incomingRole = uiMessageRole(incoming);
 		if (matchIndex < 0) {
 			for (let index = merged.length - 1; index >= 0; index -= 1) {
 				const candidate = merged[index];
 				if (
 					matchedCurrent.has(index)
-					|| candidate.role !== incoming.role
+					|| uiMessageRole(candidate) !== incomingRole
 					|| uiMessageText(candidate) !== incomingText
 				) continue;
 				matchIndex = index;
@@ -236,7 +318,7 @@ export function mergeAuthoritativeUiMessages(
 				const candidateText = uiMessageText(merged[index]);
 				if (
 					matchedCurrent.has(index)
-					|| merged[index].role !== incoming.role
+					|| uiMessageRole(merged[index]) !== incomingRole
 					|| !candidateText
 					|| !(incomingText.startsWith(candidateText) || candidateText.startsWith(incomingText))
 				) continue;
@@ -254,8 +336,21 @@ export function mergeAuthoritativeUiMessages(
 			continue;
 		}
 
-		merged.push(incoming);
-		matchedCurrent.add(merged.length - 1);
+		const insertionIndex = findTimestampInsertionIndex(merged, incoming);
+		// matchedCurrent tracks indexes in the mutable merged array. Inserting before
+		// an already matched item shifts its index, so update the set before marking
+		// the newly inserted message as consumed.
+		if (insertionIndex < merged.length) {
+			const shifted = [...matchedCurrent]
+				.filter((index) => index >= insertionIndex)
+				.map((index) => index + 1);
+			for (const index of [...matchedCurrent]) {
+				if (index >= insertionIndex) matchedCurrent.delete(index);
+			}
+			for (const index of shifted) matchedCurrent.add(index);
+		}
+		merged.splice(insertionIndex, 0, incoming);
+		matchedCurrent.add(insertionIndex);
 		changed = true;
 	}
 
