@@ -9,6 +9,7 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui-shadcn/button";
 import { t } from "@/i18n";
+import { isComposingKeyboardEvent } from "../composerBehavior";
 
 export function WebComposer(props: {
 	disabled: boolean;
@@ -43,6 +44,7 @@ export function WebComposer(props: {
 					placeholder={t("web.promptPlaceholder")}
 					disabled={props.disabled}
 					onKeyDown={(event) => {
+						if (isComposingKeyboardEvent(event)) return;
 						if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
 							event.preventDefault();
 							submit();

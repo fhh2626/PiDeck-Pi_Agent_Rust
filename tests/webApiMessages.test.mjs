@@ -250,3 +250,26 @@ test("inserts a missed assistant reply before the next local turn", () => {
 		["第一问", "第一问答复", "第二问", "第二问答复"],
 	);
 });
+
+test("merges streamed reasoning without creating a duplicate assistant message", () => {
+	const current = [
+		{ id: "web-u-1", role: "user", parts: [{ type: "text", text: "问" }] },
+		{
+			id: "web-a-1",
+			role: "assistant",
+			parts: [
+				{ type: "reasoning", text: "思考中" },
+				{ type: "text", text: "回答" },
+			],
+		},
+	];
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "rt-u-1", role: "user", text: "问", timestamp: 100 }),
+		message({ id: "rt-a-1", role: "assistant", text: "回答", thinking: "思考中", timestamp: 101 }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.length, 2);
+	assert.equal(merged[0].id, "rt-u-1");
+	assert.equal(merged[1].id, "rt-a-1");
+});

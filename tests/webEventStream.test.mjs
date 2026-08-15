@@ -72,10 +72,22 @@ test("thinking_delta/end produces reasoning block with start/delta/end", () => {
 		type: "message_update",
 		assistantMessageEvent: { type: "thinking_end", content: "思考中" },
 	});
-	// thinking_end 带 content 但本次事件无 delta：先补一段 reasoning-delta 再收尾
-	assert.equal(end[0].type, "reasoning-delta");
-	assert.equal(end[0].delta, "思考中");
-	assert.equal(end[1].type, "reasoning-end");
+	// thinking_delta 已发射过增量，thinking_end 不得重复追加 reasoning-delta
+	assert.equal(end.length, 1);
+	assert.equal(end[0].type, "reasoning-end");
+});
+
+test("thinking_end without previous delta backfills reasoning-delta", () => {
+	const adapter = new PiEventToUiMessageStream();
+	const end = adapter.push({
+		type: "message_update",
+		assistantMessageEvent: { type: "thinking_end", content: "完整思考" },
+	});
+	assert.equal(end.length, 3);
+	assert.equal(end[0].type, "reasoning-start");
+	assert.equal(end[1].type, "reasoning-delta");
+	assert.equal(end[1].delta, "完整思考");
+	assert.equal(end[2].type, "reasoning-end");
 });
 
 test("tool_execution_start/end produces tool-input-available and tool-output-available", () => {
