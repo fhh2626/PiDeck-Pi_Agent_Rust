@@ -7,6 +7,7 @@ const webSidebar = readFileSync("src/renderer/src/web/WebSidebar.tsx", "utf8");
 const webHeader = readFileSync("src/renderer/src/web/WebHeader.tsx", "utf8");
 const webChatApp = readFileSync("src/renderer/src/web/WebChatApp.tsx", "utf8");
 const webComposer = readFileSync("src/renderer/src/web/WebComposer.tsx", "utf8");
+const webTimeline = readFileSync("src/renderer/src/web/WebTimeline.tsx", "utf8");
 const webHtml = readFileSync("src/renderer/web.html", "utf8");
 
 test("Web shell keeps sidebar and chat pane in a horizontal split", () => {
@@ -54,7 +55,13 @@ test("Mobile Web keeps chat full-screen and opens the project tree as a drawer",
 test("Web starts with no selected session and exposes a scroll-to-bottom action", () => {
 	assert.doesNotMatch(webChatApp, /setActiveSessionId\(next\.sessions\[0\]\?\.id \?\? ""\)/);
 	assert.match(webChatApp, /setActiveSessionId\(""\)/);
-	assert.match(readFileSync("src/renderer/src/web/WebTimeline.tsx", "utf8"), /scroll-to-bottom|ScrollDown|scrollToBottom/);
+	assert.match(webTimeline, /scroll-to-bottom|ScrollDown|scrollToBottom/);
+});
+
+test("Web tool cards stay compact and keep a visible settled status", () => {
+	assert.match(webTimeline, /tool-card inline-flex w-fit max-w-full/);
+	assert.match(webTimeline, /t\("tool\.statusDone"\)/);
+	assert.match(webTimeline, /formatToolPreview/);
 });
 
 test("Project actions are sibling buttons instead of nested controls", () => {

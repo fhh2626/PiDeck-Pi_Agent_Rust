@@ -170,6 +170,62 @@ function createWebMessageMetadata(message: ChatMessage): WebMessageMetadata {
 	return metadata;
 }
 
+function parseWebToolInput(value: unknown): unknown {
+	if (typeof value !== "string") return value ?? {};
+	if (!value.trim()) return {};
+	try {
+		return JSON.parse(value);
+	} catch {
+		return value;
+	}
+}
+
+function getWebToolName(message: ChatMessage): string {
+	const fromMeta = message.meta?.toolName;
+	if (typeof fromMeta === "string" && fromMeta.trim()) return fromMeta.trim();
+	const label = message.text.replace(/^[▶✓✗]\s*/u, "").trim();
+	return label.split(/\s+/u)[0] || "tool";
+}
+
+function createWebToolPart(message: ChatMessage): UIMessage["parts"][number] {
+	const meta = message.meta;
+	const toolName = getWebToolName(message);
+	const toolCallId = typeof meta?.toolCallId === "string" && meta.toolCallId.trim()
+		? meta.toolCallId
+		: message.id;
+	const input = parseWebToolInput(meta?.args);
+	const detail = meta?.detailText ?? meta?.result ?? message.text;
+	const isError = meta?.status === "error" || meta?.isError === true;
+
+	if (meta?.status === "running") {
+		return {
+			type: "dynamic-tool",
+			toolName,
+			toolCallId,
+			state: "input-available",
+			input,
+		};
+	}
+	if (isError) {
+		return {
+			type: "dynamic-tool",
+			toolName,
+			toolCallId,
+			state: "output-error",
+			input,
+			errorText: typeof detail === "string" ? detail : message.text,
+		};
+	}
+	return {
+		type: "dynamic-tool",
+		toolName,
+		toolCallId,
+		state: "output-available",
+		input,
+		output: detail,
+	};
+}
+
 /**
  * 历史 ChatMessage 列表 → useChat 的 UIMessage[]（text-only parts）。
  * 历史消息仅注入正文；流式思考/工具由 useChat 从 SSE 实时构建，避免与
@@ -186,11 +242,15 @@ export function chatMessagesToUiMessages(messages: ChatMessage[]): UIMessage[] {
 					? "assistant"
 					: "assistant";
 		const parts: UIMessage["parts"] = [];
-		if (message.thinking) {
-			parts.push({ type: "reasoning", text: message.thinking });
-		}
-		if (message.text) {
-			parts.push({ type: "text", text: message.text });
+		if (message.role === "tool") {
+			parts.push(createWebToolPart(message));
+		} else {
+			if (message.thinking) {
+				parts.push({ type: "reasoning", text: message.thinking });
+			}
+			if (message.text) {
+				parts.push({ type: "text", text: message.text });
+			}
 		}
 		return {
 			id: message.id ?? `hist-${message.timestamp ?? Math.random()}`,

@@ -91,9 +91,24 @@ type WebToolPart = {
 	toolName?: string;
 	toolCallId?: string;
 	state?: string;
+	input?: unknown;
 	output?: unknown;
 	errorText?: string;
 };
+
+function formatToolPreview(value: unknown): string {
+	if (value === undefined || value === null) return "";
+	const text = typeof value === "string" ? value : (() => {
+		try {
+			return JSON.stringify(value);
+		} catch {
+			return "";
+		}
+	})();
+	if (!text) return "";
+	const compact = text.replace(/\s+/gu, " ").trim();
+	return compact.length > 120 ? `${compact.slice(0, 117)}…` : compact;
+}
 
 /** 工具卡片（复用桌面 tool-card 视觉：图标 + 工具名 + 状态）。 */
 export const WebToolCard = memo(function WebToolCard(props: { part: WebToolPart }) {
@@ -107,19 +122,20 @@ export const WebToolCard = memo(function WebToolCard(props: { part: WebToolPart 
 	const state = part.state ?? "input-streaming";
 	const running = state === "input-streaming" || state === "input-available";
 	const error = state === "output-error" || state === "error" || Boolean(part.errorText);
+	const preview = formatToolPreview(error ? part.errorText : running ? part.input : part.output);
 	return (
 		<TimelineMarker kind="tool" tone={error ? "error" : running ? "active" : "success"}>
 		<section
 			className={cn(
-				"tool-card w-full min-w-0 overflow-hidden rounded-md border border-border-subtle bg-bg-panel transition-[border-color,background-color] duration-150",
+				"tool-card inline-flex w-fit max-w-full min-w-0 overflow-hidden rounded-md border border-border-subtle bg-bg-panel transition-[border-color,background-color] duration-150",
 				running && "tone-running",
 				error && "tone-error",
 			)}
 			data-status={error ? "error" : running ? "running" : "done"}
 			data-tool-name={toolName}
 		>
-			<div className="flex min-h-8 items-center p-1.5 pl-2.5">
-				<span className="tool-card-trigger flex min-w-0 items-center gap-2 text-control leading-5 text-text-secondary">
+			<div className="flex min-h-8 max-w-full items-center p-1.5 pl-2.5">
+				<span className="tool-card-trigger flex min-w-0 max-w-full items-center gap-2 text-control leading-5 text-text-secondary">
 					<span className="tool-card-icon">
 						<Wrench size={14} aria-hidden="true" />
 					</span>
@@ -132,8 +148,18 @@ export const WebToolCard = memo(function WebToolCard(props: { part: WebToolPart 
 							</span>
 						) : error ? (
 							<span className="inline-flex items-center gap-1.5">{t("tool.statusError")}</span>
-						) : null}
+						) : (
+							<span className="inline-flex items-center gap-1.5">{t("tool.statusDone")}</span>
+						)}
 					</span>
+					{preview ? (
+						<span
+							className="min-w-0 max-w-[min(60vw,42ch)] truncate font-mono text-micro text-text-tertiary"
+							title={preview}
+						>
+							{preview}
+						</span>
+					) : null}
 				</span>
 			</div>
 		</section>
