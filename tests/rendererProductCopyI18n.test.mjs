@@ -81,6 +81,7 @@ test("settings error and unsaved-change copy matches the dev baseline", () => {
 const fileDiffViewer = read("src/renderer/src/components/app/FileDiffViewer.tsx");
 const timeline = read("src/renderer/src/components/session/SessionMessageTimeline.tsx");
 const settings = read("src/renderer/src/components/app/SettingsModal.tsx");
+const settingsRows = read("src/renderer/src/components/app/settings/SettingRows.tsx");
 const settingsStorage = read("src/renderer/src/components/app/settings/SettingsStorageTab.tsx");
 const drawer = read("src/renderer/src/components/workspace/DrawerSurface.tsx");
 const surface = [
@@ -148,7 +149,9 @@ test("reachable renderer surfaces use i18n without changing their UI structure",
 	assert.match(timeline, /t\("timeline\.loadMoreHistory", \{[\s\S]*?count:/);
 	assert.match(drawer, /className="drawer-content-frame"[\s\S]*?\{t\("drawer\.lazyLoading"\)\}/);
 	assert.match(settings, /import \{ SettingsSection, StorageTab \} from "\.\/settings\/SettingsStorageTab"/);
-	assert.match(settings, /t\("settings\.dirtyTooltip"\)/);
+	// DirtyMarker 是共享设置行组件（从 SettingsModal 抽出的既有 UI 能力）；
+	// settings.dirtyTooltip 的实际使用方在 SettingRows.tsx。
+	assert.match(settingsRows, /t\("settings\.dirtyTooltip"\)/);
 	assert.match(settings, /t\("settings\.sectionRuntime"\)/);
 	assert.match(settings, /t\("settings\.unsavedTitle"\)/);
 	assert.match(settings, /t\("settings\.discardChanges"\)/);

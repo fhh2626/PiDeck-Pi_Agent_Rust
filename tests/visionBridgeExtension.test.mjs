@@ -92,7 +92,7 @@ test("loadVisionBridgeConfig: parses file and merges defaults", async () => {
 	// 未填字段落到默认值
 	assert.equal(config.enabled, true);
 	assert.equal(config.maxTokens, 0);
-	assert.equal(config.timeoutMs, 30_000);
+	assert.equal(config.timeoutMs, 120_000);
 	assert.equal(config.concurrency, 2);
 	assert.ok(config.promptTemplate.length > 0);
 });

@@ -1,9 +1,11 @@
 import { atom } from "jotai";
 import type { ComposerAgentMode, ImageContent } from "../../../shared/types";
+import type { ModelPending } from "../utils/modelPendingDisplay";
 import type { ThinkingLevelPending } from "../utils/thinkingDisplay";
 import { currentSessionIdAtom } from "./session-atoms";
 
 export type SessionComposerMode = ComposerAgentMode;
+export type { ModelPending };
 
 export type SessionSendState = {
   status: "idle" | "activating" | "sending" | "error" | "unknown";
@@ -28,6 +30,12 @@ export const sessionSendStateByIdAtom = atom<Record<string, SessionSendState>>({
 export const thinkingLevelPendingByIdAtom = atom<
 	Record<string, ThinkingLevelPending | undefined>
 >({});
+
+/**
+ * 生成进行中切换模型：pi 不支持运行中 set_model，只写入会话记录；
+ * 本轮结束后再套到 Agent。新加、不在启动快照里的模型不走这里，走重启确认。
+ */
+export const modelPendingByIdAtom = atom<Record<string, ModelPending | undefined>>({});
 
 export const currentSessionDraftAtom = atom(
   (get) => {
@@ -164,4 +172,10 @@ export const removeSessionComposerStateAtom = atom(null, (get, set, sessionId: s
   const sendStates = { ...get(sessionSendStateByIdAtom) };
   delete sendStates[sessionId];
   set(sessionSendStateByIdAtom, sendStates);
+  const thinkingPending = { ...get(thinkingLevelPendingByIdAtom) };
+  delete thinkingPending[sessionId];
+  set(thinkingLevelPendingByIdAtom, thinkingPending);
+  const modelPending = { ...get(modelPendingByIdAtom) };
+  delete modelPending[sessionId];
+  set(modelPendingByIdAtom, modelPending);
 });

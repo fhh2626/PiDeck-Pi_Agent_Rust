@@ -236,6 +236,20 @@ export class SessionRuntimeCoordinator {
 		return this.sessionIdByAgent.get(agentId);
 	}
 
+	/**
+	 * 进程监控用：按 agentId 反查会话身份（sessionId + 标题）。
+	 * 标题取 catalog 条目，供监控表直接展示「是哪个会话」；
+	 * 无绑定或 catalog 无记录时返回 undefined（匿名/终端 agent 不关联会话）。
+	 */
+	getSessionInfoForAgent(
+		agentId: string,
+	): { sessionId: string; sessionTitle?: string } | undefined {
+		const sessionId = this.sessionIdByAgent.get(agentId);
+		if (!sessionId) return undefined;
+		const entry = this.catalog.get(sessionId);
+		return { sessionId, sessionTitle: entry?.title };
+	}
+
 	listRuntimes(): SessionRuntimeInfo[] {
 		const result: SessionRuntimeInfo[] = [];
 		for (const [sessionId, agentId] of this.agentIdBySession) {
@@ -428,11 +442,15 @@ export class SessionRuntimeCoordinator {
 		modelId: string,
 	): Promise<SessionCommandResult<SessionTargetedValue<AgentRuntimeState>>> {
 		return this.runTargetCommand(target, async (agentId) => {
+			// 先调运行中 Agent；成功后再写 catalog。
+			// 若先写后失败：用户点「取消重启」时 catalog 已是新模型，下次启动会误套上；
+			// 且 ConfirmDialog 点确定也会走 onCancel，回滚与确认会互相踩。
+			// needsRestart 由渲染层在用户确认后再 updateRecord + 重启。
+			await this.agents.setModel(agentId, provider, modelId);
 			await this.catalog.update(target.sessionId, {
 				model: { provider, modelId },
 				updatedAt: Date.now(),
 			});
-			await this.agents.setModel(agentId, provider, modelId);
 			void this.logger?.info("session-runtime", "Runtime model changed", {
 				sessionId: target.sessionId,
 				agentId,
@@ -1339,26 +1357,52 @@ export class SessionRuntimeCoordinator {
 					code: "SESSION_MODEL_NOT_FOUND",
 					debugDetails: error.message,
 					needsRestart: true,
+					// 提取 "Model not found: xxx" 中的模型标识，让 i18n 文案 {model} 有值
+					params: { model: this.extractModelFromNotFound(error.message) ?? error.message },
 				},
 			};
 		}
 		const message = errorMessage(error);
 		const lower = message.toLowerCase();
+		const model = this.extractModelFromNotFound(message);
 		const code: SessionCommandErrorCode =
 			// 消息定位失败（编辑/删除/重发缓存与文件都未命中）先于泛化 "not found" 识别：
 			// 否则会误报成 SESSION_NOT_FOUND（「会话已不存在」），而会话其实还在。
 			lower.includes("message not found")
 				? "MESSAGE_NOT_FOUND"
-				: lower.includes("not found")
-					? "SESSION_NOT_FOUND"
-					: lower.includes("busy") || lower.includes("in progress") || lower.includes("stream")
-						? "SESSION_RUNTIME_BUSY"
-						: lower.includes("binding") || lower.includes("generation") || lower.includes("changed")
-							? "SESSION_RUNTIME_CHANGED"
-							: lower.includes("runtime") && lower.includes("available")
-								? "SESSION_RUNTIME_UNAVAILABLE"
-								: "SESSION_COMMAND_FAILED";
-		return { ok: false, error: { code, debugDetails: message } };
+				// set_model 的 "Model not found: provider/model"（本地 models.json 也没有该模型，
+				// 如手误/列表错位产生的假模型）是「模型不存在」而非「会话不存在」——
+				// 若落到泛化 "not found" 分支会误报成「会话已不存在」误导排查。
+				: lower.includes("model not found")
+					? "SESSION_MODEL_NOT_FOUND"
+					: lower.includes("not found")
+						? "SESSION_NOT_FOUND"
+						: lower.includes("busy") || lower.includes("in progress") || lower.includes("stream")
+							? "SESSION_RUNTIME_BUSY"
+							: lower.includes("binding") || lower.includes("generation") || lower.includes("changed")
+								? "SESSION_RUNTIME_CHANGED"
+								: lower.includes("runtime") && lower.includes("available")
+									? "SESSION_RUNTIME_UNAVAILABLE"
+									: "SESSION_COMMAND_FAILED";
+		return {
+			ok: false,
+			error: {
+				code,
+				debugDetails: message,
+				// 仅模型不存在类错误带 model 参数（i18n 文案占位）；其余错误不附加
+				...(code === "SESSION_MODEL_NOT_FOUND" && model ? { params: { model } } : {}),
+			},
+		};
+	}
+
+	/**
+	 * 从 "Model not found: <provider/model>" 类错误消息提取模型标识。
+	 * 支持 "Model not found: xxx" / "model not found:xxx" 两种分隔；
+	 * 未匹配返回 undefined（由调用方决定兜底）。
+	 */
+	private extractModelFromNotFound(message: string): string | undefined {
+		const match = /model not found\s*:?\s*(.+)$/i.exec(message);
+		return match?.[1]?.trim() || undefined;
 	}
 
 	private acquireDispatchLease(sessionId: string, agentId: string): DispatchLease {

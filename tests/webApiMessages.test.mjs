@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadTsCommonJs } from "./helpers/loadTsCommonJs.mjs";
 
-const { chatMessagesToUiMessages } = loadTsCommonJs(
+const { chatMessagesToUiMessages, mergeAuthoritativeUiMessages } = loadTsCommonJs(
 	"src/renderer/src/web/webApi.ts",
 );
 
@@ -63,4 +63,116 @@ test("omits text part when text empty", () => {
 test("keeps stable ids from message", () => {
 	const result = chatMessagesToUiMessages([message({ id: "stable-id" })]);
 	assert.equal(result[0].id, "stable-id");
+});
+
+test("keeps historical tool messages as styled dynamic tool parts", () => {
+	const result = chatMessagesToUiMessages([
+		message({
+			id: "tool-message",
+			role: "tool",
+			text: "✓ bash",
+			meta: {
+				toolName: "bash",
+				toolCallId: "call-bash",
+				status: "done",
+				args: JSON.stringify({ command: "pwd" }),
+				detailText: "C:/project",
+			},
+		}),
+	]);
+
+	assert.equal(result[0].role, "assistant");
+	assert.equal(result[0].parts[0].type, "dynamic-tool");
+	assert.equal(result[0].parts[0].toolName, "bash");
+	assert.equal(result[0].parts[0].toolCallId, "call-bash");
+	assert.equal(result[0].parts[0].state, "output-available");
+});
+
+test("merges a runtime snapshot into local Web messages without duplicating local ids", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "history-1", role: "assistant", text: "older" }),
+		message({ id: "web-user", role: "user", text: "hello" }),
+		message({ id: "web-assistant", role: "assistant", text: "answer" }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-user", role: "user", text: "hello" }),
+		message({ id: "runtime-assistant", role: "assistant", text: "answer" }),
+		message({ id: "runtime-next", role: "assistant", text: "new from PC" }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.map((item) => item.parts[0]?.type).join(","), "text,text,text,text");
+	assert.equal(merged.map((item) => item.parts[0]?.text).join(","), "older,hello,answer,new from PC");
+	assert.equal(merged[1].id, "runtime-user");
+	assert.equal(merged[2].id, "runtime-assistant");
+});
+
+test("authoritative snapshots replace a stale partial assistant message", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "local-assistant", role: "assistant", text: "partial" }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-assistant", role: "assistant", text: "partial answer" }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.length, 1);
+	assert.equal(merged[0].id, "runtime-assistant");
+	assert.equal(merged[0].parts[0].text, "partial answer");
+});
+
+test("runtime snapshots match the newest repeated message instead of old history", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "old-ok", role: "assistant", text: "ok" }),
+		message({ id: "web-ok", role: "assistant", text: "ok" }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-ok", role: "assistant", text: "ok" }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.length, 2);
+	assert.equal(merged[0].id, "old-ok");
+	assert.equal(merged[1].id, "runtime-ok");
+});
+
+test("runtime tool snapshots keep their position when display text changes", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "history-user", role: "user", text: "inspect" }),
+		message({ id: "history-assistant", role: "assistant", text: "I will inspect" }),
+		message({ id: "history-tool", role: "tool", text: "✓ read", meta: { toolCallId: "call-1" } }),
+		message({ id: "history-final", role: "assistant", text: "done" }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-user", role: "user", text: "inspect" }),
+		message({ id: "runtime-assistant", role: "assistant", text: "I will inspect" }),
+		message({ id: "runtime-tool", role: "tool", text: "▶ read", meta: { toolCallId: "call-1" } }),
+		message({ id: "runtime-final", role: "assistant", text: "done" }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(
+		merged.map((item) => item.parts[0]?.type).join(","),
+		["text", "text", "dynamic-tool", "text"].join(","),
+	);
+	assert.equal(merged.length, 4);
+	assert.equal(merged[2].parts[0].toolName, "read");
+});
+
+test("unmatched authoritative messages are inserted by their timeline timestamp", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "history-first", role: "user", text: "first", timestamp: 100 }),
+		message({ id: "history-last", role: "assistant", text: "last", timestamp: 300 }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-first", role: "user", text: "first", timestamp: 100 }),
+		message({ id: "runtime-status", role: "system", text: "retrying", timestamp: 200 }),
+		message({ id: "runtime-last", role: "assistant", text: "last", timestamp: 300 }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(
+		merged.map((item) => item.parts[0]?.text).join("\u0000"),
+		["first", "retrying", "last"].join("\u0000"),
+	);
 });

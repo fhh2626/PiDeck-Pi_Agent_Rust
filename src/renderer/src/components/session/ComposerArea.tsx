@@ -19,7 +19,7 @@ import {
 import { ComposerPickerHost } from "./ComposerPickerHost";
 import { SecurityLevelMenu } from "./SecurityLevelMenu";
 import { useAskPanel } from "../../hooks/useAskPanel";
-import { setSessionDraftAtom, thinkingLevelPendingByIdAtom } from "../../atoms/composer-atoms";
+import { modelPendingByIdAtom, setSessionDraftAtom, thinkingLevelPendingByIdAtom } from "../../atoms/composer-atoms";
 import { sessionRecordByIdAtomFamily } from "../../atoms";
 import { useSessionPaneServices } from "./SessionPaneServices";
 import { desktopApi } from "../../desktopApi";
@@ -156,6 +156,7 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
   // 流式生成中切换思考强度产生的「待生效」指示（issue #146）：
   // 飞行中的生成仍用旧档位，新档位下一轮才生效；流式一结束就没有“当前生效”参照，直接清除。
   const [thinkingPendingMap, setThinkingPendingMap] = useAtom(thinkingLevelPendingByIdAtom);
+  const modelPendingMap = useAtomValue(modelPendingByIdAtom);
   const isStreaming = Boolean(composer.runtime?.state?.isStreaming);
   useEffect(() => {
     if (!isStreaming && thinkingPendingMap[props.sessionId]) {
@@ -281,6 +282,7 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
                 onCursorChange={composer.editor.onCursorChange}
                 onKeyDown={composer.editor.onKeyDown}
                 onPaste={composer.editor.onPaste}
+                onPasteClipboard={composer.editor.onPasteClipboard}
                 onDrop={composer.editor.onDrop}
                 onDragOver={composer.editor.onDragOver}
                 onBlur={composer.editor.onBlur}
@@ -297,13 +299,15 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
                   onPick={composer.suggestions.pick}
                 />
               ) : null}
-              {/* 运行中仍可切换思考强度（pi 下一轮生成生效）；仅 Agent 启动中禁用 */}
+              {/* 运行中仍可切换思考强度（下一轮生效）和模型（本轮结束后套上）；仅启动中禁用 */}
               <ComposerBottomBar
                 state={composer.runtime?.state}
                 compacting={Boolean(composer.runtime?.state?.isCompacting)}
                 disabled={composer.isBusy || composer.isStarting}
                 thinkingDisabled={composer.isStarting}
+                modelDisabled={composer.isStarting}
                 thinkingPending={thinkingPendingMap[props.sessionId]}
+                modelPending={modelPendingMap[props.sessionId]}
                 composerAgentMode={composer.mode}
                 gitInfo={props.gitInfo}
                 record={composer.record}

@@ -7,7 +7,7 @@
  * 规则（与内置表 lookupModelSpec 语义对齐）：
  * - 只填空字段：contextWindow/maxTokens 为空才填、reasoning 仅在「未设置」时填 true、
  *   input 未配置且规格声明图片才填——用户手填/明确关掉的一律不覆盖。
- * - contextWindow/maxTokens 官方未公开（undefined）的模型跳过对应字段，不填误导值。
+ * - 规格未命中或字段未公开时保持为空，不能用猜测值改变自定义模型的请求上限。
  */
 
 import type { ModelSpec } from "../../../shared/types/modelSpecs";
@@ -19,10 +19,10 @@ export function computeModelSpecPatches(
 	spec: ModelSpec,
 ): Array<[string, unknown]> {
 	const updates: Array<[string, unknown]> = [];
-	if (model.contextWindow == null && spec.contextWindow != null) {
+	if (model.contextWindow == null && typeof spec.contextWindow === "number") {
 		updates.push(["contextWindow", spec.contextWindow]);
 	}
-	if (model.maxTokens == null && spec.maxTokens != null) {
+	if (model.maxTokens == null && typeof spec.maxTokens === "number") {
 		updates.push(["maxTokens", spec.maxTokens]);
 	}
 	// reasoning 只在「未设置」时填 true；用户明确关掉的 false 不覆盖
@@ -66,6 +66,9 @@ export async function collectModelSpecPatches(
 			// 浅拷贝 provider，仅 models 数组会被替换，其余字段共享引用
 			providers[providerName] = { ...provider, models: [...provider.models] };
 		}
+		// 空 id 模型无意义，跳过（不发查询、不填默认值）
+		if (!model.id) continue;
+		// 未匹配或查询失败时不猜测模型上限，保留 provider/pi 的默认行为。
 		if (!spec) continue;
 		const updates = computeModelSpecPatches(model, spec);
 		if (updates.length === 0) continue;

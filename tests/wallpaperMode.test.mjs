@@ -23,7 +23,7 @@ test("wallpaper mode: background image reveals through translucent panels", () =
   assert.match(css, /body::before\s*\{[\s\S]*?background-image: var\(--app-bg-mask, none\), var\(--app-bg-image, none\);/);
   assert.match(css, /--color-bg-popover: #ffffff;/);
   assert.match(css, /--color-bg-popover: #171717;/);
-  assert.match(css, /\[data-slot="dialog-content"\]\.config-modal[\s\S]*?\.settings-modal[\s\S]*?\.project-resources-dialog[\s\S]*?\.feedback-modal-shell[\s\S]*?--wallpaper-dialog-alpha: var\(--wallpaper-panel-alpha, 30%\);/);
+  assert.match(css, /\[data-slot="dialog-content"\]\.config-modal[\s\S]*?\.settings-modal[\s\S]*?\.project-resources-dialog[\s\S]*?\.environment-dialog[\s\S]*?--wallpaper-dialog-alpha: var\(--wallpaper-panel-alpha, 30%\);/);
   assert.match(css, /background: var\(--color-chat-muted-bg\);/);
   assert.match(css, /background: var\(--color-chat-table-bg, var\(--color-bg-panel\)\);/);
 });
@@ -56,19 +56,17 @@ test("large settings dialogs inherit page wallpaper transparency", () => {
   assert.match(modelsSource, /config-provider-card/);
   assert.match(modelsSource, /config-provider-body/);
   assert.match(modelsSource, /config-model-table/);
-  assert.match(surfacesSource, /\.config-modal \.config-model-table[\s\S]*?\.feedback-modal-shell \.feedback-environment-content[\s\S]*?\.feedback-modal-shell \.feedback-actions/);
+  assert.match(surfacesSource, /\.config-modal \.config-model-table[\s\S]*?\.settings-modal \.settings-layout/);
 });
 
-test("Pi management and feedback dialogs inherit page wallpaper transparency", () => {
+test("Pi management dialogs inherit page wallpaper transparency", () => {
   const piSource = readFileSync("src/renderer/src/ConfigModal.tsx", "utf8");
   const environmentSource = readFileSync("src/renderer/src/components/overlays/OverlayComponents.tsx", "utf8");
-  const feedbackSource = readFileSync("src/renderer/src/components/overlays/SessionActionOverlays.tsx", "utf8");
 
-  // Pi 环境管理和问题反馈都是完整业务面板，应与设置/项目资源管理使用同一透明度，
-  // 其内部卡片和 textarea 才能继承主题 token，而不是被通用 Dialog 的 90% 基线锁住。
+  // Pi 环境管理是完整业务面板，应与设置/项目资源管理使用同一透明度，
+  // 其内部卡片才会继承主题 token，而不是被通用 Dialog 的 90% 基线锁住。
   assert.match(piSource, /config-modal[^\n]*\[--wallpaper-dialog-alpha:var\(--wallpaper-panel-alpha,30%\)\]/);
   assert.match(environmentSource, /environment-dialog[^\n]*\[--wallpaper-dialog-alpha:var\(--wallpaper-panel-alpha,30%\)\]/);
-  assert.match(feedbackSource, /feedback-modal-shell[^\n]*\[--wallpaper-dialog-alpha:var\(--wallpaper-panel-alpha,30%\)\]/);
 });
 
 test("App.tsx toggles wallpaper mode marker with background image setting", () => {

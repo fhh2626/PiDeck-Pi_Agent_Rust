@@ -26,10 +26,16 @@ import {
 	type SessionScrollAnchor,
 } from "../atoms";
 import type { MessageScrollerScrollApi } from "../components/agents/message-scroller";
+import {
+  TIMELINE_SCROLLED_TURN_LIMIT,
+  TIMELINE_WINDOW_EXPAND_STEP,
+} from "../components/session/timeline/turnRenderWindow";
 
 /** 滚动接近顶部自动加载历史的阈值（px，2026-11 轮次模型）：
- *  贴顶（≤8px）才触发翻页——「滑到底才翻」，避免在顶部附近任何滚动都连翻历史页。 */
-const HISTORY_AUTO_LOAD_THRESHOLD = 8;
+ *  贴顶（≤8px）才触发翻页——「滑到底才翻」，避免在顶部附近任何滚动都连翻历史页。
+ *  同时用作「顶部不补偿」阈值：视口顶部 prepend/展开新内容时保持原位可见，
+ *  补偿会把新内容推出视口（点击「加载更多/显示更早」无反馈根因，2026-02 修复）。 */
+export const HISTORY_AUTO_LOAD_THRESHOLD = 8;
 /** 翻页冷却（ms）：加载完成后立即再滚到顶不连翻，需停顿后重新触发（防惯性滚动连翻多页）。 */
 const HISTORY_AUTO_LOAD_COOLDOWN_MS = 300;
 
@@ -69,6 +75,20 @@ export function restoreTimelineAnchor(previousTop: number, heightDelta: number):
   return previousTop + heightDelta;
 }
 
+/** 顶部补偿决策（数据 prepend / turn 窗口扩大共用，2026-02 修复）：
+ *  视口在顶部（≤阈值）时不补偿，保持原位让新加载/展开的内容直接出现在视口顶部——
+ *  容器 overflow-anchor:none，插入内容不会自动调整滚动位置，补偿反而把新内容推出视口，
+ *  表现为「点击加载更多/显示更早无反馈」。视口中部时按高度差补偿以保持视口内容不动。
+ *  返回补偿后的 scrollTop；null = 不补偿（保持原位）。 */
+export function resolveTimelineTopCompensation(
+  previousTop: number,
+  heightDelta: number,
+  threshold = HISTORY_AUTO_LOAD_THRESHOLD,
+): number | null {
+  if (previousTop <= threshold) return null;
+  return restoreTimelineAnchor(previousTop, heightDelta);
+}
+
 export function matchesTimelineOwner(
   taggedOwnerKey: string,
   currentOwnerKey: string,
@@ -86,6 +106,11 @@ export function isSessionRuntimeBusy(
   return Boolean(status === "running" || state?.isStreaming || state?.isExecutingTool);
 }
 
+/** 用户主动发送才算「正在启动」。输入预热也会把 runtime 打成 starting，但不能锁输入框。 */
+export function isUserFacingSessionStart(sendStatus: string | undefined): boolean {
+  return sendStatus === "activating";
+}
+
 export function deriveSessionSurfaceRuntime(
   messageCount: number,
   messageLoadStatus: string | undefined,
@@ -94,7 +119,7 @@ export function deriveSessionSurfaceRuntime(
   runtimeState: AgentRuntimeState | undefined,
   hasCachedEntry?: boolean,
 ) {
-  const activating = sendStatus === "activating";
+  const activating = isUserFacingSessionStart(sendStatus);
   const status = activating ? "starting" : runtimeStatus;
   return {
     status,
@@ -108,10 +133,10 @@ export function deriveSessionSurfaceRuntime(
       // （cacheMessages 对 disk 读取无论空/非空都会创建条目）：必须钉在骨架屏。
       // 缓存条目已存在（即使 messages 为空）说明 disk 已返回——空会话显示起始页
       // 是合法终态，不会进入加载死循环。读取失败（error）不在此列。
-      (messageLoadStatus === "ready" && !hasCachedEntry) ||
-      activating
+      // 预热/发送 activating 不能再钉骨架：空会话应留在起始页，避免「输入一半整页闪骨架」。
+      (messageLoadStatus === "ready" && !hasCachedEntry)
     ),
-    isStarting: status === "starting",
+    isStarting: activating,
     isBusy: activating || sendStatus === "sending" || isSessionRuntimeBusy(status, runtimeState),
   };
 }
@@ -143,17 +168,10 @@ export type SessionTimelineController = {
   markProgrammaticScroll: () => void;
   jumpToMessage: (messageId: string) => void;
   scrollToBottom: () => void;
-  /**
-   * 自动收起执行过程后：若用户仍在跟随，把视口对准该 run 最终回答开头。
-   * 不打断已上滚阅读历史的用户。
-   */
-  scrollFinalAnswerIntoView: (runId: string) => void;
   /** 滚动回调（MessageScroller viewport 接线）：维护会话切换的滚动锚点。 */
   handleTimelineScroll: () => void;
   autoScroll: boolean;
   showScrollToBottom: boolean;
-  /** pin-to-top 动画期间冻结 MessageScroller 的流式跟随，避免高度变化打断动画。 */
-  pinAnimating: boolean;
   /** 由 MessageScroller 汇报用户是否仍在实时尾部，避免两套滚动监听互相抢占。 */
   setAutoScrollFromScroller: (following: boolean) => void;
   /**
@@ -161,12 +179,11 @@ export type SessionTimelineController = {
    * 未挂上时 scrollToBottom 退化为原生 scrollTo。
    */
   scrollerScrollApiRef: RefObject<MessageScrollerScrollApi | null>;
-  /** 发送置顶动画：最新用户消息 id（垫片锚点），未激活为 undefined。 */
-  pinnedTurnId?: string;
-  /** 垫片高度（px），由 controller 按「用户消息顶到视口顶部」目标动态收敛。 */
-  pinSpacerHeight?: number;
-  /** 发送消息后调用：把指定用户消息平滑滚动到视口顶部（此前内容整体顶出屏幕）。 */
-  pinTurnToTop?: (userMessageId: string, options?: { animate?: boolean }) => void;
+  /** 上滚查看历史时的渲染窗口轮数（贴底时渲染层用 TIMELINE_MOUNTED_TURN_LIMIT，忽略此值）。
+   *  2026-08 黑屏治理：历史不再全量放开挂载，窗口随「显示更早」逐步扩大。 */
+  scrolledWindowTurns: number;
+  /** 扩大上滚渲染窗口（+TIMELINE_WINDOW_EXPAND_STEP 轮）；数据翻页仍由滚动到顶自动加载负责。 */
+  expandWindow: () => void;
 };
 
 export function useSessionTimelineController(options: {
@@ -361,18 +378,24 @@ export function useSessionTimelineController(options: {
   const loadMoreAnchorRef = useRef<Tagged<TimelineAnchor> | undefined>(undefined);
   const pendingJumpRef = useRef<Tagged<string> | undefined>(undefined);
   const highlightTimersRef = useRef(new Map<number, number>());
-  // ── 发送置顶动画（pin-to-top）──
-  // 发消息后在列表尾部补一块垫片，让最新用户消息可以平滑滚动到视口顶部，
-  // 此前所有消息整体被顶出屏幕；回答流式增长时垫片同步收敛，内容超过一屏后归零。
-  const [pinnedTurnId, setPinnedTurnId] = useState<string | undefined>(undefined);
-  const [pinSpacerHeight, setPinSpacerHeight] = useState(0);
-  const [pinAnimating, setPinAnimating] = useState(false);
-  const pinnedTurnIdRef = useRef<string | undefined>(undefined);
-  pinnedTurnIdRef.current = pinnedTurnId;
-  // 动画进行中的标记：期间抑制 ResizeObserver/MutationObserver 的即时贴底，防止打断平滑滚动
-  const pinAnimatingRef = useRef(false);
-  // 本轮 pin 是否需要播动画（乐观消息被权威消息换绑时只重定向、不重播）
-  const pinAnimateRequestRef = useRef(false);
+  // ── 上滚渲染窗口（2026-08 黑屏治理）──
+  // 贴底时渲染层固定用 3 轮小窗口；上滚看历史用此窗口（初始 15 轮，
+  // 「显示更早」按钮逐步扩大）。回底 = 新的浏览周期，窗口重置回基础大小。
+  const [scrolledWindowTurns, setScrolledWindowTurns] = useState(TIMELINE_SCROLLED_TURN_LIMIT);
+  const expandWindow = useCallback(() => {
+    // 跟底状态（内容短于视口、按钮可见）下点击「显示更早」：先解锁跟随，
+    // 否则 turnWindowTurns 恒取贴底窗口 3 轮，扩大 scrolledWindowTurns 不生效，
+    // 按钮点击表现为无反应（2026-02 修复）。
+    if (autoScrollRef.current) {
+      autoScrollRef.current = false;
+      setAutoScroll(false);
+      setShowScrollToBottom(true);
+    }
+    setScrolledWindowTurns((prev) => prev + TIMELINE_WINDOW_EXPAND_STEP);
+  }, []);
+  useEffect(() => {
+    if (autoScroll) setScrolledWindowTurns(TIMELINE_SCROLLED_TURN_LIMIT);
+  }, [autoScroll]);
 
   const clearHighlightTimers = useCallback(() => {
     for (const timer of highlightTimersRef.current.values()) {
@@ -419,43 +442,6 @@ export function useSessionTimelineController(options: {
     });
   }, [ownerKey]);
 
-  /**
-   * 自动收起执行过程后，把最终回答开头放到视口中上部（约 35% 处），方便阅读。
-   * 仅当用户仍在跟随时执行；已上滚看历史则不拽回。
-   * 禁止贴顶（rowTop-20）：短会话里贴顶等于整页滚回最上，体感像「发送后又飞上天」。
-   * 若已有更新一轮的最终回答，也不要拽回旧回答。
-   * 注：引擎暂无任意 offset 弹簧 API，此处用浏览器 smooth；回底按钮仍走弹簧。
-   */
-  const scrollFinalAnswerIntoView = useCallback((runId: string) => {
-    if (!autoScrollRef.current) return;
-    const requestOwnerKey = ownerKey;
-    const timeline = timelineRef.current;
-    if (!timeline || ownerKeyRef.current !== requestOwnerKey) return;
-    const finals = timeline.querySelectorAll<HTMLElement>("[data-final-answer]");
-    const last = finals[finals.length - 1];
-    // 只对准时间线上最后一条最终回答；旧轮定时器迟到时直接忽略
-    if (!last || last.getAttribute("data-final-answer") !== runId) return;
-
-    // 先解除跟随，避免 stick 在负增高后锁底，把视口钉在回答末尾
-    autoScrollRef.current = false;
-    setAutoScroll(false);
-    setShowScrollToBottom(true);
-
-    const rowTop =
-      last.getBoundingClientRect().top -
-      timeline.getBoundingClientRect().top +
-      timeline.scrollTop;
-    // 最终回答开头落在视口中上部（约 35%），不要贴顶也不要贴底
-    const viewportAnchor = Math.round(timeline.clientHeight * 0.35);
-    const targetTop = Math.max(0, rowTop - viewportAnchor);
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    programmaticScrollRef.current = true;
-    timeline.scrollTo({
-      top: targetTop,
-      behavior: reduceMotion ? "instant" : "smooth",
-    });
-  }, [ownerKey]);
-
   const setAutoScrollFromScroller = useCallback((following: boolean) => {
     autoScrollRef.current = following;
     setAutoScroll(following);
@@ -463,125 +449,6 @@ export function useSessionTimelineController(options: {
   }, []);
 
   /** 计算垫片高度：让「用户消息顶 + 视口高 == 内容总高」，滚到底时用户消息正好钉在顶部。 */
-  const measurePinSpacer = useCallback((): number => {
-    const timeline = timelineRef.current;
-    const pinnedId = pinnedTurnIdRef.current;
-    if (!timeline || !pinnedId) return 0;
-    const row = timeline.querySelector(
-      `[data-message-id="${CSS.escape(pinnedId)}"]`,
-    ) as HTMLElement | null;
-    if (!row) return 0;
-    const rowTop =
-      row.getBoundingClientRect().top -
-      timeline.getBoundingClientRect().top +
-      timeline.scrollTop;
-    const spacerEl = timeline.querySelector(".timeline-pin-spacer") as HTMLElement | null;
-    const currentSpacer = spacerEl?.offsetHeight ?? 0;
-    const contentWithoutSpacer = timeline.scrollHeight - currentSpacer;
-    return Math.max(0, Math.round(rowTop + timeline.clientHeight - contentWithoutSpacer));
-  }, []);
-
-  const refreshPinSpacer = useCallback(() => {
-    const next = measurePinSpacer();
-    // 1px 阈值防止 ResizeObserver → setState → ResizeObserver 的收敛抖动
-    setPinSpacerHeight((current) => (Math.abs(current - next) > 1 ? next : current));
-  }, [measurePinSpacer]);
-
-  const pinTurnToTop = useCallback((userMessageId: string, options?: { animate?: boolean }) => {
-    const animate = options?.animate ?? true;
-    pinAnimateRequestRef.current = animate;
-    // 先立动画标记再渲染垫片：垫片插入触发的 MutationObserver 不会打断平滑滚动
-    if (animate) {
-      pinAnimatingRef.current = true;
-      setPinAnimating(true);
-    } else {
-      pinAnimatingRef.current = false;
-      setPinAnimating(false);
-    }
-    setPinnedTurnId(userMessageId);
-  }, []);
-
-  // 垫片渲染后量高并执行平滑置顶滚动
-  useLayoutEffect(() => {
-    if (!controllerEnabled) return;
-    if (!pinnedTurnId) {
-      setPinSpacerHeight(0);
-      return;
-    }
-    const timeline = timelineRef.current;
-    if (!timeline) return;
-    refreshPinSpacer();
-    if (!pinAnimateRequestRef.current) return;
-    pinAnimateRequestRef.current = false;
-    const requestOwnerKey = ownerKey;
-    const row = timeline.querySelector(
-      `[data-message-id="${CSS.escape(pinnedTurnId)}"]`,
-    ) as HTMLElement | null;
-    if (!row) {
-      pinAnimatingRef.current = false;
-      setPinAnimating(false);
-      return;
-    }
-    const rowTop =
-      row.getBoundingClientRect().top -
-      timeline.getBoundingClientRect().top +
-      timeline.scrollTop;
-    programmaticScrollRef.current = true;
-    // prefers-reduced-motion 用户退化为即时定位，不播长距离滚动动画
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    // 留出顶部安全内边距，避免消息文本贴住或越过时间线的可视上沿。
-    const targetTop = Math.max(0, rowTop - 20);
-    timeline.scrollTo({ top: targetTop, behavior: reduceMotion ? "instant" : "smooth" });
-    autoScrollRef.current = true;
-    setAutoScroll(true);
-    setShowScrollToBottom(false);
-    // 用户滚轮/触摸/键盘 = 明确接管滚动：取消动画保护与自动跟随。
-    // 程序化 smooth 滚动不产生 wheel/touchmove/keydown 事件，该信号天然区分用户与程序。
-    // 若缺少此中断：用户在 650ms 动画窗口内的上滚判定会被 pinAnimatingRef 吞掉
-    // （onScroll 直接 return），随后 timer 到点按 autoScroll=true 贴底，把用户压回底部。
-    const cancelPinByUser = () => {
-      if (!pinAnimatingRef.current) return;
-      pinAnimatingRef.current = false;
-      setPinAnimating(false);
-      autoScrollRef.current = false;
-      setAutoScroll(false);
-      setShowScrollToBottom(true);
-    };
-    const cancelPinByKey = (event: KeyboardEvent) => {
-      // 仅滚动类按键视为接管；Tab/Enter 等焦点导航不打断动画
-      if (
-        event.key === "ArrowUp" || event.key === "ArrowDown" ||
-        event.key === "PageUp" || event.key === "PageDown" ||
-        event.key === "Home" || event.key === "End"
-      ) {
-        cancelPinByUser();
-      }
-    };
-    timeline.addEventListener("wheel", cancelPinByUser, { passive: true });
-    timeline.addEventListener("touchmove", cancelPinByUser, { passive: true });
-    timeline.addEventListener("keydown", cancelPinByKey);
-    const timer = window.setTimeout(() => {
-      pinAnimatingRef.current = false;
-      setPinAnimating(false);
-      if (ownerKeyRef.current !== requestOwnerKey) return;
-      // 动画期间流入的回答内容补一次即时贴底，恢复正常跟随；
-      // 若用户已在动画窗口内接管滚动（cancelPinByUser），autoScrollRef=false，此处自动放弃贴底。
-      if (autoScrollRef.current) {
-        programmaticScrollRef.current = true;
-        timeline.scrollTo({ top: timeline.scrollHeight, behavior: "instant" });
-      }
-      // spacer 只服务于发送后的顶屏过渡；动画完成后必须移除，否则回答结束后
-      // 会在时间线尾部留下大片空白，并让滚动条继续延伸到无内容区域。
-      setPinnedTurnId(undefined);
-      setPinSpacerHeight(0);
-    }, 650);
-    return () => {
-      window.clearTimeout(timer);
-      timeline.removeEventListener("wheel", cancelPinByUser);
-      timeline.removeEventListener("touchmove", cancelPinByUser);
-      timeline.removeEventListener("keydown", cancelPinByKey);
-    };
-  }, [controllerEnabled, ownerKey, pinnedTurnId, refreshPinSpacer]);
 
 	const loadMoreMessages = useCallback(() => {
 		const requestOwnerKey = ownerKey;
@@ -604,7 +471,12 @@ export function useSessionTimelineController(options: {
 				.readRecordMessagePage(sessionId, before, options.pageSize ?? 100)
 				.then((page: { messages: ChatMessage[]; total: number; nextBefore: number | null }) => {
 					if (latestLoadBySession.get(sessionId) !== sequence) return;
-					prependMessagePage({ sessionId, before, expectedRevision, page });
+					if (prependMessagePage({ sessionId, before, expectedRevision, page })) {
+						// 补页成功即同步扩大渲染窗口：否则新页若使 agent-run 数超过 turn 窗口轮数，
+						// 会被 selectTimelineTurnWindow 立即裁剪——「加载了但看不见」，
+						// 表现为点击「加载更多」无反馈（2026-02 修复）。
+						setScrolledWindowTurns((prev) => prev + TIMELINE_WINDOW_EXPAND_STEP);
+					}
 				})
 				.finally(() => {
 					if (latestLoadBySession.get(sessionId) === sequence) setIsLoadingMessagePage(false);
@@ -645,7 +517,10 @@ export function useSessionTimelineController(options: {
 				})
 				.then((page) => {
 					if (latestLoadBySession.get(sessionId) !== sequence) return;
-					prependHistoryPage({ sessionId, expectedRevision, before, page });
+					if (prependHistoryPage({ sessionId, expectedRevision, before, page })) {
+						// 同 disk 分支：补页成功同步扩大渲染窗口，避免新页被 turn 窗口裁剪不可见
+						setScrolledWindowTurns((prev) => prev + TIMELINE_WINDOW_EXPAND_STEP);
+					}
 				})
 				.finally(() => {
 					if (latestLoadBySession.get(sessionId) === sequence) setIsLoadingMessagePage(false);
@@ -721,11 +596,6 @@ export function useSessionTimelineController(options: {
     pendingJumpRef.current = undefined;
     programmaticScrollRef.current = false;
     // 会话切换：清掉上一会话的置顶垫片与动画标记
-    pinAnimatingRef.current = false;
-    setPinAnimating(false);
-    pinAnimateRequestRef.current = false;
-    setPinnedTurnId(undefined);
-    setPinSpacerHeight(0);
     clearHighlightTimers();
     return clearHighlightTimers;
   }, [clearHighlightTimers, ownerKey]);
@@ -793,12 +663,14 @@ export function useSessionTimelineController(options: {
           currentAnchorRef.current = anchor;
           return;
         }
-        // 锚点行不存在（期间被压缩清理 / 窗口被新消息挤掉）：回到底部并恢复跟流
-        autoScrollRef.current = true;
-        setAutoScroll(true);
-        setShowScrollToBottom(false);
+        // 锚点行不存在（期间被压缩清理 / 在渲染窗口之外——上滚窗口化裁剪）：
+        // 对齐渲染窗口顶部（顶部有「显示更早」按钮可继续上溯），保持不跟流，
+        // 避免把查看历史的用户拽回底部（2026-08 黑屏治理）。
+        autoScrollRef.current = false;
+        setAutoScroll(false);
+        setShowScrollToBottom(true);
         programmaticScrollRef.current = true;
-        timeline.scrollTo({ top: timeline.scrollHeight, behavior: "instant" });
+        timeline.scrollTop = 0;
       });
       return () => cancelAnimationFrame(frame);
     }
@@ -856,15 +728,28 @@ export function useSessionTimelineController(options: {
       loadMoreAnchorRef.current = undefined;
       return;
     }
+    // 顶部场景（点击前视口在 ≤HISTORY_AUTO_LOAD_THRESHOLD 处）：不补偿 scrollTop。
+    // 视口容器 overflow-anchor:none，插入内容不会自动调整滚动位置，保持原位即可
+    // 让新加载的内容直接出现在视口顶部；补偿反而把新内容推出视口上方，
+    // 造成「点击加载更多无反馈」（2026-02 修复）。
+    const nextScrollTop = resolveTimelineTopCompensation(
+      anchor.value.top,
+      timeline.scrollHeight - anchor.value.height,
+    );
+    if (nextScrollTop === null) {
+      loadMoreAnchorRef.current = undefined;
+      programmaticScrollRef.current = true;
+      const topFrame = requestAnimationFrame(() => {
+        programmaticScrollRef.current = false;
+      });
+      return () => cancelAnimationFrame(topFrame);
+    }
     // 标记程序化滚动：prepend 补偿的 scrollTop 赋值会触发 scroll 事件，
     // 不能让 ≤240px 自动加载监听把它当成用户上滚（否则连锁翻页）。
     // rAF 兜底：若补偿实际无位移（delta=0）不产生 scroll 事件，需清掉抑制标记，
     // 避免吞掉下一次用户滚动（scroll 事件任务先于 rAF 派发，顺序安全）。
     programmaticScrollRef.current = true;
-    timeline.scrollTop = restoreTimelineAnchor(
-      anchor.value.top,
-      timeline.scrollHeight - anchor.value.height,
-    );
+    timeline.scrollTop = nextScrollTop;
     loadMoreAnchorRef.current = undefined;
     const frame = requestAnimationFrame(() => {
       programmaticScrollRef.current = false;
@@ -880,12 +765,23 @@ export function useSessionTimelineController(options: {
     const element = timeline.querySelector(
       `[data-message-id="${CSS.escape(pendingJump.value)}"]`,
     ) as HTMLElement | null;
-    if (!element) return;
+    if (!element) {
+      // 目标在渲染窗口之外（上滚窗口化）：逐步扩大窗口，本 effect 随窗口变化重跑
+      // 直到目标挂载；目标已不在数据中（期间被压缩清理/删除）则放弃跳转，
+      // 避免窗口无限放大（防呆，2026-08 黑屏治理）。
+      const stillInData = combinedMessages.some((message) => message.id === pendingJump.value);
+      if (!stillInData) {
+        pendingJumpRef.current = undefined;
+        return;
+      }
+      expandWindow();
+      return;
+    }
     pendingJumpRef.current = undefined;
     element.scrollIntoView({ behavior: "smooth", block: "start" });
     highlightMessage(element, ownerKey);
     // autoScroll：贴底 turn 窗口展开后 DOM 才出现目标行，需再跑一轮。
-  }, [autoScroll, controllerEnabled, highlightMessage, ownerKey, visibleMessages.length]);
+  }, [autoScroll, combinedMessages, controllerEnabled, expandWindow, highlightMessage, ownerKey, scrolledWindowTurns, visibleMessages.length]);
 
   return {
     timelineRef,
@@ -901,16 +797,13 @@ export function useSessionTimelineController(options: {
     markProgrammaticScroll,
     jumpToMessage,
     scrollToBottom,
-    scrollFinalAnswerIntoView,
     /** 滚动回调：维护会话切换用的滚动锚点（rAF 合并，不触发渲染） */
     handleTimelineScroll,
     autoScroll,
     showScrollToBottom,
-    pinAnimating,
     setAutoScrollFromScroller,
     scrollerScrollApiRef,
-    pinnedTurnId,
-    pinSpacerHeight,
-    pinTurnToTop,
+    scrolledWindowTurns,
+    expandWindow,
   };
 }

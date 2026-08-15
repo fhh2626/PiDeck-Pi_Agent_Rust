@@ -225,6 +225,34 @@ test("the real send state machine handles pure images, double clicks, and unknow
   assert.equal(unknownCalls, 1, "unknown delivery must never auto-retry");
 });
 
+test("/compact releases the session send lock before the next prompt", async () => {
+  const harness = createSendHarness({
+    drafts: { "session-a": "/compact" },
+    runtimes: { "session-a": { agentId: "agent-a", runtimeGeneration: 1 } },
+  });
+  let compactCalls = 0;
+  let promptCalls = 0;
+  const send = harness.send({
+    sessionId: "session-a",
+    templates: [],
+    compact: async () => {
+      compactCalls += 1;
+    },
+    sendPrompt: async (input) => {
+      promptCalls += 1;
+      return { accepted: true, requestId: input.requestId };
+    },
+  });
+
+  await send();
+  assert.equal(compactCalls, 1);
+
+  // The first call clears the submitted snapshot; simulate the user typing again.
+  harness.state.set(harness.atoms.sessionDraftByIdAtom, { "session-a": "next prompt" });
+  await send();
+  assert.equal(promptCalls, 1, "a completed compact command must not block the next prompt");
+});
+
 test("a pre-send Chat surface promotes once and only sends through its real Session", async () => {
   const bootstrapId = "renderer:chat-bootstrap";
   const realSessionId = "catalog-session";

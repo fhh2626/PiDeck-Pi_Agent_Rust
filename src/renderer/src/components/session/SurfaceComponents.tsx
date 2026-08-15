@@ -12,7 +12,6 @@ import {
 	type PointerEvent as ReactPointerEvent,
 	type ReactNode,
 } from "react";
-import { toBlob } from "html-to-image";
 import { MarkdownStream } from "./MarkdownStream";
 import { useAtomValue } from "jotai";
 import "katex/dist/katex.min.css";
@@ -493,6 +492,7 @@ async function copyElementAsPng(element: HTMLElement) {
 	}
 	let blob: Blob | null = null;
 	try {
+		const { toBlob } = await import("html-to-image");
 		blob = await toBlob(clone, {
 			cacheBust: true,
 			pixelRatio: Math.min(2, window.devicePixelRatio || 1),

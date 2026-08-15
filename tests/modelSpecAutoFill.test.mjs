@@ -2,7 +2,7 @@
  * 模型规格自动补全纯函数测试（utils/modelSpecAutoFill.ts）。
  *
  * 覆盖：computeModelSpecPatches 只填空字段语义（手填不覆盖、false 不覆盖、
- * 规格缺 context 不填、input 已配不填）；collectModelSpecPatches 批量补全
+ * 规格缺 context 填默认值、input 已配不填）；collectModelSpecPatches 批量补全
  * （并行查询、计数、不修改入参、新快照语义）。
  */
 
@@ -90,16 +90,24 @@ test("computeModelSpecPatches: 用户明确关掉的 reasoning=false 不覆盖",
 	]);
 });
 
-test("computeModelSpecPatches: 规格缺 context/maxTokens（官方未公开）不填", () => {
+test("computeModelSpecPatches: 规格缺 context/maxTokens 时保持为空", () => {
 	const updates = computeModelSpecPatches(
 		{ id: "sensenova-6.7-flash-lite" },
 		fullSpec({ contextWindow: undefined, maxTokens: undefined }),
 	);
-	// reasoning + images 照常填，context/maxTokens 跳过
+	// reasoning + images 照常填；不能猜测未公开的模型上限。
 	assertUpdates(updates, [
 		["reasoning", true],
 		["input", ["text", "image"]],
 	]);
+});
+
+test("computeModelSpecPatches: 空规格不会虚构模型上限", () => {
+	const updates = computeModelSpecPatches(
+		{ id: "my-custom-model" },
+		{ source: "models-dev", matchedId: "my-custom-model" },
+	);
+	assertUpdates(updates, []);
 });
 
 test("computeModelSpecPatches: 纯文本规格不填 input", () => {
@@ -146,11 +154,11 @@ test("collectModelSpecPatches: 批量补全、计数、不修改入参", async (
 	// 手填/明确关闭的保持
 	assert.equal(providers.relay.models[1].contextWindow, 999);
 	assert.equal(providers.relay.models[1].reasoning, false);
-	// 规格未命中（filled 返回 null）不填
+	// 规格未命中（null）→ 保持为空，不改变自定义模型行为
 	assert.equal(providers.relay.models[1].maxTokens, undefined);
 	// 空 id 模型原样保留
 	assert.equal(providers.relay.models[2].id, "");
-	// glm-5 只填能力位
+	// glm-5 能力位照常；context 无规格值时保持为空
 	assert.equal(providers.other.models[0].reasoning, true);
 	assert.equal(providers.other.models[0].contextWindow, undefined);
 	// 入参不被修改
@@ -160,12 +168,13 @@ test("collectModelSpecPatches: 批量补全、计数、不修改入参", async (
 	assert.equal(providers.relay.baseUrl, "https://relay.example");
 });
 
-test("collectModelSpecPatches: lookup 抛错按未命中处理，不阻断保存", async () => {
+test("collectModelSpecPatches: lookup 抛错保持原模型且不阻断保存", async () => {
 	const models = { providers: { a: { models: [{ id: "x" }, { id: "y" }] } } };
 	const { providers, filledCount } = await collectModelSpecPatches(models, async (p, id) => {
 		if (id === "x") throw new Error("boom");
 		return fullSpec();
 	});
+	// x 查询失败保持原样；y 使用真实规格。
 	assert.equal(filledCount, 1);
 	assert.equal(providers.a.models[0].contextWindow, undefined);
 	assert.equal(providers.a.models[1].contextWindow, 128000);

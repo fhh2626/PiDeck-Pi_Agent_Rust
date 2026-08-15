@@ -60,13 +60,16 @@ function loadExtensionManager({ homeDir, runPiOutput = "", fsOverrides = {} } = 
 			if (id === "../../shared/piCompatibility") return require("../src/shared/piCompatibility.ts");
 			if (id === "./builtInExtensions") {
 				// ExtensionManager 只需要内置名列表；避免 vm 沙箱解析相对 TS 路径失败。
+				const builtInExtensions = [
+					"pi-deck-ask-question.ts",
+					"pi-deck-nul-redirect-fix.ts",
+					"pi-deck-plan-mode.ts",
+					"pi-deck-todo.ts",
+					"pi-better-compaction.ts",
+				];
 				return {
-					BUILT_IN_EXTENSIONS: [
-						"pi-deck-ask-question.ts",
-						"pi-deck-nul-redirect-fix.ts",
-						"pi-deck-plan-mode.ts",
-						"pi-deck-todo.ts",
-					],
+					BUILT_IN_EXTENSIONS: builtInExtensions,
+					isBuiltInExtensionName: (source) => builtInExtensions.includes(source),
 				};
 			}
 			return require(id);
@@ -113,6 +116,37 @@ test("disableBuiltIn records removal and deletes user extension file", async () 
 	await manager.disableBuiltIn("pi-deck-todo.ts");
 	assert.equal(settings.removedBuiltInExtensions?.length, 1);
 	assert.equal(settings.removedBuiltInExtensions?.[0], "pi-deck-todo.ts");
+
+	rmSync(fixtureHome, { recursive: true, force: true });
+});
+
+test("disableBuiltIn accepts the non-pi-deck built-in compaction extension", async () => {
+	const fixtureHome = mkdtempSync(join(tmpdir(), "pideck-disable-compaction-"));
+	const extensionsDir = join(fixtureHome, ".pi", "agent", "extensions");
+	mkdirSync(extensionsDir, { recursive: true });
+	const target = join(extensionsDir, "pi-better-compaction.ts");
+	writeFileSync(target, "// builtin compaction\n", "utf8");
+
+	let settings = { removedBuiltInExtensions: [] };
+	const { ExtensionManager } = loadExtensionManager({ homeDir: fixtureHome });
+	const manager = new ExtensionManager(
+		{
+			check: async () => ({ installed: true, version: "0.80.0" }),
+			createInvocation: (cmd, args) => ({ command: cmd, args, shell: false }),
+			createProcessEnv: () => process.env,
+			resolveCommand: () => "pi",
+		},
+		() => ({}),
+		() => settings,
+		async (patch) => {
+			settings = { ...settings, ...patch };
+			return settings;
+		},
+	);
+
+	await manager.disableBuiltIn("pi-better-compaction.ts");
+	assert.equal(existsSync(target), false);
+	assert.equal(settings.removedBuiltInExtensions.includes("pi-better-compaction.ts"), true);
 
 	rmSync(fixtureHome, { recursive: true, force: true });
 });

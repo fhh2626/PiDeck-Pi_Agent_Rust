@@ -1,4 +1,8 @@
 import { test, expect } from "./fixtures";
+import { openFirstSession, makeSeedProject } from "./open-session";
+
+const seedProject = makeSeedProject("Ui2RegE2E");
+test.use({ seedProjects: [seedProject] });
 
 /**
  * 设置页 Select 可交互回归（#115）：旧 .modal-backdrop z-index 100 曾盖住
@@ -44,8 +48,8 @@ test("settings select: option is clickable through dialog layers", async ({ wind
  * 用户期望横排 tab。断言 rail 是水平布局（宽 > 高）。
  */
 test("drawer rail: tabs are laid out horizontally", async ({ window }) => {
-	await expect(window.locator("#boot-overlay")).toHaveCount(0, { timeout: 20_000 });
-	await window.locator(".conversation.chat-project").first().click();
+	// 新建会话打开工作台后，头部抽屉开关才出现
+	await openFirstSession(window);
 	await window.locator(".header-drawer-toggle").first().click();
 
 	const rail = window.locator(".drawer-activity-rail");

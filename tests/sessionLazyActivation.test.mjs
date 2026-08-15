@@ -418,8 +418,9 @@ test("deriveSessionSurfaceRuntime hides loading for idle non-activating Session"
   assert.match(fnBody, /messageLoadStatus\s*===\s*"loading"/);
   assert.match(fnBody, /activating/);
 
-  // isStarting = true only when status === "starting"
-  assert.match(fnBody, /isStarting:\s*status\s*===\s*"starting"/);
+  // isStarting 与 status==="starting" 同源：activating=true 时 status 恒为 "starting"
+  assert.match(fnBody, /isStarting:\s*activating/);
+  assert.match(fnBody, /const status = activating \? "starting" : runtimeStatus/);
 
   // idle with messages: isLoading=false, isStarting=false
   // This naturally fixes the "idle 后仍显示启动骨架" bug from dev f959ae2

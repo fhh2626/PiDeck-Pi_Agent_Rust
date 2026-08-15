@@ -4,135 +4,6 @@
 
 /* Content（弹框主体）*/
 
-/* 尺寸变体 */
-.modal-header.feedback-header {
-  height: auto;
-  min-height: 68px;
-  align-items: flex-start;
-  padding-top: 16px;
-  padding-bottom: 16px;
-}
-.feedback-header small {
-  display: block;
-  margin-top: 3px;
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-caption);
-  font-weight: 400;
-}
-.feedback-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-5);
-  min-height: 0;
-  padding: var(--space-5);
-  overflow: auto;
-  background: var(--color-bg-muted);
-}
-.feedback-form-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  min-height: 0;
-}
-.feedback-environment-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-height: 0;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--color-bg-panel);
-  padding: var(--space-4);
-  overflow: hidden;
-}
-.feedback-section-header {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.feedback-section-header strong {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-body);
-  font-weight: 600;
-}
-.feedback-section-header small {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-caption);
-  font-weight: 400;
-  line-height: 1.4;
-}
-.feedback-textarea {
-  min-height: 120px;
-  resize: vertical;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-panel);
-  color: var(--color-text-primary);
-  padding: 12px var(--space-3);
-  font-size: var(--font-size-control);
-  line-height: 1.5;
-  outline: none;
-  transition:
-    border-color 0.15s,
-    box-shadow 0.15s;
-}
-.feedback-textarea:focus {
-  border-color: var(--color-accent);
-  box-shadow: var(--focus-ring);
-}
-.feedback-textarea::placeholder {
-  color: var(--color-text-tertiary);
-}
-.feedback-environment-content {
-  flex: 1;
-  margin: 0;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  border-radius: var(--radius-md);
-  background: var(--color-code-bg);
-  color: var(--color-code-text);
-  padding: 12px;
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-caption);
-  line-height: 1.6;
-}
-.feedback-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  padding: 16px 20px;
-  border-top: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-panel);
-}
-.feedback-actions button {
-  height: 36px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-panel);
-  color: var(--color-text-secondary);
-  padding: 0 16px;
-  font-size: var(--font-size-control);
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-.feedback-actions button:hover:not(:disabled) {
-  background: var(--color-bg-hover);
-  color: var(--color-text-primary);
-}
-.feedback-actions button.primary {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: var(--color-text-inverse);
-}
-.feedback-actions button.primary:hover:not(:disabled) {
-  background: var(--color-accent-strong);
-}
-.feedback-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 /* Sidebar source filters use viewport coordinates from the triggering row. */
 .codex-import-modal {
   width: min(1300px, calc(100vw - 48px));
@@ -390,12 +261,12 @@
 }
 .outline-zone {
   position: relative;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
 }
 .outline-trigger {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -535,8 +406,8 @@
 }
 .scratch-pad-entry {
   position: static;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -553,8 +424,8 @@
 }
 .terminal-entry {
   position: static;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -571,8 +442,8 @@
 }
 .files-entry {
   position: static;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -589,8 +460,8 @@
 }
 .git-entry {
   position: static;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -611,8 +482,8 @@
 }
 .editors-entry {
   position: static;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -631,8 +502,8 @@
 /* 内置浏览器入口按钮，样式与 editors-entry 一致，保持视觉统一 */
 .browser-entry {
   position: static;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   color: var(--color-text-tertiary);
@@ -1874,7 +1745,6 @@
 
 :root[data-theme="dark"] .search-box,
 :root[data-theme="dark"] .composer-box,
-:root[data-theme="dark"] .feedback-body textarea,
 :root[data-theme="dark"] .setting-field input,
 :root[data-theme="dark"] .config-add-provider-row input,
 :root[data-theme="dark"] .config-provider-card,
@@ -1887,7 +1757,6 @@
 :root[data-theme="dark"] .session-card,
 :root[data-theme="dark"] .codex-session-row,
 /* settings-layout / config 侧栏与内容同底，暗色不再单独叠 muted 灰面 */
-:root[data-theme="dark"] .feedback-body,
 :root[data-theme="dark"] .codex-import-toolbar,
 :root[data-theme="dark"] .config-provider-body {
   background: var(--color-bg-muted);
@@ -1896,7 +1765,6 @@
 
 :root[data-theme="dark"] .setting-proxy-panel,
 :root[data-theme="dark"] .setting-pi-path-panel,
-:root[data-theme="dark"] .feedback-report-block,
 :root[data-theme="dark"] .codex-import-modal,
 :root[data-theme="dark"] .context-menu,
 :root[data-theme="dark"] .branch-dropdown {
@@ -1908,13 +1776,11 @@
 :root[data-theme="dark"] .modal-header,
 :root[data-theme="dark"] .config-primary-tabs,
 :root[data-theme="dark"] .config-tabs,
-:root[data-theme="dark"] .settings-tabs,
-:root[data-theme="dark"] .feedback-actions {
+:root[data-theme="dark"] .settings-tabs {
   background: var(--color-bg-panel);
   border-color: var(--color-border-subtle);
 }
 
-:root[data-theme="dark"] .feedback-report-block pre,
 :root[data-theme="dark"] .update-notes,
 :root[data-theme="dark"] pre,
 :root[data-theme="dark"] code {
@@ -3402,7 +3268,6 @@ div.fixed.inset-0.z-50 {
 
 :root[data-theme="dark"] .config-btn,
 :root[data-theme="dark"] .session-rename-button,
-:root[data-theme="dark"] .feedback-actions button,
 :root[data-theme="dark"] .update-actions button,
 :root[data-theme="dark"] .codex-import-actions button {
   background: var(--color-bg-panel);
@@ -3412,7 +3277,6 @@ div.fixed.inset-0.z-50 {
 
 :root[data-theme="dark"] .config-btn:hover:not(:disabled),
 :root[data-theme="dark"] .session-rename-button:hover:not(:disabled),
-:root[data-theme="dark"] .feedback-actions button:hover,
 :root[data-theme="dark"] .update-actions button:hover,
 :root[data-theme="dark"] .codex-import-actions button:hover {
   background: var(--color-bg-hover);
@@ -3420,7 +3284,6 @@ div.fixed.inset-0.z-50 {
 }
 
 :root[data-theme="dark"] .config-btn.primary,
-:root[data-theme="dark"] .feedback-actions button.primary,
 :root[data-theme="dark"] .update-actions button.primary,
 :root[data-theme="dark"] .codex-import-actions .primary-action {
   background: var(--color-accent);
@@ -3964,19 +3827,8 @@ div.fixed.inset-0.z-50 {
 :root[data-bg-image="on"] .settings-modal .settings-tabs,
 :root[data-bg-image="on"] .settings-modal .settings-panel,
 :root[data-bg-image="on"] .project-resources-dialog .project-resources-body,
-:root[data-bg-image="on"] .feedback-modal-shell .feedback-body,
-:root[data-bg-image="on"] .feedback-modal-shell .feedback-environment-section,
-:root[data-bg-image="on"] .feedback-modal-shell .feedback-environment-content,
-:root[data-bg-image="on"] .feedback-modal-shell .feedback-actions,
-:root[data-bg-image="on"] .feedback-modal-shell .feedback-actions [data-slot="button"][data-variant="secondary"],
 :root[data-bg-image="on"] .environment-dialog .environment-body {
   background: transparent;
-}
-
-/* 反馈报告在普通主题下是代码块，壁纸模式下不再用固定黑/白色；
-   直接继承弹框内容层，否则它会成为反馈弹框中唯一不透明的区域。 */
-:root[data-bg-image="on"] .feedback-modal-shell .feedback-environment-content {
-  color: var(--color-text-secondary);
 }
 
 /* 模型计费字段：每百万 token 美元单价 */

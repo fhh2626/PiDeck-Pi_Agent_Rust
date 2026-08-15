@@ -11,7 +11,7 @@ test("layout: terminal dock open/shell/collapse", async ({ window }) => {
 	await expect(window.locator("#boot-overlay")).toHaveCount(0, { timeout: 20_000 });
 	await window.getByRole("button", { name: "启动 Agent" }).click();
 	const composer = window.locator(".composer .rich-input");
-	await expect(composer).toHaveAttribute("aria-disabled", "false", { timeout: 30_000 });
+	await expect(composer).toHaveAttribute("contenteditable", "true", { timeout: 30_000 });
 
 	// 发送一条让 agent 进程真实运行，再打开终端
 	await composer.click();
@@ -74,7 +74,7 @@ test("layout: terminal stays open while the agent streams", async ({ window }) =
 	await expect(window.locator("#boot-overlay")).toHaveCount(0, { timeout: 20_000 });
 	await window.getByRole("button", { name: "启动 Agent" }).click();
 	const composer = window.locator(".composer .rich-input");
-	await expect(composer).toHaveAttribute("aria-disabled", "false", { timeout: 30_000 });
+	await expect(composer).toHaveAttribute("contenteditable", "true", { timeout: 30_000 });
 
 	// 先完成一轮，确保 outline 已有 activeAgentId 和终端入口。
 	await composer.click();

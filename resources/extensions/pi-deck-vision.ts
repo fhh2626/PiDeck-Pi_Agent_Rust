@@ -207,7 +207,7 @@ export type VisionBridgeConfig = {
 	apiKey?: string;
 	/** 描述结果最大 token 数；0 = 不限制（不传该字段，Anthropic 必填则兜底 1024） */
 	maxTokens?: number;
-	/** 单张图片转换超时（ms），默认 30s */
+	/** 单张图片转换超时（ms），默认 120s（视觉请求常含多图/慢模型，30s 偏紧） */
 	timeoutMs?: number;
 	/** 单次转换并发数，默认 2（避免瞬时多请求被限流） */
 	concurrency?: number;
@@ -236,7 +236,7 @@ const DEFAULT_CONFIG: VisionBridgeConfig = {
 	provider: "",
 	model: "",
 	maxTokens: 0,
-	timeoutMs: 30_000,
+	timeoutMs: 120_000,
 	concurrency: 2,
 	promptTemplate: DEFAULT_PROMPT,
 };

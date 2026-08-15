@@ -16,6 +16,7 @@ import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { WebAssistantText } from "./WebAssistantText";
 import { MarkdownStream } from "@/components/session/MarkdownStream";
+import { SingleLinePreview } from "@/components/session/SingleLinePreview";
 import { TimelineMarker } from "../components/session/TimelineMarker";
 
 /** 用户消息右对齐气泡（结构与桌面 UserBubble 一致，去掉操作栏/附件能力）。 */
@@ -26,7 +27,7 @@ export const WebUserBubble = memo(function WebUserBubble(props: { message: UIMes
 		.join("");
 	if (!text.trim()) return null;
 	return (
-		<article className="user-turn group/user mb-4 flex w-full min-w-0 max-w-full flex-col items-end">
+		<article className="user-turn group/user flex w-full min-w-0 max-w-full flex-col items-end">
 			<div className="w-fit min-w-0 max-w-[min(82%,64ch)] rounded-[14px] border border-border bg-muted/60 px-3 py-2 text-sm text-foreground [overflow-wrap:anywhere] break-words">
 				<div className="text-chat leading-[1.6] text-text-primary whitespace-pre-wrap break-words">
 					{text}
@@ -36,15 +37,21 @@ export const WebUserBubble = memo(function WebUserBubble(props: { message: UIMes
 	);
 });
 
-/** 思考折叠卡片（复用桌面 ThinkingBlock 视觉：Brain 图标 + 可折叠正文）。 */
-export const WebThinkingBlock = memo(function WebThinkingBlock(props: { text: string }) {
-	const [expanded, setExpanded] = useState(true);
+/** 思考折叠卡片（复用桌面 ThinkingBlock 视觉：Brain 图标 + 可折叠正文）。
+ * 默认折叠成单行预览（deepseek-harness ReasoningRow 模式：流式中 tail -f 显示最新行 + 扫光，
+ * 结束后显示第一行），标题行整行可点击展开/收起。 */
+export const WebThinkingBlock = memo(function WebThinkingBlock(props: {
+	text: string;
+	/** 思考是否仍在流式：控制 SingleLinePreview 的尾部跟随 + 扫光（Web 端 part 无独立完成标志，用整条消息 isStreaming 近似） */
+	running?: boolean;
+}) {
+	const [expanded, setExpanded] = useState(false);
 	if (!props.text.trim()) return null;
 	return (
-		<TimelineMarker kind="thinking" tone="neutral">
+		<TimelineMarker kind="thinking" tone="neutral" contentClassName="pb-0">
 		<section className="w-full min-w-0 overflow-hidden rounded-md border-0">
 			<button
-				className="flex min-h-8 w-full cursor-pointer items-center gap-2 border-0 bg-transparent p-1.5 pl-2.5 text-left text-control leading-5 text-text-secondary transition-colors duration-150 hover:bg-[color:color-mix(in_srgb,var(--color-bg-hover)_50%,var(--color-bg))] focus-visible:-outline-offset-2 focus-visible:outline-2 [&_svg]:shrink-0 [&_svg]:text-[var(--color-info)]"
+				className="flex min-h-6 w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-2 py-0.5 text-left text-control leading-5 text-text-secondary transition-colors duration-150 hover:bg-[color:color-mix(in_srgb,var(--color-bg-hover)_50%,var(--color-bg))] focus-visible:-outline-offset-2 focus-visible:outline-2 [&_svg]:shrink-0 [&_svg]:text-[var(--color-info)]"
 				onClick={() => setExpanded((value) => !value)}
 				aria-expanded={expanded}
 			>
@@ -56,9 +63,11 @@ export const WebThinkingBlock = memo(function WebThinkingBlock(props: { text: st
 					<ChevronRight size={15} className="shrink-0 text-text-tertiary" aria-hidden="true" />
 				)}
 				{!expanded && (
-					<span className="min-w-0 flex-[1_1_auto] truncate font-mono text-caption text-text-tertiary">
-						{props.text.slice(0, 80)}{props.text.length > 80 ? "..." : ""}
-					</span>
+					<SingleLinePreview
+						text={props.text}
+						running={props.running}
+						className="min-w-0 flex-[1_1_auto] py-0 pr-2 font-mono text-caption text-text-tertiary"
+					/>
 				)}
 			</button>
 			{expanded && (
@@ -82,9 +91,24 @@ type WebToolPart = {
 	toolName?: string;
 	toolCallId?: string;
 	state?: string;
+	input?: unknown;
 	output?: unknown;
 	errorText?: string;
 };
+
+function formatToolPreview(value: unknown): string {
+	if (value === undefined || value === null) return "";
+	const text = typeof value === "string" ? value : (() => {
+		try {
+			return JSON.stringify(value);
+		} catch {
+			return "";
+		}
+	})();
+	if (!text) return "";
+	const compact = text.replace(/\s+/gu, " ").trim();
+	return compact.length > 120 ? `${compact.slice(0, 117)}…` : compact;
+}
 
 /** 工具卡片（复用桌面 tool-card 视觉：图标 + 工具名 + 状态）。 */
 export const WebToolCard = memo(function WebToolCard(props: { part: WebToolPart }) {
@@ -98,19 +122,24 @@ export const WebToolCard = memo(function WebToolCard(props: { part: WebToolPart 
 	const state = part.state ?? "input-streaming";
 	const running = state === "input-streaming" || state === "input-available";
 	const error = state === "output-error" || state === "error" || Boolean(part.errorText);
+	const preview = formatToolPreview(error ? part.errorText : running ? part.input : part.output);
 	return (
-		<TimelineMarker kind="tool" tone={error ? "error" : running ? "active" : "success"}>
+		<TimelineMarker
+			kind="tool"
+			tone={error ? "error" : running ? "active" : "success"}
+			contentClassName="pb-0"
+		>
 		<section
 			className={cn(
-				"tool-card w-full min-w-0 overflow-hidden rounded-md border border-border-subtle bg-bg-panel transition-[border-color,background-color] duration-150",
+				"tool-card inline-flex w-fit max-w-full min-w-0 overflow-hidden rounded-md border border-border-subtle bg-bg-panel transition-[border-color,background-color] duration-150",
 				running && "tone-running",
 				error && "tone-error",
 			)}
 			data-status={error ? "error" : running ? "running" : "done"}
 			data-tool-name={toolName}
 		>
-			<div className="flex min-h-8 items-center p-1.5 pl-2.5">
-				<span className="tool-card-trigger flex min-w-0 items-center gap-2 text-control leading-5 text-text-secondary">
+			<div className="flex min-h-6 max-w-full items-center px-2 py-0.5">
+				<span className="tool-card-trigger flex min-w-0 max-w-full items-center gap-2 text-control leading-5 text-text-secondary">
 					<span className="tool-card-icon">
 						<Wrench size={14} aria-hidden="true" />
 					</span>
@@ -123,8 +152,18 @@ export const WebToolCard = memo(function WebToolCard(props: { part: WebToolPart 
 							</span>
 						) : error ? (
 							<span className="inline-flex items-center gap-1.5">{t("tool.statusError")}</span>
-						) : null}
+						) : (
+							<span className="inline-flex items-center gap-1.5">{t("tool.statusDone")}</span>
+						)}
 					</span>
+					{preview ? (
+						<span
+							className="min-w-0 max-w-[min(60vw,42ch)] truncate font-mono text-micro text-text-tertiary"
+							title={preview}
+						>
+							{preview}
+						</span>
+					) : null}
 				</span>
 			</div>
 		</section>
@@ -142,7 +181,7 @@ export const WebAssistantMessage = memo(function WebAssistantMessage(props: {
 		<div className="w-full min-w-0">
 			{message.parts.map((part, index) => {
 				if (part.type === "reasoning") {
-					return <WebThinkingBlock key={index} text={part.text} />;
+					return <WebThinkingBlock key={index} text={part.text} running={isStreaming} />;
 				}
 				if (part.type === "dynamic-tool" || (typeof part.type === "string" && part.type.startsWith("tool-"))) {
 					// v7：静态工具 part.type 为 `tool-${toolName}`（tool-input-start 无 dynamic 标志），
@@ -232,7 +271,7 @@ export function WebTimeline(props: {
 			ref={timelineRef}
 			onScroll={updateScrollState}
 		>
-			<div className="message-list flex flex-col gap-4 p-4">
+			<div className="message-list flex flex-col gap-2 p-4">
 				{!hasActiveSession && messages.length === 0 ? (
 					<div className="empty-state">
 						<div className="empty-logo">
@@ -256,7 +295,7 @@ export function WebTimeline(props: {
 				) : (
 					<>
 						{messages.map((message) => (
-							<div key={message.id}>
+							<div key={message.id} className="mt-0">
 								{message.role === "user" ? (
 									<WebUserBubble message={message} />
 								) : (
@@ -274,7 +313,7 @@ export function WebTimeline(props: {
 
 				{/* 流式响应指示器 */}
 				{streaming && (
-					<div className="responding-indicator" data-kind="waiting">
+					<div className="responding-indicator mt-0" data-kind="waiting">
 						<span className="responding-indicator-dots flex gap-1" aria-hidden="true">
 							<span className="size-1.5 rounded-full" />
 							<span className="size-1.5 rounded-full" />
@@ -286,7 +325,7 @@ export function WebTimeline(props: {
 
 				{/* 错误诊断卡 */}
 				{error ? (
-					<div className="diagnostic-card tone-error p-3 text-control text-danger">
+					<div className="diagnostic-card tone-error mt-0 p-3 text-control text-danger">
 						{error}
 					</div>
 				) : null}

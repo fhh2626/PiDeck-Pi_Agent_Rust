@@ -50,13 +50,24 @@ function makeFixture() {
 		{ id: "openai/gpt-4o", contextWindow: 128000, maxTokens: 16384, inputModalities: ["text", "image"] },
 		{ id: "anthropic/claude-sonnet-4.5", contextWindow: 1000000, maxTokens: 64000, inputModalities: ["text", "image"] },
 		{ id: "deepseek/deepseek-chat", contextWindow: 163840, maxTokens: 16000, inputModalities: ["text"] },
+		// 与裸 id 少数派附件场景配套：openrouter 有完整行（纯文本 1M），models.dev 裸 id 被 frogbot 污染
+		{ id: "deepseek/deepseek-v4-pro", contextWindow: 1048576, maxTokens: 393216, inputModalities: ["text"] },
+		// OpenRouter 源全小写；models.dev 官方卡为驼峰（moonshotai/Kimi-K3）
+		{ id: "moonshotai/kimi-k3", contextWindow: 1048576, maxTokens: undefined, inputModalities: ["text", "image", "video"] },
 	];
 	const modelsDev = [
 		{ provider: "zhipuai", id: "glm-5", reasoning: true, toolCall: true, attachment: false, inputModalities: ["text"] },
 		{ provider: "deepseek", id: "deepseek-r1", reasoning: true, toolCall: true, attachment: false, inputModalities: ["text"] },
-		// 跨厂商同名：能力应 OR 合并（sakana 无推理、huggingface 有附件）
+		// 跨厂商同名：reasoning OR 合并、attachment 保守（全 true 才 true）——
+		// sakana 声明不支持图片，huggingface 的图片能力不应污染合并条目
 		{ provider: "sakana", id: "llama-3.3-70b", reasoning: false, toolCall: true, attachment: false, inputModalities: ["text"] },
 		{ provider: "huggingface", id: "llama-3.3-70b", reasoning: true, toolCall: false, attachment: true, inputModalities: ["text", "image"] },
+		// 裸 id 少数派附件（frogbot 式）：主流纯文本 + 一家图片 → 合并后应无图片
+		{ provider: "opencode-go", id: "deepseek-v4-pro", reasoning: true, toolCall: true, attachment: false, inputModalities: ["text"] },
+		{ provider: "frogbot", id: "deepseek-v4-pro", reasoning: null, toolCall: true, attachment: true, inputModalities: ["text", "image"] },
+		// Kimi K3：OpenRouter 源小写、models.dev 官方卡驼峰（无 context）——大小写变体场景
+		{ provider: "moonshotai-cn", id: "moonshotai/Kimi-K3", reasoning: true, toolCall: true, attachment: true, inputModalities: ["text", "image", "video"] },
+		{ provider: "kimi-for-coding", id: "k3-256k", reasoning: true, toolCall: true, attachment: true, inputModalities: ["text", "image"] },
 	];
 	return { openrouter, modelsDev };
 }
@@ -104,11 +115,15 @@ test("lookupModelSpec: 双源合并（openrouter 补 context，models.dev 补能
 	// gpt-4o 只在 openrouter：images 来自 openrouter 模态
 	const spec = indexMod.lookupModelSpec(index, "myrelay", "gpt-4o");
 	assert.equal(spec?.images, true);
-	// 跨厂商同名（llama-3.3-70b）：reasoning/attachment 取 OR，模态取并集
+	// 跨厂商同名（llama-3.3-70b）：reasoning OR、attachment 保守 AND（sakana 不支持图片 → 无图片）
 	const llama = indexMod.lookupModelSpec(index, "myrelay", "llama-3.3-70b");
 	assert.equal(llama?.source, "models-dev");
 	assert.equal(llama?.reasoning, true);
-	assert.equal(llama?.images, true); // huggingface 声明的 attachment
+	assert.equal(llama?.images, undefined); // sakana 显式 false 一票否决，图片未声明（undefined=不支持）
+	// 裸 id 少数派附件（frogbot 式）：主流纯文本 + 一家图片 → 合并后无图片（undefined=未声明）
+	const v4pro = indexMod.lookupModelSpec(index, "myrelay", "deepseek-v4-pro");
+	assert.equal(v4pro?.reasoning, true);
+	assert.equal(v4pro?.images, undefined); // 少数派 frogbot 的图片能力不污染主流纯文本
 });
 
 test("lookupModelSpec: builtin 补充模型（sensenova-6.7-flash-lite）裸 id 命中且能力齐全", () => {
@@ -146,6 +161,50 @@ test("lookupModelSpec: models.dev 条目缺能力字段时不下发 false（保�
 	assert.equal(spec?.reasoning, undefined);
 	assert.equal(spec?.images, undefined);
 });
+
+	test("lookupModelSpec: 大小写不敏感兜底（官方驼峰卡命中 openrouter 上下文）", () => {
+		const { openrouter, modelsDev } = makeFixture();
+		const index = indexMod.buildSpecIndex(openrouter, modelsDev);
+		// 官方大写完整 id（moonshotai/Kimi-K3）：openrouter 只有小写 → lower 兜底命中 1M 上下文
+		const spec = indexMod.lookupModelSpec(index, "moonshotai", "moonshotai/Kimi-K3");
+		assert.equal(spec?.source, "openrouter");
+		assert.equal(spec?.contextWindow, 1048576);
+		assert.equal(spec?.reasoning, true);
+		// 裸大写 id（Kimi-K3）：tail 小写兜底同样命中
+		const bare = indexMod.lookupModelSpec(index, "myrelay", "Kimi-K3");
+		assert.equal(bare?.source, "openrouter");
+		assert.equal(bare?.contextWindow, 1048576);
+	});
+
+	test("lookupModelSpec: 自定义模型名（k3-256k）裸 id 命中 models.dev 能力位", () => {
+		const { openrouter, modelsDev } = makeFixture();
+		const index = indexMod.buildSpecIndex(openrouter, modelsDev);
+		// k3-256k 无 openrouter 条目 → models.dev 命中（能力位），context 留空不误导
+		const spec = indexMod.lookupModelSpec(index, "kimi-for-coding", "k3-256k");
+		assert.equal(spec?.source, "models-dev");
+		assert.equal(spec?.reasoning, true);
+		assert.equal(spec?.images, true);
+		assert.equal(spec?.contextWindow, undefined);
+	});
+
+	test("lookupModelSpec: contains 兜底（字符串包含即匹配，大小写忽略）", () => {
+		const { openrouter, modelsDev } = makeFixture();
+		const index = indexMod.buildSpecIndex(openrouter, modelsDev);
+		// 带版本后缀变体：kimi-k3-2025 包含 kimi-k3 → 最长命中 openrouter 1M
+		const suffixed = indexMod.lookupModelSpec(index, "myrelay", "moonshotai/kimi-k3-2025");
+		assert.equal(suffixed?.source, "openrouter");
+		assert.equal(suffixed?.contextWindow, 1048576);
+		// 前缀变体：x-moonshotai/kimi-k3 包含完整 id（needle 包含 id 方向）
+		const prefixed = indexMod.lookupModelSpec(index, "myrelay", "x-moonshotai/kimi-k3");
+		assert.equal(prefixed?.contextWindow, 1048576);
+		// 大小写混合的 contains：KIMI-K3 变体忽略大小写命中
+		const mixedCase = indexMod.lookupModelSpec(index, "myrelay", "MOONSHOTAI/KIMI-K3");
+		assert.equal(mixedCase?.contextWindow, 1048576);
+		// models.dev contains 兜底：k3-256k-xxx 命中 k3-256k（能力位）
+		const mdContained = indexMod.lookupModelSpec(index, "kimi-for-coding", "k3-256k-xxx");
+		assert.equal(mdContained?.source, "models-dev");
+		assert.equal(mdContained?.reasoning, true);
+	});
 
 // ── entriesFromRows（db 行 → 双源条目）──────────────────────────────
 
@@ -242,4 +301,16 @@ test("integration: 内置 db 可读且真实模型可命中（不绑定数值）
 	assert.equal(step1o?.contextWindow, 32768);
 	// 未知模型不命中
 	assert.equal(indexMod.lookupModelSpec(index, "myrelay", "definitely-not-a-model-xyz"), undefined);
+
+	// Kimi K3：官方驼峰完整 id 应通过大小写兜底命中 openrouter 1M 上下文（不丢 context）
+	const kimiCamel = indexMod.lookupModelSpec(index, "moonshotai", "moonshotai/Kimi-K3");
+	assert.equal(kimiCamel?.source, "openrouter", "驼峰完整 id 应命中 openrouter（lower 兜底）");
+	assert.ok(kimiCamel?.contextWindow && kimiCamel.contextWindow >= 1000000, "Kimi-K3 上下文应为 1M");
+	// k3-256k：models.dev 收录能力位，内置补充表补官方 256K 上下文
+	const k3 = indexMod.lookupModelSpec(index, "kimi-for-coding", "k3-256k");
+	assert.ok(k3?.reasoning && k3?.images, "k3-256k 能力位应齐全");
+	assert.equal(k3?.contextWindow, 262144, "k3-256k 上下文应为 256K（builtin 补充）");
+	// kimi-for-coding 系列：262144
+	const kfc = indexMod.lookupModelSpec(index, "kimi-for-coding", "kimi-for-coding-highspeed");
+	assert.equal(kfc?.contextWindow, 262144, "kimi-for-coding-highspeed 上下文应为 256K");
 });

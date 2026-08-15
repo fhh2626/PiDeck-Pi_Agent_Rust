@@ -1,4 +1,4 @@
-import { Search, Settings, Sliders, MessageSquare, Globe, FolderPlus } from "lucide-react";
+import { Search, Settings, Sliders, FolderPlus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type { AgentTab, Project, SessionRecord, SessionSummary, WorktreeEntry } from "../../../../shared/types";
 import {
@@ -91,8 +91,6 @@ export type SidebarContentProps = {
   chrome?: ReactNode;
   onOpenSettings?: () => void;
   onOpenConfig?: () => void;
-  onOpenFeedback?: () => void;
-  onOpenHomepage?: () => void;
 };
 
 export function SidebarContent(props: SidebarContentProps) {
@@ -137,7 +135,10 @@ export function SidebarContent(props: SidebarContentProps) {
 
   return (
     <aside
-      className="chat-list-pane v3-braun flex h-full min-w-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground"
+      // @container：侧栏宽度容器查询基准——行操作按钮（绝对浮层）按侧栏实际宽度
+      // 决定 hover 时文本是否压缩让位（pr 留出按钮空间 + 截断，见各树的 @max-[255px] 变体），
+      // 不用把宽度穿进树组件
+      className="chat-list-pane v3-braun @container flex h-full min-w-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground"
       aria-label={t("app.search")}
     >
       {/* 品牌区提到 body 外：贴侧栏顶边，不被 sidebar-body 的 px/py 顶开（logo 怼左上）。 */}
@@ -190,8 +191,6 @@ export function SidebarContent(props: SidebarContentProps) {
           <div className="sidebar-bottom-primary-actions flex min-w-0 flex-1 items-center gap-0">
             <Button type="button" variant="ghost" size="icon-sm" className="icon-button settings-icon size-8 rounded-none text-muted-foreground hover:bg-muted hover:text-foreground" title={t("settings.title")} aria-label={t("settings.title")} onClick={props.onOpenSettings}><Settings className="size-4" /></Button>
             <Button type="button" variant="ghost" size="icon-sm" className="icon-button config-icon size-8 rounded-none text-muted-foreground hover:bg-muted hover:text-foreground" title={t("config.title")} aria-label={t("config.title")} onClick={props.onOpenConfig}><Sliders className="size-4" /></Button>
-            <Button type="button" variant="ghost" size="icon-sm" className="icon-button feedback-icon size-8 rounded-none text-muted-foreground hover:bg-muted hover:text-foreground" title={t("feedback.title")} aria-label={t("feedback.title")} onClick={props.onOpenFeedback}><MessageSquare className="size-4" /></Button>
-            <Button type="button" variant="ghost" size="icon-sm" className="icon-button homepage-icon size-8 rounded-none text-muted-foreground hover:bg-muted hover:text-foreground" title={t("app.homepage")} aria-label={t("app.homepage")} onClick={props.onOpenHomepage}><Globe className="size-4" /></Button>
           </div>
         </div>
       )}

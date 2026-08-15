@@ -17,6 +17,7 @@ import type { QueuedPrompt } from "../../hooks/useQueuedPrompt";
 import type { PiDesktopApi } from "../../../../preload";
 import { t } from "../../i18n";
 import { isLanWeb, desktopApi as api } from "../../desktopApi";
+import { useNotifyLayoutResized } from "../../hooks/useNotifyLayoutResized";
 import { SessionHeader } from "./SessionHeader";
 import { SessionBranchBar } from "./SessionBranchBar";
 import { SessionWidgetChips } from "./SessionWidgetChips";
@@ -184,6 +185,7 @@ export function SessionView({
   // 默认高度走 COMPOSER_DEFAULT_HEIGHT（偏矮，给 timeline 留正文）；
   // Ask 属于会话交互状态，不再参与 composer 的高度分配；它固定在时间线底部，避免把输入框挤出面板。
   const [composerHeight, setComposerHeight] = useState(COMPOSER_DEFAULT_HEIGHT);
+  const notifyLayoutResized = useNotifyLayoutResized();
   const terminalPanelRef = useRef<PanelImperativeHandle | null>(null);
   const sessionGroupRef = useRef<GroupImperativeHandle | null>(null);
 

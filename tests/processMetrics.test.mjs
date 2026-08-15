@@ -122,7 +122,12 @@ test("IPC channel + systemIpc handler + preload exposure", () => {
 	const preload = readFileSync("src/preload/index.ts", "utf8");
 	assert.match(ipc, /processMetrics: "system:process-metrics"/);
 	assert.match(systemIpc, /ipcMain\.handle\(ipcChannels\.processMetrics/);
-	assert.match(systemIpc, /getProcessSnapshot\(deps\.agentManager\.listAgentPids\(\)\)/);
+	// handler 先按 agentId 反查会话身份（进程监控表要显示是哪个会话），
+	// 再交给 getProcessSnapshot 采样内存
+	assert.match(systemIpc, /getSessionInfoForAgent\(\s*agent\.agentId,\s*\)/);
+	assert.match(systemIpc, /\.\.\.agent, \.\.\.\(sessionInfo \?\? \{\}\)/);
+	assert.match(systemIpc, /getProcessSnapshot\(agents\)/);
+	assert.doesNotMatch(systemIpc, /getProcessSnapshot\(deps\.agentManager\.listAgentPids\(\)\)/);
 	assert.match(preload, /getProcessMetrics: \(\) =>/);
 	assert.match(preload, /ipcRenderer\.invoke\(ipcChannels\.processMetrics\)/);
 });
@@ -168,11 +173,32 @@ test("stop-agent: full session stop chain (coordinator + detach)", () => {
 	assert.match(tab, /CircleStop/);
 	assert.match(tab, /text-destructive hover:bg-destructive\/10/);
 	assert.match(tab, /size="sm"/);
-	// Agent 表头列序：agentId → PID → memory → action（操作列在最右侧，列内居中）
-	assert.match(tab, /config\.process\.column\.agentId.*>PID<.*config\.process\.column\.memory.*config\.process\.column\.action/s);
+	// Agent 表头列序：agentId → 会话 → PID → memory → action（操作列在最右侧，列内居中）
+	assert.match(tab, /config\.process\.column\.agentId.*config\.process\.column\.session.*>PID<.*config\.process\.column\.memory.*config\.process\.column\.action/s);
 	assert.match(tab, /<TableCell className="text-center">/);
 	// 表头「操作」也居中，与列内按钮对齐（TableHead 默认 text-left 需覆盖）
 	assert.match(tab, /<TableHead className="text-center">\{t\("config\.process\.column\.action"\)\}<\/TableHead>/);
+});
+
+	test("process monitor rows show the session associated with each agent", () => {
+	const tab = readFileSync("src/renderer/src/components/app/settings/ProcessMetricsTab.tsx", "utf8");
+	// 会话列：优先标题（易读），无标题回落 sessionId，无绑定显示占位符
+	assert.match(tab, /agent\.sessionTitle \?\? agent\.sessionId \?\? "-"/);
+	assert.match(tab, /title=\{agent\.sessionId\}/);
+	assert.match(tab, /max-w-56 truncate text-text-secondary/);
+	// 主进程：会话身份由 coordinator 按 agentId 反查（同源：sessionIdByAgent + catalog）
+	const coordinator = readFileSync(
+		"src/main/sessions/SessionRuntimeCoordinator.ts",
+		"utf8",
+	);
+	assert.match(coordinator, /getSessionInfoForAgent\(/);
+	assert.match(coordinator, /sessionIdByAgent\.get\(agentId\)/);
+	assert.match(coordinator, /catalog\.get\(sessionId\)/);
+	// 字段名必须与 AgentProcessMetric 一致（sessionTitle）：否则展开后标题丢失，UI 回落显示 id
+	assert.match(coordinator, /sessionTitle: entry\?\.title/);
+	const types = readFileSync("src/shared/types/processMetrics.ts", "utf8");
+	assert.match(types, /sessionId\?: string/);
+	assert.match(types, /sessionTitle\?: string/);
 });
 
 test("ProcessMetricsTab wires table columns and refresh", () => {
@@ -213,6 +239,7 @@ test("process monitor i18n keys exist in zh-CN and en-US", () => {
 		"config.process.loadFailed",
 		"config.process.column.memory",
 		"config.process.column.agentId",
+		"config.process.column.session",
 		"config.process.column.action",
 		"config.process.stop",
 		"config.process.stopConfirm",

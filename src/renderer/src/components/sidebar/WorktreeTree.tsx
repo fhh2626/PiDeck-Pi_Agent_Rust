@@ -22,6 +22,9 @@ const workspaceSessionsClass = "min-w-0 basis-[calc(100%-24px)] ml-6 pl-2";
  * 操作按钮（+/匿名/删除）以 absolute 浮层呈现，必须锚定在「标题行」这一层：
  * 外层行容器还包着展开的会话列表（flex-wrap 换行），若直接对行容器 top-1/2 定位，
  * 按钮会跑到「标题 + 全部历史会话」整块的中心，压住历史会话行、挡住点击。
+ * 窄侧栏（<256px）时按钮会盖住标题：行文本上 @max-[255px]:group-hover:pr-* 压出
+ * 按钮宽度的右侧留白，文本截断让位但保持可见（淡出到透明会不可读，已弃用），
+ * 与项目行/会话行同一套策略。主工作区行 2 按钮 52px，子工作区行 3 按钮 78px。
  */
 function WorkspaceRowActions(props: {
   children: React.ReactNode;
@@ -84,7 +87,7 @@ export function WorktreeTree(props: {
             title={t("app.worktreeMainWorkspace")}
           >
             <span className="worktree-main-branch-icon grid size-5 shrink-0 place-items-center text-muted-foreground"><GitBranch size={14} /></span>
-            <span className="conversation-body min-w-0 flex-1">
+            <span className="conversation-body min-w-0 flex-1 transition-[padding-right] @max-[255px]:group-hover:pr-[52px] @max-[255px]:group-focus-within:pr-[52px]">
               <span className="conversation-title flex min-w-0 items-center gap-1.5">
                 <strong className="min-w-0 truncate font-medium">{t("app.worktreeMainWorkspace")}</strong>
                 <span className="worktree-main-branch min-w-0 truncate text-control text-muted-foreground">{props.branch ?? t("app.worktreeBranchLoading")}</span>
@@ -216,6 +219,8 @@ function WorkspaceTreeRowView(props: {
               workspaceSelectClass,
               // 子 worktree 是父项目下的分支入口，不应与父项目/主工作区争夺视觉层级。
               "text-control",
+              // 窄侧栏 hover 压出 3 按钮（78px）留白；transition-all 让压缩动画与配色过渡共存
+              "transition-all @max-[255px]:group-hover:pr-[78px] @max-[255px]:group-focus-within:pr-[78px]",
               isActive && "bg-accent/60 border border-border-strong text-foreground",
             )}
             disabled={!childProject}

@@ -69,6 +69,8 @@ export type PiExtensionSummary = {
 	scope: "user" | "project" | "unknown";
 	/** PiDeck 内置扩展，不可卸载 */
 	builtIn?: boolean;
+	/** 过滤式安装（pi list 的 "(filtered)" 标记）：包完整安装但只选择性加载指定资源 */
+	filtered?: boolean;
 	/** 是否启用（未在 disabledExtensions 列表中） */
 	enabled?: boolean;
 	currentVersion?: string;
@@ -129,16 +131,6 @@ export type AppInfo = {
 	platform: NodeJS.Platform;
 	/** 用户 home 目录，供扩展读取本地文件（如 memory-store.json） */
 	homeDir: string;
-};
-
-export type FeedbackEnvironment = {
-	appVersion: string;
-	platform: NodeJS.Platform;
-	arch: string;
-	electronVersion: string;
-	chromeVersion: string;
-	nodeVersion: string;
-	pi: PiInstallStatus;
 };
 
 export type AppUpdateAsset = {

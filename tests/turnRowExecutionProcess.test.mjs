@@ -81,13 +81,13 @@ test("execution summary toggle radius matches other buttons", () => {
 test("execution fold renders thinking as collapsed CoT steps", () => {
   assert.match(thinkingStepSource, /defaultExpanded=\{false\}/);
 
-  // ThinkingBlock 支持 defaultExpanded 初始值（standalone 仍默认展开）
+  // ThinkingBlock 支持 defaultExpanded 初始值（默认折叠成单行跑马灯，显式传 true 才展开）
   const cards = readFileSync(
     "src/renderer/src/components/session/TimelineEventCards.tsx",
     "utf8",
   );
   assert.match(cards, /defaultExpanded\?: boolean/);
-  assert.match(cards, /useState\(props\.defaultExpanded \?\? true\)/);
+  assert.match(cards, /useState\(props\.defaultExpanded \?\? false\)/);
 
   // 汇总按钮带步骤图标（ListTree），呼应 Chain of Thought 头部
   assert.match(summaryToggleSource, /<ListTree size=\{13\}/);

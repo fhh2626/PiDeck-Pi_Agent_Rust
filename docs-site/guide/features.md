@@ -50,6 +50,7 @@ PiDeck 支持在设置中配置外部编辑器，配置后在项目右键菜单�
 - **Visual Studio Code**（含 Insiders、VSCodium）
 - **Cursor**
 - **Zed**
+- **Sublime Text**
 - **IntelliJ IDEA**
 - **WebStorm**
 - **PhpStorm**

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadTsCommonJs } from "./helpers/loadTsCommonJs.mjs";
 
-const { mergeHistoryWithPreservedMessages } = loadTsCommonJs(
+const { buildCompactionSlideOut, mergeHistoryWithPreservedMessages } = loadTsCommonJs(
 	"src/main/pi/historyMessages.ts",
 );
 
@@ -167,6 +167,33 @@ test("无 preserveMessagesAfter：直接返回投影（替换语义不变）", (
 	const merged = mergeHistoryWithPreservedMessages(history, current);
 	assert.equal(merged.length, 1);
 	assert.equal(merged[0].id, "agent-1-history-e1");
+});
+
+test("compaction slideOut consumes retained messages even when entryIds change", () => {
+	const previous = [
+		runtimeMessage("继续", "user"),
+		runtimeMessage("上一条完整回复"),
+	];
+	const next = [
+		projectedMessage("继续", "new-e1", "user"),
+		projectedMessage("上一条完整回复", "new-e2"),
+	];
+	const slideOut = buildCompactionSlideOut(previous, next);
+	assert.equal(slideOut.length, 0, "changed projection ids must not create duplicate old messages");
+});
+
+test("compaction slideOut preserves only messages absent from the new projection", () => {
+	const previous = [
+		runtimeMessage("旧问题", "user"),
+		runtimeMessage("旧回复"),
+		runtimeMessage("尚未压缩的最近回复"),
+	];
+	const next = [
+		projectedMessage("旧问题", "new-e1", "user"),
+		projectedMessage("旧回复", "new-e2"),
+	];
+	const slideOut = buildCompactionSlideOut(previous, next);
+	assert.deepEqual(slideOut.map((message) => message.text), ["尚未压缩的最近回复"]);
 });
 
 // ── M1 回归：指纹去重的时间/位置约束（2026-12）──

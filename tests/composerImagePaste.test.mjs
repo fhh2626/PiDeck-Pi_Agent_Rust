@@ -73,7 +73,43 @@ test("readBase64 支持 maxBytes 预检，粘贴图片超大时主进程拦截",
 
 test("onPaste 图片文件走预览分支，失败回退 @path 引用", () => {
   assert.match(controller, /clipboardPaths\.every\(isImageFilePath\)/);
-  assert.match(controller, /pasteClipboardImages/);
+  assert.match(controller, /pasteClipboardImages\(clipboardPaths, event\.clipboardData\)/);
   assert.match(controller, /readBase64\(path, COMPOSER_IMAGE_MAX_BYTES\)/);
   assert.match(controller, /insertFilePathRefs\(paths\)/);
+});
+
+test("粘贴图片读取失败时兜底剪贴板位图，不直接退化成 @path 引用", () => {
+  // 路径文件被删/超大时：事件粘贴取 clipboardData 位图，右键粘贴取 Electron 剪贴板位图
+  assert.match(controller, /getClipboardImageFiles\(dataTransfer\)/);
+  assert.match(controller, /desktopApi\.clipboard\.readImage\(\)/);
+  assert.match(controller, /clipboard-image\.png/);
+});
+
+test("位图分支优先于纯文本路径提取（微信/QQ 复制图片 text 槽是缓存路径）", () => {
+  // 微信等复制图片：剪贴板=位图+text 槽缓存路径（无 CF_HDROP）。若路径提取在前，
+  // Ctrl+V 会把附带路径粘成 @C:\... 引用、位图分支永远轮不到（右键粘贴却正常）。
+  const imageBranch = controller.indexOf("getClipboardImageFiles(event.clipboardData)");
+  const pathExtract = controller.indexOf("extractPastedPath(");
+  assert.ok(imageBranch >= 0 && pathExtract >= 0, "两个分支都应存在");
+  assert.ok(
+    imageBranch < pathExtract,
+    `位图检查应在路径提取之前（实际 image=${imageBranch} path=${pathExtract}）`,
+  );
+  assert.match(controller, /paths\.every\(isImageFilePath\)/);
+  assert.match(controller, /位图才是用户要的内容/);
+});
+
+test("右键粘贴：图片/文件路径走 controller，纯文本返回 false 交给编辑器", () => {
+  assert.match(controller, /pasteFromClipboard/);
+  assert.match(controller, /onPasteClipboard: pasteFromClipboard/);
+  assert.match(controller, /Promise<boolean>/);
+  const tipTap = readFileSync("src/renderer/src/components/session/composer/TipTapComposer.tsx", "utf8");
+  assert.match(tipTap, /const handled = await props\.onPasteClipboard\?\.\(\);/);
+  assert.match(tipTap, /if \(!handled\) insertClipboard\(editor\);/);
+});
+
+test("preload 暴露剪贴板位图读取（readImage，空图返回空串）", () => {
+  assert.match(preload, /readImage: \(\) => \{/);
+  assert.match(preload, /clipboard\.readImage\(\)/);
+  assert.match(preload, /image\.isEmpty\(\) \? "" : image\.toDataURL\(\)/);
 });

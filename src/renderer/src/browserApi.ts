@@ -308,6 +308,7 @@ export function createBrowserApi(): PiDesktopApi {
 				sessionRuntimeCommand(target, "compact", { prompt }),
 			getRuntimeState: (target) => sessionRuntimeCommand(target, "state"),
 			listRuntimeCommands: (target) => sessionRuntimeCommand(target, "commands"),
+			listRuntimeModels: (target) => sessionRuntimeCommand(target, "models"),
 			exportRuntimeHtml: (target) => sessionRuntimeCommand(target, "export-html"),
 			editRuntimeMessage: (target, messageId, newText) =>
 				sessionRuntimeCommand(target, "edit-message", { messageId, newText }),

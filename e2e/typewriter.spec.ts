@@ -20,7 +20,7 @@ async function startAgent(window: Page) {
 			.catch(() => false);
 		if (gone) break;
 	}
-	await expect(composer).toHaveAttribute("aria-disabled", "false", { timeout: 30_000 });
+	await expect(composer).toHaveAttribute("contenteditable", "true", { timeout: 30_000 });
 	return composer;
 }
 

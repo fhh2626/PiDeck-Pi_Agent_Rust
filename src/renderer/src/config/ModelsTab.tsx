@@ -21,6 +21,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui-shadcn/popover";
 import { showNotice } from "../utils/notice";
 import { computeModelSpecPatches } from "../utils/modelSpecAutoFill";
+import type { ModelSpec } from "../../../shared/types/modelSpecs";
 
 type FetchedModel = { id: string; name?: string };
 
@@ -254,20 +255,22 @@ export function ModelsTab(props: {
 		const trimmed = modelId.trim();
 		if (!trimmed) return;
 		const spec = await desktopApi.projects.getModelSpec(providerName, trimmed);
-		if (!spec) return;
+		// 未匹配时用空规格兜底：computeModelSpecPatches 仍会填保守默认值（128000/8192），
+		// 保证空字段始终有值；matchedId 用用户输入，toast 展示命中来源
+		const fallback = spec ?? ({ source: "models-dev", matchedId: trimmed } satisfies ModelSpec);
 		// 失焦时手填已完成：以最新渲染的 model 为准，逐个判断空字段（有值不覆盖）
 		const model = data.providers[providerName]?.models[index];
 		if (!model) return;
 		// 补全规则（只填空字段）集中在 utils/modelSpecAutoFill.ts，保存时的批量补全复用同一套逻辑
-		const updates = computeModelSpecPatches(model, spec);
+		const updates = computeModelSpecPatches(model, fallback);
 		for (const [field, value] of updates) {
 			props.onUpdateModel(providerName, index, field, value);
 		}
 		if (updates.length > 0) {
 			showNotice(
 				t("config.modelSpecAutoFilled", {
-					model: spec.matchedId ?? trimmed,
-					source: spec.source === "openrouter" ? "OpenRouter" : "models.dev",
+					model: fallback.matchedId ?? trimmed,
+					source: fallback.source === "openrouter" ? "OpenRouter" : "models.dev",
 				}),
 				3000,
 			);

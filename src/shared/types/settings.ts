@@ -37,6 +37,10 @@ export type SessionTabOpenMode = "preview" | "permanent";
 export type AppFontSizeMode = "compact" | "default" | "medium" | "large" | "xlarge";
 export type AppFontBaseMode = "system" | "sans" | "serif" | "custom";
 export type AppFontMonoMode = "system-mono" | "custom";
+/** 会话排版档位：通用三档（内容块间距/列表密度/代码密度） */
+export type ChatTypographyDensity = "compact" | "default" | "relaxed";
+/** 会话正文行距档位：四档（含宽松一档） */
+export type ChatBodyLineHeightMode = "compact" | "default" | "relaxed" | "loose";
 /** 主窗口启动尺寸预设：last=上次关闭时的窗口大小（读不到时顺延默认）；fullscreen 占满屏幕，maximized 最大化，其余为固定窗口 */
 export type StartupWindowMode =
 	| "last"
@@ -183,6 +187,14 @@ export type StartupWindowMode =
 	chatFontSize: AppFontSizeMode | null;
 	/** 输入框字号覆盖；null 表示跟随 fontSize。控制 composer 输入区 */
 	inputFontSize: AppFontSizeMode | null;
+	/** 会话正文行距档位：控制自动换行、普通行与单个回车的行高 */
+	chatBodyLineHeight: ChatBodyLineHeightMode;
+	/** Markdown 段落与相邻内容块的间距档位 */
+	chatBlockGap: ChatTypographyDensity;
+	/** 列表整体与列表项之间的疏密档位 */
+	chatListDensity: ChatTypographyDensity;
+	/** 代码块/表格内部的疏密档位 */
+	chatCodeDensity: ChatTypographyDensity;
 	/** 全局窗口缩放比例，1 为 100%；通过 webContents.setZoomFactor 生效 */
 	zoomFactor: number;
 	/** UI 基础字体预设，默认使用系统字体；system 跟随系统字体栈；custom 时使用 fontFamilyBaseCustom */
@@ -230,6 +242,8 @@ export type StartupWindowMode =
 	 * 下次启动跳过自动部署，并清理用户目录残留文件，避免 pi 仍加载导致工具冲突。
 	 */
 	removedBuiltInExtensions: string[];
+	/** 内置扩展默认值迁移版本；仅用于保证新增的默认关闭扩展不影响老配置。 */
+	builtInExtensionDefaultsVersion?: number;
 
 	/**
 	 * 用户从设置页删除的内置 Prompt 模板名称（如 commit、review）。

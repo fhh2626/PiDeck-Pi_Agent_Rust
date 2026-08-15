@@ -194,8 +194,8 @@ export function useWorkspacePanels(options: WorkspacePanelOptions = {}) {
   const [drawer, setDrawer] = useState<WorkspaceDrawerPanel | null>(null);
   const [drawerCollapsed, setDrawerCollapsed] = useState(false);
   // 抽屉宽度：全局布局偏好（与项目无关），初始值从 localStorage 恢复并 clamp 到可调范围。
-  // setDrawerWidth 只有 AppShell 的拖拽提交路径（onLayoutChanged + isUserInteraction）
-  // 会调用，因此下方的持久化 effect 等价于“拖拽结束后保存一次”，无需额外节流。
+  // 写入方：AppShell onLayoutChanged 经 shouldCommitPanelPixels 过滤——拖拽、缩放后的真实像素。
+  // 折叠 0 与 expand()→minSize 的瞬时值不写，避免与 resize(保存宽) 互顶闪动。
   const [drawerWidth, setDrawerWidth] = useState(() => readDrawerWidth(storageRef.current));
   useEffect(() => {
     writeDrawerWidth(storageRef.current, drawerWidth);

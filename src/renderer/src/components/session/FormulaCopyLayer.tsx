@@ -3,19 +3,20 @@ import { t } from "../../i18n";
 import { showNotice } from "../../utils/notice";
 
 /**
- * 通用公式复制（行内 $...$ 与块级 $$...$$ 全覆盖，按钮常显）。
+ * 通用公式复制（行内 $...$ 点公式本体、块级 $$...$$ 按钮常显）。
  *
  * streamdown/@streamdown/math 无自带公式复制（interactive controls 只覆盖
  * images/tables/code/mermaid），而 rehype-katex 输出是纯 HTML span、不进
  * Components map——旧实现只能在 p 层拦截「段落唯一子元素是 .katex」的罕见
  * 场景，真正的块级公式（math-display，p 外）与行内公式都无法复制。
  *
- * 实现：DOM 直插按钮（非 React 管理）+ MutationObserver 跟随流式重渲染
- * （KaTeX 每帧重建容器，按钮随旧元素销毁、对新元素自动补齐）。
+ * 实现：DOM 直插按钮/挂点击（非 React 管理）+ MutationObserver 跟随流式重渲染
+ * （KaTeX 每帧重建容器，挂载随旧元素销毁、对新元素自动补齐）。
  * - 块级公式（.math-display 容器，独占一行）：按钮插在容器末尾，公式 flex
  *   居中 + 按钮靠右（容器 flex 化见 surfaces.css）
- * - 行内公式（文本流中）：按钮插在 .katex 元素之后，占用约 20px 行内空间
- *   （不遮挡公式后文字；常显的唯一代价是公式与后文之间的小空隙）
+ * - 行内公式（文本流中）：不插独立按钮——公式本体加细边框“框”成可点击
+ *   目标，直接点击公式即复制 LaTeX。连续多个公式时不会出现一排按钮块，
+ *   观感更干净（框的样式用 Tailwind utility，见 INLINE_BOX_CLASS）
  *
  * LaTeX 源码取自 KaTeX 的 MathML annotation（rehype-katex 固定输出
  * annotation[encoding="application/x-tex"]）。全局单次监听，多实例共享。
@@ -31,10 +32,28 @@ const CHECK_SVG =
 // 间距由 .math-display 容器 gap 提供，按钮自身不留外边距
 const BLOCK_BUTTON_CLASS =
 	"flex h-[22px] w-[22px] shrink-0 cursor-pointer items-center justify-center rounded-[4px] border-0 bg-transparent p-0 text-text-tertiary opacity-55 transition-opacity hover:opacity-100 hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]";
-// 行内按钮：插在 .katex 之后紧贴右缘（无外边距，避免“浮在外面”观感）；
-// 尺寸收敛到 18px 防撑行高，垂直中线对齐公式
-const INLINE_BUTTON_CLASS =
-	"inline-flex h-[18px] w-[18px] shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-0 bg-transparent p-0 align-middle text-text-tertiary opacity-55 transition-opacity hover:opacity-100 hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]";
+// 行内公式“框”样式（Tailwind utility 全部走 utilities 层，可压过 KaTeX 的
+// vendor 层样式）：细边框 + 弱底色常显，hover 边框转 accent 提示可点击。
+// 底色用 --color-bg-muted、边框用 --color-border-subtle 语义 token，暗色自动适配。
+const INLINE_BOX_BORDER_BG = [
+	"border-[var(--color-border-subtle)]",
+	"bg-[var(--color-bg-muted)]",
+];
+const INLINE_BOX_COPIED_BORDER_BG = [
+	"border-[var(--color-success)]",
+	"bg-[var(--color-success-soft)]",
+];
+const INLINE_BOX_CLASS = [
+	"inline-block",
+	"cursor-pointer",
+	"rounded-[4px]",
+	"border",
+	"px-[5px]",
+	"py-[1px]",
+	"transition-colors",
+	"hover:border-[var(--color-accent)]",
+	...INLINE_BOX_BORDER_BG,
+];
 
 let listenersInitialized = false;
 
@@ -80,29 +99,45 @@ function attachBlockButton(container: HTMLElement) {
 	container.appendChild(button);
 }
 
-/** 行内公式：.katex 元素之后插按钮（幂等）。 */
-function attachInlineButton(katex: HTMLElement) {
+/** 行内公式：公式本体加“框”并挂点击复制（幂等）。
+ * 点击目标就是 .katex 本身，不再插入独立按钮。 */
+function attachInlineCopy(katex: HTMLElement) {
 	if (katex.dataset.mathCopyAttached) return;
 	katex.dataset.mathCopyAttached = "1";
-	const button = document.createElement("button");
-	button.type = "button";
-	button.dataset.mathCopyBtn = "";
-	button.title = t("copy.formula");
-	button.setAttribute("aria-label", t("copy.formula"));
-	button.className = INLINE_BUTTON_CLASS;
-	button.innerHTML = COPY_SVG;
-	attachCopyHandlers(button, katex);
-	katex.insertAdjacentElement("afterend", button);
+	katex.title = t("copy.formula");
+	katex.classList.add(...INLINE_BOX_CLASS);
+	katex.addEventListener("click", (event) => {
+		// 拖选文本时 mouseup 会落在公式上触发 click，有选区则视为选择而非复制
+		const selection = window.getSelection();
+		if (selection && !selection.isCollapsed) return;
+		// 公式若在链接内，阻止默认跳转，避免“复制”误触发导航
+		// （不用 stopPropagation：公式可能位于弹层内，不能截断外层点击关闭类监听）
+		event.preventDefault();
+		void copyTexFrom(katex).then((ok) => {
+			if (!ok) {
+				showNotice(t("copy.failed"), 2000);
+				return;
+			}
+			// 短暂把边框/底色切成 success 色作复制成功反馈，再恢复常态
+			katex.classList.remove(...INLINE_BOX_BORDER_BG);
+			katex.classList.add(...INLINE_BOX_COPIED_BORDER_BG);
+			window.setTimeout(() => {
+				katex.classList.remove(...INLINE_BOX_COPIED_BORDER_BG);
+				katex.classList.add(...INLINE_BOX_BORDER_BG);
+			}, 1400);
+			showNotice(t("copy.formulaCopied"), 1200);
+		});
+	});
 }
 
-/** 为 root 及其后代补齐公式按钮（幂等）：块级进容器，行内进文本流。 */
+/** 为 root 及其后代补齐公式复制挂载（幂等）：块级插按钮，行内本体加框。 */
 function ensureFormulaButtons(root: Element) {
 	// 行内公式：所有 .katex 中不在 .math-display 容器内的（块级已由容器统一处理）
 	for (const el of root.querySelectorAll(".katex")) {
-		if (!el.closest(".math-display")) attachInlineButton(el as HTMLElement);
+		if (!el.closest(".math-display")) attachInlineCopy(el as HTMLElement);
 	}
 	if (root.classList.contains("katex") && !root.closest(".math-display")) {
-		attachInlineButton(root as HTMLElement);
+		attachInlineCopy(root as HTMLElement);
 	}
 	for (const el of root.querySelectorAll(".math-display")) {
 		attachBlockButton(el as HTMLElement);
@@ -126,7 +161,8 @@ function initFormulaButtons() {
 }
 
 /** 公式复制层：挂在 MarkdownStream 内，不渲染任何 DOM。
- * 按钮全部为 DOM 直插（非 React），随 KaTeX 元素生命周期自动销毁/重建。 */
+ * 块级按钮为 DOM 直插（非 React），行内挂载为对 .katex 元素加类/事件，
+ * 均随 KaTeX 元素生命周期自动销毁/重建。 */
 export function FormulaCopyLayer() {
 	useEffect(() => {
 		initFormulaButtons();

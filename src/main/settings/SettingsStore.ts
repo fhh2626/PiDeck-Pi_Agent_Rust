@@ -2,8 +2,18 @@ import { app, BrowserWindow, Menu } from "electron";
 import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+	getDefaultGitCommitMessagePrompt,
+	isDefaultGitCommitMessagePrompt,
+	resolveGitCommitMessagePromptLocale,
+} from "../../shared/gitCommitMessagePrompt";
 import { createDefaultExternalEditorSettings, type AppSettings } from "../../shared/types";
 import { getAppLogger } from "../logging/sharedLogger";
+import {
+	BUILT_IN_EXTENSION_DEFAULTS_VERSION,
+	DEFAULT_DISABLED_BUILT_IN_EXTENSIONS,
+	migrateBuiltInExtensionDefaults,
+} from "../extensions/builtInExtensions";
 
 /** 桌面端 settings.json（userData），与 pi agent settings 分离 */
 function desktopSettingsPath() {
@@ -85,25 +95,8 @@ const defaultSettings: AppSettings = {
 	piRustPath: "",
   sessionTabOpenMode: "preview",
   enableGitManagement: true,
-  gitCommitMessagePrompt: `请根据以下 git diff 生成一条中文 git commit message。
-
-变更描述：
-{diff}
-
-Gitmoji 对应关系：
-✨ feat - 新功能
-🐛 fix - Bug 修复
-📚 docs - 文档更新
-💎 style - 代码格式
-♻️ refactor - 重构
-🧪 test - 测试
-🔧 chore - 构建/工具
-
-要求：
-1. 使用对应的 Gitmoji 开头
-2. 第一行简要说明修改的模块和做了什么
-3. 后续用 - 列出具体变更点
-4. 直接输出 commit 消息，不要解释`,
+  // load() 会按系统/用户语言把内置模板切换为中文或英文。
+  gitCommitMessagePrompt: getDefaultGitCommitMessagePrompt("zh-CN"),
   // 默认不指定模型，避免升级后在用户尚未配置 provider 时隐式调用错误模型。
   gitCommitMessageProvider: "",
   gitCommitMessageModel: "",
@@ -148,7 +141,8 @@ Gitmoji 对应关系：
 
   // ── 扩展管理 ──
   /** 用户手动移除的内置扩展，启动时跳过自动部署 */
-  removedBuiltInExtensions: [],
+  removedBuiltInExtensions: [...DEFAULT_DISABLED_BUILT_IN_EXTENSIONS],
+  builtInExtensionDefaultsVersion: BUILT_IN_EXTENSION_DEFAULTS_VERSION,
   /** 用户删除的内置 Prompt 模板名称；找回默认模板时清空 */
   hiddenBuiltinPromptNames: [],
 
@@ -167,6 +161,10 @@ Gitmoji 对应关系：
   uiFontSize: null,
   chatFontSize: null,
   inputFontSize: null,
+  chatBodyLineHeight: "default",
+  chatBlockGap: "default",
+  chatListDensity: "default",
+  chatCodeDensity: "default",
   zoomFactor: 1,
   fontFamilyBase: "system",
   fontFamilyBaseCustom: "",
@@ -179,6 +177,7 @@ export class SettingsStore {
   private settings: AppSettings = { ...defaultSettings };
 
   async load() {
+    let migratedBuiltInExtensionDefaults = false;
     try {
       const raw = await readFile(this.filePath, "utf8");
       // 磁盘 JSON 无类型；旧版匿名统计字段只读兼容，加载时剥离后不再写回。
@@ -202,6 +201,14 @@ export class SettingsStore {
           ...(parsed.externalEditors ?? {}),
         },
       };
+      const migratedBuiltIns = migrateBuiltInExtensionDefaults(
+        this.settings.removedBuiltInExtensions,
+        parsed.builtInExtensionDefaultsVersion,
+      );
+      this.settings.removedBuiltInExtensions = migratedBuiltIns.removedBuiltInExtensions;
+      this.settings.builtInExtensionDefaultsVersion = migratedBuiltIns.version;
+      migratedBuiltInExtensionDefaults = migratedBuiltIns.migrated;
+      const migratedGitCommitMessagePrompt = this.applyLocalizedDefaultGitCommitMessagePrompt(parsed);
       // 兼容迁移：内置 CommitMono 字体已移除（打包瘦身），旧设置里的 "commit-mono"
       // 不再存在于 AppFontMonoMode 枚举，统一回退到系统等宽字体，避免类型漂移。
       // 注意：磁盘 JSON 是无类型的，旧值可能是已删除的枚举项，先拓宽为 string 再比较。
@@ -213,11 +220,12 @@ export class SettingsStore {
       // 语义从「最大宽度 px」变为「占面板百分比」，无法精确换算（面板宽度可变），
       // 用线性映射保留旧值感觉：800→60%、1400→84%、1800(不限)→100%。
       this.migrateContentWidth();
-      if (hadLegacyTelemetry) {
+      if (hadLegacyTelemetry || migratedGitCommitMessagePrompt || migratedBuiltInExtensionDefaults) {
         void this.save().catch(() => undefined);
       }
     } catch {
       this.settings = { ...defaultSettings };
+      this.applyLocalizedDefaultGitCommitMessagePrompt({});
     }
     // showThinking 不再作为可持久化的独立配置项，完全跟随 pi agent 的 hideThinkingBlock。
     // 启动时重新读取以确保每次启动都使用最新值，而非缓存的 defaultSettings。
@@ -230,6 +238,25 @@ export class SettingsStore {
     await this.detectAndSaveInstallationType();
     this.applyMenu();
     return this.get();
+  }
+
+  /**
+   * Keep the built-in commit prompt aligned with the UI language while preserving custom templates.
+   * Older settings files contain the Chinese built-in prompt, so it is migrated only when the
+   * persisted value is empty or still exactly one of the two built-in defaults.
+   */
+  private applyLocalizedDefaultGitCommitMessagePrompt(parsed: Partial<AppSettings>): boolean {
+    const persistedPrompt = parsed.gitCommitMessagePrompt;
+    if (typeof persistedPrompt === "string" && !isDefaultGitCommitMessagePrompt(persistedPrompt)) {
+      return false;
+    }
+
+    const localizedPrompt = getDefaultGitCommitMessagePrompt(
+      resolveGitCommitMessagePromptLocale(this.settings.language, getSystemLanguage()),
+    );
+    if (this.settings.gitCommitMessagePrompt === localizedPrompt) return false;
+    this.settings.gitCommitMessagePrompt = localizedPrompt;
+    return true;
   }
 
   /**
@@ -262,7 +289,16 @@ export class SettingsStore {
   async update(patch: Partial<AppSettings>) {
     // showThinking 完全由 pi agent 的 hideThinkingBlock 控制，不允许通过桌面设置修改
     const { showThinking: _, ...safePatch } = patch;
+    const languageChanged = Object.hasOwn(safePatch, "language");
+    const promptWasDefault = isDefaultGitCommitMessagePrompt(this.settings.gitCommitMessagePrompt);
+    const promptProvided = Object.hasOwn(safePatch, "gitCommitMessagePrompt");
     this.settings = { ...this.settings, ...safePatch };
+    // 用户只切换语言且仍使用内置模板时，同步模板语言；自定义模板不随语言变化。
+    if (languageChanged && !promptProvided && promptWasDefault) {
+      this.settings.gitCommitMessagePrompt = getDefaultGitCommitMessagePrompt(
+        resolveGitCommitMessagePromptLocale(this.settings.language, getSystemLanguage()),
+      );
+    }
     await this.save();
     this.applyMenu();
     // 配置变更审计（统一在此留痕，覆盖 IPC 与 pet/extension/editors 等所有直写路径）：
@@ -346,4 +382,12 @@ export class SettingsStore {
     this.settings.installationType = installationType;
     await this.save();
   }
+}
+
+function getSystemLanguage(): string | undefined {
+	try {
+		return app.getLocale();
+	} catch {
+		return undefined;
+	}
 }

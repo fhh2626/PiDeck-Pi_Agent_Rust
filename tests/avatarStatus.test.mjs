@@ -41,7 +41,7 @@ test("sidebar project groups and splitters use soft neutral boundaries", () => {
   )?.[1] ?? "";
   assert.doesNotMatch(projectGroupStyles, /border-bottom:/);
   assert.match(foundation, /\.splitter::before \{[\s\S]*?box-shadow: 0 0 6px/);
-  assert.match(foundation, /\.splitter:hover::before,[\s\S]*?box-shadow: 0 0 14px/);
+  assert.match(foundation, /\.splitter:hover::before,[\s\S]*?box-shadow: 0 0 6px/);
   assert.doesNotMatch(foundation, /\.splitter:hover::before,[\s\S]*--color-accent\) 32%/);
 });
 

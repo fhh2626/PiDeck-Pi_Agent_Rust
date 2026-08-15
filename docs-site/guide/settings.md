@@ -44,6 +44,7 @@ PiDeck 区分两类代理：
 - Visual Studio Code（含 Insiders、VSCodium）
 - Cursor
 - Zed
+- Sublime Text
 - IntelliJ IDEA
 - WebStorm
 - PhpStorm

@@ -81,6 +81,11 @@ export class SkillManager {
 		return { locations: this.locations, skills: Array.from(seen.values()) };
 	}
 
+	/** 返回当前全局 skill 根目录，供主进程文件 IPC 做边界校验。 */
+	getDirs(): string[] {
+		return this.locations.map((location) => location.path);
+	}
+
 	async create(input: CreatePiSkillInput): Promise<PiSkillSummary> {
 		const location = this.requireLocation(input.locationId);
 		const name = this.normalizeSkillName(input.name);

@@ -126,6 +126,11 @@ export function setRuntimeThinking(
 	return callRuntimeCommand(target.sessionId, target, "thinking", { level });
 }
 
+/** 中止当前 Session 的运行时，而不是只关掉 Web 前端的 SSE。 */
+export function abortRuntime(target: SessionRuntimeTarget): Promise<unknown> {
+	return callRuntimeCommand(target.sessionId, target, "abort");
+}
+
 export async function fetchMessagePage(
 	sessionId: string,
 	before?: number,
@@ -142,11 +147,91 @@ export async function fetchMessagePage(
 	return (await res.json()) as SessionMessagePage;
 }
 
+type WebMessageMetadata = {
+	/** 原始 ChatMessage 角色；UIMessage 只能表达 user/assistant/system。 */
+	chatRole: ChatMessage["role"];
+	/** 用于把历史页与运行时快照放回同一时间线。 */
+	timestamp?: number;
+	/** Pi 活动分支条目身份；运行时/历史投影都可能携带。 */
+	entryId?: string;
+	/** 工具结果的跨投影稳定身份；工具文本会随执行状态改变，不能用文本匹配。 */
+	toolCallId?: string;
+};
+
+function createWebMessageMetadata(message: ChatMessage): WebMessageMetadata {
+	const metadata: WebMessageMetadata = {
+		chatRole: message.role,
+		timestamp: message.timestamp,
+	};
+	const entryId = message.meta?.entryId;
+	if (typeof entryId === "string" && entryId) metadata.entryId = entryId;
+	const toolCallId = message.meta?.toolCallId;
+	if (typeof toolCallId === "string" && toolCallId) metadata.toolCallId = toolCallId;
+	return metadata;
+}
+
+function parseWebToolInput(value: unknown): unknown {
+	if (typeof value !== "string") return value ?? {};
+	if (!value.trim()) return {};
+	try {
+		return JSON.parse(value);
+	} catch {
+		return value;
+	}
+}
+
+function getWebToolName(message: ChatMessage): string {
+	const fromMeta = message.meta?.toolName;
+	if (typeof fromMeta === "string" && fromMeta.trim()) return fromMeta.trim();
+	const label = message.text.replace(/^[▶✓✗]\s*/u, "").trim();
+	return label.split(/\s+/u)[0] || "tool";
+}
+
+function createWebToolPart(message: ChatMessage): UIMessage["parts"][number] {
+	const meta = message.meta;
+	const toolName = getWebToolName(message);
+	const toolCallId = typeof meta?.toolCallId === "string" && meta.toolCallId.trim()
+		? meta.toolCallId
+		: message.id;
+	const input = parseWebToolInput(meta?.args);
+	const detail = meta?.detailText ?? meta?.result ?? message.text;
+	const isError = meta?.status === "error" || meta?.isError === true;
+
+	if (meta?.status === "running") {
+		return {
+			type: "dynamic-tool",
+			toolName,
+			toolCallId,
+			state: "input-available",
+			input,
+		};
+	}
+	if (isError) {
+		return {
+			type: "dynamic-tool",
+			toolName,
+			toolCallId,
+			state: "output-error",
+			input,
+			errorText: typeof detail === "string" ? detail : message.text,
+		};
+	}
+	return {
+		type: "dynamic-tool",
+		toolName,
+		toolCallId,
+		state: "output-available",
+		input,
+		output: detail,
+	};
+}
+
 /**
  * 历史 ChatMessage 列表 → useChat 的 UIMessage[]（text-only parts）。
  * 历史消息仅注入正文；流式思考/工具由 useChat 从 SSE 实时构建，避免与
  * 静态历史重复。ChatMessage.thinking 存在时一并注入 reasoning part，
- * 让历史会话也能折叠查看思考过程。
+ * 让历史会话也能折叠查看思考过程。保留少量非展示元数据，供历史页与
+ * 运行时快照合并时识别同一条工具/会话条目，避免把状态更新的工具追加到末尾。
  */
 export function chatMessagesToUiMessages(messages: ChatMessage[]): UIMessage[] {
 	return messages.map((message) => {
@@ -157,16 +242,177 @@ export function chatMessagesToUiMessages(messages: ChatMessage[]): UIMessage[] {
 					? "assistant"
 					: "assistant";
 		const parts: UIMessage["parts"] = [];
-		if (message.thinking) {
-			parts.push({ type: "reasoning", text: message.thinking });
-		}
-		if (message.text) {
-			parts.push({ type: "text", text: message.text });
+		if (message.role === "tool") {
+			parts.push(createWebToolPart(message));
+		} else {
+			if (message.thinking) {
+				parts.push({ type: "reasoning", text: message.thinking });
+			}
+			if (message.text) {
+				parts.push({ type: "text", text: message.text });
+			}
 		}
 		return {
 			id: message.id ?? `hist-${message.timestamp ?? Math.random()}`,
 			role,
+			metadata: createWebMessageMetadata(message),
 			parts,
 		};
 	});
+}
+
+function readWebMessageMetadata(message: UIMessage): WebMessageMetadata | undefined {
+	const value = message.metadata;
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const chatRole = Reflect.get(value, "chatRole");
+	if (chatRole !== "user" && chatRole !== "assistant" && chatRole !== "tool" && chatRole !== "system" && chatRole !== "error") {
+		return undefined;
+	}
+	const timestamp = Reflect.get(value, "timestamp");
+	const entryId = Reflect.get(value, "entryId");
+	const toolCallId = Reflect.get(value, "toolCallId");
+	return {
+		chatRole,
+		...(typeof timestamp === "number" ? { timestamp } : {}),
+		...(typeof entryId === "string" && entryId ? { entryId } : {}),
+		...(typeof toolCallId === "string" && toolCallId ? { toolCallId } : {}),
+	};
+}
+
+function uiMessageRole(message: UIMessage): ChatMessage["role"] {
+	return readWebMessageMetadata(message)?.chatRole ?? (message.role === "user" ? "user" : "assistant");
+}
+
+function uiMessageIdentity(message: UIMessage): string | undefined {
+	const metadata = readWebMessageMetadata(message);
+	if (!metadata) return undefined;
+	if (metadata.chatRole === "tool" && metadata.toolCallId) return `tool:${metadata.toolCallId}`;
+	if (metadata.entryId) return `${metadata.chatRole}:entry:${metadata.entryId}`;
+	return undefined;
+}
+
+function findTimestampInsertionIndex(messages: UIMessage[], incoming: UIMessage): number {
+	const timestamp = readWebMessageMetadata(incoming)?.timestamp;
+	if (timestamp === undefined) return messages.length;
+	let firstLaterIndex = messages.length;
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const candidateTimestamp = readWebMessageMetadata(messages[index])?.timestamp;
+		if (candidateTimestamp === undefined) continue;
+		if (candidateTimestamp <= timestamp) return index + 1;
+		firstLaterIndex = index;
+	}
+	return firstLaterIndex;
+}
+
+function uiMessageText(message: UIMessage): string {
+	return message.parts
+		.map((part) => {
+			if (part.type === "text" || part.type === "reasoning") return part.text;
+			return "";
+		})
+		.join("");
+}
+
+function sameUiMessage(left: UIMessage, right: UIMessage): boolean {
+	return left.id === right.id
+		&& left.role === right.role
+		&& JSON.stringify(left.parts) === JSON.stringify(right.parts);
+}
+
+/**
+ * 用主进程运行时快照补偿 Web 本地 useChat 缓存。
+ *
+ * Web 自己生成的 user/assistant id 与 pi 落盘 id 不同，因此先按稳定 id 匹配，
+ * 再按角色与文本（含“局部文本 → 完整文本”）匹配，避免 PC 端消息轮询到 Web 后
+ * 变成重复气泡。快照只覆盖运行期尾部，未包含的旧消息保留给历史分页缓存。
+ */
+export function mergeAuthoritativeUiMessages(
+	current: UIMessage[],
+	authoritative: UIMessage[],
+): UIMessage[] {
+	if (authoritative.length === 0) return current;
+	const merged = [...current];
+	const matchedCurrent = new Set<number>();
+	let changed = false;
+
+	for (const incoming of authoritative) {
+		let matchIndex = -1;
+		for (let index = 0; index < merged.length; index += 1) {
+			if (!matchedCurrent.has(index) && merged[index].id === incoming.id) {
+				matchIndex = index;
+				break;
+			}
+		}
+
+		const incomingIdentity = uiMessageIdentity(incoming);
+		if (matchIndex < 0 && incomingIdentity) {
+			for (let index = 0; index < merged.length; index += 1) {
+				if (
+					!matchedCurrent.has(index)
+					&& uiMessageIdentity(merged[index]) === incomingIdentity
+				) {
+					matchIndex = index;
+					break;
+				}
+			}
+		}
+
+		const incomingText = uiMessageText(incoming);
+		const incomingRole = uiMessageRole(incoming);
+		if (matchIndex < 0) {
+			for (let index = merged.length - 1; index >= 0; index -= 1) {
+				const candidate = merged[index];
+				if (
+					matchedCurrent.has(index)
+					|| uiMessageRole(candidate) !== incomingRole
+					|| uiMessageText(candidate) !== incomingText
+				) continue;
+				matchIndex = index;
+				break;
+			}
+		}
+
+		// 流式缓存可能只保留了前缀，而轮询快照已经拿到完整正文。
+		if (matchIndex < 0 && incomingText) {
+			for (let index = merged.length - 1; index >= 0; index -= 1) {
+				const candidateText = uiMessageText(merged[index]);
+				if (
+					matchedCurrent.has(index)
+					|| uiMessageRole(merged[index]) !== incomingRole
+					|| !candidateText
+					|| !(incomingText.startsWith(candidateText) || candidateText.startsWith(incomingText))
+				) continue;
+				matchIndex = index;
+				break;
+			}
+		}
+
+		if (matchIndex >= 0) {
+			matchedCurrent.add(matchIndex);
+			if (!sameUiMessage(merged[matchIndex], incoming)) {
+				merged[matchIndex] = incoming;
+				changed = true;
+			}
+			continue;
+		}
+
+		const insertionIndex = findTimestampInsertionIndex(merged, incoming);
+		// matchedCurrent tracks indexes in the mutable merged array. Inserting before
+		// an already matched item shifts its index, so update the set before marking
+		// the newly inserted message as consumed.
+		if (insertionIndex < merged.length) {
+			const shifted = [...matchedCurrent]
+				.filter((index) => index >= insertionIndex)
+				.map((index) => index + 1);
+			for (const index of [...matchedCurrent]) {
+				if (index >= insertionIndex) matchedCurrent.delete(index);
+			}
+			for (const index of shifted) matchedCurrent.add(index);
+		}
+		merged.splice(insertionIndex, 0, incoming);
+		matchedCurrent.add(insertionIndex);
+		changed = true;
+	}
+
+	return changed ? merged : current;
 }

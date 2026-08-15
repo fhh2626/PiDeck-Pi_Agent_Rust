@@ -3,7 +3,43 @@
  * Phase 1.3: 从 AgentManager.ts 中提取，无副作用，不依赖实例状态。
  */
 
-import type { ChatMessage, Project } from "../../shared/types";
+import type { AvailableModel, ChatMessage, Project } from "../../shared/types";
+
+/** 校验 get_available_models RPC，避免把协议失败伪装成成功的空列表。 */
+export function parseAvailableModelsResponse(response: {
+	success: boolean;
+	data?: unknown;
+	error?: string;
+}): AvailableModel[] {
+	if (!response.success) {
+		throw new Error(response.error?.trim() || "get_available_models failed");
+	}
+	if (!response.data || typeof response.data !== "object" || Array.isArray(response.data)) return [];
+	const models = Reflect.get(response.data, "models");
+	if (!Array.isArray(models)) return [];
+
+	return models.flatMap((value): AvailableModel[] => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+		const id = Reflect.get(value, "id");
+		const provider = Reflect.get(value, "provider");
+		if (typeof id !== "string" || !id || typeof provider !== "string" || !provider) return [];
+
+		const name = Reflect.get(value, "name");
+		const contextWindow = Reflect.get(value, "contextWindow");
+		const maxTokens = Reflect.get(value, "maxTokens");
+		const reasoning = Reflect.get(value, "reasoning");
+		const images = Reflect.get(value, "images");
+		return [{
+			id,
+			provider,
+			...(typeof name === "string" ? { name } : {}),
+			...(typeof contextWindow === "number" && Number.isFinite(contextWindow) ? { contextWindow } : {}),
+			...(typeof maxTokens === "number" && Number.isFinite(maxTokens) ? { maxTokens } : {}),
+			...(typeof reasoning === "boolean" ? { reasoning } : {}),
+			...(typeof images === "boolean" ? { images } : {}),
+		}];
+	});
+}
 
 /** 去除 ANSI 转义码，用于清洗 thinking 中的终端颜色控制序列。 */
 export function stripAnsi(text: string): string {
@@ -110,6 +146,8 @@ export function buildMessageFlushPayload(
 	windowStart = 0,
 	fileVersion?: string,
 	windowStartFilePos?: number,
+	preserveHistory = false,
+	stickyHistory = false,
 ): {
 	agentId: string;
 	messages: ChatMessage[];
@@ -118,13 +156,17 @@ export function buildMessageFlushPayload(
 	windowStart?: number;
 	fileVersion?: string;
 	windowStartFilePos?: number;
+	/** 压缩重载时保留 renderer 已加载的历史前缀；编辑/删除等改写默认不保留。 */
+	preserveHistory?: boolean;
+	/** 压缩刚完成时暂缓回底清理，避免用户刚看到的旧回复立即被收走。 */
+	stickyHistory?: boolean;
 	/** trim 窗口右移滑出显示区的旧窗口头部轮次（仅全量 flush 携带，渲染层并入历史前缀） */
 	slideOut?: ChatMessage[];
 } {
 	// 激活显示窗口（2026-08 激活分页）：full 快照也只发窗口段 [windowStart..]，
 	// 窗口前历史由 disk 轮次分页按需 prepend；totalLength 恒为数组全长，
-	// 供渲染层做窗口偏移校验。fileVersion（会话文件 mtime:size）用于检测压缩改写：
-	// 版本变化时渲染层丢弃 disk 前缀（其绝对下标空间已失效）。
+	// 供渲染层做窗口偏移校验。fileVersion（会话文件 mtime:size）用于检测压缩改写；
+	// 普通改写时渲染层会丢弃 disk 前缀，手动/自动压缩则由 preserveHistory 保留已加载内容。
 	const boundedWindow = Math.min(Math.max(0, windowStart), all.length);
 	if (dirtyFrom !== undefined && dirtyFrom >= boundedWindow && dirtyFrom < all.length) {
 		return {
@@ -134,6 +176,8 @@ export function buildMessageFlushPayload(
 			totalLength: all.length,
 			...(boundedWindow > 0 ? { windowStart: boundedWindow } : {}),
 			...(fileVersion ? { fileVersion } : {}),
+			...(preserveHistory ? { preserveHistory: true } : {}),
+			...(stickyHistory ? { stickyHistory: true } : {}),
 		};
 	}
 	// dirtyFrom 缺失或落到窗口之前（重载后窗口右移）：升级为窗口化全量
@@ -148,6 +192,8 @@ export function buildMessageFlushPayload(
 		totalLength: all.length,
 		...(boundedWindow > 0 ? { windowStart: boundedWindow } : {}),
 		...(fileVersion ? { fileVersion } : {}),
+		...(preserveHistory ? { preserveHistory: true } : {}),
+		...(stickyHistory ? { stickyHistory: true } : {}),
 		...(typeof windowStartFilePos === "number" && windowStartFilePos >= 0
 			? { windowStartFilePos }
 			: {}),

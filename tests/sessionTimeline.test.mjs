@@ -13,6 +13,10 @@ const source = readFileSync(
   "src/renderer/src/hooks/useSessionTimelineController.ts",
   "utf8",
 );
+const timelineComponentSource = readFileSync(
+  "src/renderer/src/components/session/SessionMessageTimeline.tsx",
+  "utf8",
+);
 
 function compileModule(filePath, imports = {}) {
   const output = ts.transpileModule(readFileSync(filePath, "utf8"), {
@@ -34,11 +38,15 @@ function loadTimelineHelpers() {
     jotai: { atom: (value) => ({ _mockInit: value }) },
     "jotai/utils": {},
     "../atoms": {},
-    "../desktopApi": {},
+    "../desktopApi": {},    "../components/session/timeline/turnRenderWindow": {
+      TIMELINE_SCROLLED_TURN_LIMIT: 15,
+      TIMELINE_WINDOW_EXPAND_STEP: 10,
+    },
   });
 }
 
 function loadSessionAtoms() {
+  const messageFingerprint = compileModule("src/shared/messageFingerprint.ts");
   return compileModule("src/renderer/src/atoms/session-atoms.ts", {
     "../utils/agentRuntimeState": compileModule(
       "src/renderer/src/utils/agentRuntimeState.ts",
@@ -46,6 +54,7 @@ function loadSessionAtoms() {
     "../utils/sessionRecordIdentity": compileModule(
       "src/renderer/src/utils/sessionRecordIdentity.ts",
     ),
+    "../../../shared/messageFingerprint": messageFingerprint,
   });
 }
 
@@ -64,6 +73,7 @@ test("timeline auto-scroll only sticks while the reader remains near the bottom"
 test("timeline owns paging, delegated scroll follow, and outline jump lifecycle", () => {
 	assert.match(source, /selectAtom\([\s\S]*sessionMessagesCacheAtom/);
 	assert.match(source, /readRecordMessagePage\(sessionId/);
+	assert.match(timelineComponentSource, /sessionId: props\.controller \? undefined : sessionId/);
 	assert.match(source, /prependHistoryPage/);
 	// 激活分页（2026-08）：runtime 窗口会话的显示总数 = disk 前缀 + 窗口段的组合长度
 	assert.match(source, /totalMessageCount: diskPage \? diskPage\.total : combinedMessages\.length/);
@@ -108,8 +118,20 @@ test("prepend scroll compensation is skipped while following bottom and marks pr
   // 跟底中（autoScrollRef=true）不恢复旧锚点：贴底引擎负责生长补偿，避免把用户拽回顶部；
   // 非跟底时标记程序化滚动，防止补偿的 scrollTop 赋值触发 ≤240px 自动加载。
   assert.match(source, /if \(autoScrollRef\.current\) \{\n\s*loadMoreAnchorRef\.current = undefined;\n\s*return;\n\s*\}/);
-  assert.match(source, /programmaticScrollRef\.current = true;\n\s*timeline\.scrollTop = restoreTimelineAnchor/);
+  assert.match(source, /programmaticScrollRef\.current = true;\n\s*timeline\.scrollTop = nextScrollTop;/);
   assert.match(source, /requestAnimationFrame\(\(\) => \{\n\s*programmaticScrollRef\.current = false;/);
+});
+
+test("load-more compensation is skipped at the very top so prepended content stays visible", () => {
+  // 2026-02 回归：视口在顶部（≤8px 阈值）时 prepend/展开不补偿 scrollTop——
+  // 容器 overflow-anchor:none，插入内容不会自动调整滚动位置，补偿会把新内容推出视口上方，
+  // 表现为「点击加载更多/显示更早无反馈」。中部才按高度差补偿保持视口内容不动。
+  const { resolveTimelineTopCompensation } = loadTimelineHelpers();
+  assert.equal(resolveTimelineTopCompensation(0, 600), null);
+  assert.equal(resolveTimelineTopCompensation(8, 600), null);
+  assert.equal(resolveTimelineTopCompensation(240, 600), 840);
+  assert.equal(resolveTimelineTopCompensation(9, -100), -91);
+  assert.equal(resolveTimelineTopCompensation(240, 0), 240);
 });
 
 test("auto history load ignores programmatic scrolls and only fires on real user scroll", () => {

@@ -12,7 +12,7 @@
  * → SecurityStore 校验/持久化 → 写策略快照 → 运行中的安全门扩展 2s 内热更新。
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { Trash2 } from "lucide-react";
 import {
 	createDefaultSecurityConfig,
@@ -42,6 +42,17 @@ const ACTION_OPTIONS: Array<{ value: SecurityAction; label: string }> = [
 	{ value: "deny", label: "拒绝" },
 ];
 
+/** 安全管理面板暴露给父级（ConfigModal 顶部统一保存按钮）的能力。 */
+export type SecuritySectionHandle = {
+	/** 保存当前草稿；返回是否成功（失败详情已写入错误区）。 */
+	save: () => Promise<boolean>;
+};
+
+type SecuritySectionProps = {
+	/** 草稿脏状态变化上报（true=有未保存修改）；卸载时上报 false 供父级清标记。 */
+	onDirtyChange?: (dirty: boolean) => void;
+};
+
 /** 复制一份等级草稿（深拷贝，避免直接改共享引用） */
 function cloneLevel(level: SecurityLevelConfig): SecurityLevelConfig {
 	return {
@@ -53,32 +64,43 @@ function cloneLevel(level: SecurityLevelConfig): SecurityLevelConfig {
 	};
 }
 
-export function SecuritySection() {
-	const [config, setConfig] = useState<SecurityConfig>(() => createDefaultSecurityConfig());
-	const [loading, setLoading] = useState(true);
-	const [saving, setSaving] = useState(false);
-	const [dirty, setDirty] = useState(false);
-	const [expandedLevelId, setExpandedLevelId] = useState<string | null>(null);
-	const [error, setError] = useState<string | null>(null);
+export const SecuritySection = forwardRef<SecuritySectionHandle, SecuritySectionProps>(
+	function SecuritySection({ onDirtyChange }, ref) {
+		const [config, setConfig] = useState<SecurityConfig>(() => createDefaultSecurityConfig());
+		const [loading, setLoading] = useState(true);
+		const [saving, setSaving] = useState(false);
+		const [dirty, setDirty] = useState(false);
+		const [expandedLevelId, setExpandedLevelId] = useState<string | null>(null);
+		const [error, setError] = useState<string | null>(null);
 
-	useEffect(() => {
-		let cancelled = false;
-		api.security
-			.getConfig()
-			.then((loaded) => {
-				if (cancelled) return;
-				setConfig(loaded);
-			})
-			.catch((e: unknown) => {
-				if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-			})
-			.finally(() => {
-				if (!cancelled) setLoading(false);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, []);
+		useEffect(() => {
+			let cancelled = false;
+			api.security
+				.getConfig()
+				.then((loaded) => {
+					if (cancelled) return;
+					setConfig(loaded);
+				})
+				.catch((e: unknown) => {
+					if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+				})
+				.finally(() => {
+					if (!cancelled) setLoading(false);
+				});
+			return () => {
+				cancelled = true;
+			};
+		}, []);
+
+		// dirty 变化上报父级（ConfigModal 顶部统一保存按钮的黄点/可用态依赖它）
+		useEffect(() => {
+			onDirtyChange?.(dirty);
+		}, [dirty, onDirtyChange]);
+
+		// 组件卸载（切换 tab / 关闭弹框）时上报 false，避免父级残留“假脏”标记
+		useEffect(() => {
+			return () => onDirtyChange?.(false);
+		}, [onDirtyChange]);
 
 	const updateLevel = useCallback((levelId: string, patch: Partial<SecurityLevelConfig>) => {
 		setConfig((current) => ({
@@ -90,7 +112,9 @@ export function SecuritySection() {
 		setDirty(true);
 	}, []);
 
-	const handleSave = useCallback(async () => {
+	const handleSave = useCallback(async (): Promise<boolean> => {
+		// 防重入：保存进行中忽略再次触发（顶部按钮与关闭确认可能并发点击）
+		if (saving) return false;
 		setSaving(true);
 		setError(null);
 		try {
@@ -101,16 +125,21 @@ export function SecuritySection() {
 			});
 			if (!result.ok) {
 				setError(result.error);
-				return;
+				return false;
 			}
 			setConfig(result.config);
 			setDirty(false);
+			return true;
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
+			return false;
 		} finally {
 			setSaving(false);
 		}
-	}, [config]);
+	}, [config, saving]);
+
+	// 供父级顶部统一保存按钮调用（saveByKey → security）
+	useImperativeHandle(ref, () => ({ save: () => handleSave() }), [handleSave]);
 
 	const handleReset = useCallback(() => {
 		setConfig(createDefaultSecurityConfig());
@@ -230,18 +259,9 @@ export function SecuritySection() {
 					{error}
 				</div>
 			)}
-
-			<div className="flex items-center justify-end gap-2 border-t border-border/60 pt-3">
-				{dirty && (
-					<span className="mr-auto text-micro text-muted-foreground">{t("security.dirtyHint")}</span>
-				)}
-				<Button variant="default" size="sm" onClick={() => void handleSave()} disabled={saving || !dirty}>
-					{saving ? t("common.saving") : t("common.save")}
-				</Button>
-			</div>
 		</div>
 	);
-}
+});
 
 /** 单个等级卡片：折叠态显示摘要，展开态编辑全部字段。 */
 function SecurityLevelCard(props: {

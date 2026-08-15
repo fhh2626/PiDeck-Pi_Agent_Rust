@@ -18,6 +18,7 @@ export const SUPPORTED_EXTERNAL_EDITORS = [
 	{ id: "vscode", name: "Visual Studio Code" },
 	{ id: "cursor", name: "Cursor" },
 	{ id: "zed", name: "Zed" },
+	{ id: "sublime", name: "Sublime Text" },
 	{ id: "idea", name: "IntelliJ IDEA" },
 	{ id: "webstorm", name: "WebStorm" },
 	{ id: "phpstorm", name: "PhpStorm" },

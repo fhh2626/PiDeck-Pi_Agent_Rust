@@ -6,7 +6,7 @@ import vm from "node:vm";
 
 const source = readFileSync("src/renderer/src/hooks/useOverlayActions.ts", "utf8");
 
-function compileHook(reactStub, i18nStub, desktopApiStub) {
+function compileHook(reactStub, desktopApiStub) {
   const output = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
@@ -21,7 +21,6 @@ function compileHook(reactStub, i18nStub, desktopApiStub) {
     exports: module.exports,
     require: (specifier) => {
       if (specifier === "react") return reactStub;
-      if (specifier === "../i18n") return i18nStub;
       if (specifier === "../desktopApi") return desktopApiStub;
       return {};
     },
@@ -32,19 +31,9 @@ function compileHook(reactStub, i18nStub, desktopApiStub) {
 function wrapDesktopApi(api) {
   return { desktopApi: api };
 }
-const SAFE_DESKTOP_API_MODULE = wrapDesktopApi({
-  app: {
-    openExternal: () => undefined,
-    feedbackEnvironment: { appVersion: "1.0.0", platform: "win32", arch: "x64" },
-  },
-  projects: {
-    respondTrustRequest: () => undefined,
-  },
-});
 
-function createOverlayActionsHarness(i18nStub, desktopApiStub) {
+function createOverlayActionsHarness(desktopApiStub) {
   const states = [];
-  const refs = [];
   let cursor = 0;
   const react = {
     useState(initial) {
@@ -63,62 +52,33 @@ function createOverlayActionsHarness(i18nStub, desktopApiStub) {
       cursor++;
       return factory();
     },
-    useRef(initial) {
-      const index = cursor++;
-      refs[index] = refs[index] ?? { current: initial };
-      return refs[index];
-    },
   };
-  const hooks = compileHook(react, i18nStub, desktopApiStub ?? SAFE_DESKTOP_API_MODULE);
-  function render(params) {
+  const hooks = compileHook(
+    react,
+    desktopApiStub ?? wrapDesktopApi({ projects: { respondTrustRequest: () => undefined } }),
+  );
+  function render() {
     cursor = 0;
-    return hooks.useOverlayActions(params);
+    return hooks.useOverlayActions();
   }
   return { render, states };
 }
 
-function mkProject(overrides = {}) {
-  return {
-    id: "proj-1",
-    name: "Test Project",
-    path: "/tmp/proj",
-    lastOpenedAt: Date.now(),
-    ...overrides,
-  };
-}
-
-function mkAppInfo(overrides = {}) {
-  return {
-    version: "1.0.0",
-    releasesUrl: "https://example.test/releases",
-    platform: "win32",
-    ...overrides,
-  };
-}
-
-// ── static source assertions ──
-
-test("useOverlayActions sources track three state atoms and memoizes overlayProps", () => {
+test("useOverlayActions owns only confirm and trust state", () => {
   assert.match(source, /export function useOverlayActions/);
   assert.match(source, /useState<ConfirmDialogConfig/);
   assert.match(source, /useState<TrustRequest/);
-  assert.match(source, /useState\(false\)/);
+  assert.doesNotMatch(source, /feedback|homepage|openExternal/);
   assert.match(source, /const showConfirm = useCallback/);
   assert.match(source, /const clearConfirm = useCallback/);
   assert.match(source, /const overlayProps = useMemo/);
 });
 
-// ── runtime logic ──
-
 test("showConfirm sets confirmDialog with full config", () => {
-  const i18n = { t: (key) => key };
-  const harness = createOverlayActionsHarness(i18n);
+  const harness = createOverlayActionsHarness();
   const onConfirm = () => undefined;
 
-  const r = harness.render({
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
+  const r = harness.render();
   r.showConfirm({
     title: "Delete?",
     message: "Are you sure?",
@@ -127,10 +87,7 @@ test("showConfirm sets confirmDialog with full config", () => {
     confirmLabel: "Delete",
   });
 
-  const r2 = harness.render({
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
+  const r2 = harness.render();
   assert.equal(r2.confirmDialog.title, "Delete?");
   assert.equal(r2.confirmDialog.message, "Are you sure?");
   assert.equal(r2.confirmDialog.onConfirm, onConfirm);
@@ -139,114 +96,41 @@ test("showConfirm sets confirmDialog with full config", () => {
 });
 
 test("clearConfirm sets confirmDialog to null", () => {
-  const i18n = { t: (key) => key };
-  const harness = createOverlayActionsHarness(i18n);
-  const params = { appInfo: mkAppInfo(), showToast: () => undefined };
-
-  const r = harness.render(params);
+  const harness = createOverlayActionsHarness();
+  const r = harness.render();
   r.showConfirm({ title: "X", message: "Y", onConfirm: () => undefined });
-  const r2 = harness.render(params);
-  assert.notEqual(r2.confirmDialog, null);
 
+  const r2 = harness.render();
+  assert.notEqual(r2.confirmDialog, null);
   r2.clearConfirm();
-  const r3 = harness.render(params);
+
+  const r3 = harness.render();
   assert.equal(r3.confirmDialog, null);
 });
 
-test("feedbackOpen toggles true and false", () => {
-  const i18n = { t: (key) => key };
-  const harness = createOverlayActionsHarness(i18n);
-  const params = { appInfo: mkAppInfo(), showToast: () => undefined };
-
-  const r = harness.render(params);
-  assert.equal(r.feedbackOpen, false);
-
-  r.setFeedbackOpen(true);
-  const r2 = harness.render(params);
-  assert.equal(r2.feedbackOpen, true);
-
-  r2.setFeedbackOpen(false);
-  const r3 = harness.render(params);
-  assert.equal(r3.feedbackOpen, false);
-});
-
 test("trustRequest set and get", () => {
-  const i18n = { t: (key) => key };
-  const harness = createOverlayActionsHarness(i18n);
-  const params = { appInfo: mkAppInfo(), showToast: () => undefined };
-
+  const harness = createOverlayActionsHarness();
   const req = { requestId: "r1", cwd: "/tmp", projectName: "Test" };
 
-  const r = harness.render(params);
+  const r = harness.render();
   assert.equal(r.trustRequest, null);
-
   r.setTrustRequest(req);
-  const r2 = harness.render(params);
+
+  const r2 = harness.render();
   assert.equal(r2.trustRequest.requestId, "r1");
   assert.equal(r2.trustRequest.cwd, "/tmp");
   assert.equal(r2.trustRequest.projectName, "Test");
 });
 
-test("overlayProps.feedback structure with active project", () => {
-  const i18n = { t: (key) => key === "app.feedbackCopied" ? "Copied!" : key };
-  const harness = createOverlayActionsHarness(i18n);
-  const project = mkProject();
-  const params = {
-    activeProject: project,
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  };
-
-  const r = harness.render(params);
-  assert.equal(r.overlayProps.feedback, undefined);
-
-  r.setFeedbackOpen(true);
-  const r2 = harness.render(params);
-  const f = r2.overlayProps.feedback;
-  assert.equal(f.open, true);
-  assert.equal(f.project, project);
-  assert.notEqual(f.onClose, undefined);
-  assert.notEqual(f.onCopy, undefined);
-  assert.notEqual(f.loadEnvironment, undefined);
-});
-
-test("overlayProps.feedback onCopy calls showToast with app.feedbackCopied", () => {
-  const i18n = { t: (key) => key === "app.feedbackCopied" ? "Copied!" : key };
-  let toastMessage;
-  const harness = createOverlayActionsHarness(i18n);
-
-  const r = harness.render({
-    activeProject: mkProject(),
-    appInfo: mkAppInfo(),
-    showToast: (msg) => { toastMessage = msg; },
-  });
-  r.setFeedbackOpen(true);
-
-  const r2 = harness.render({
-    activeProject: mkProject(),
-    appInfo: mkAppInfo(),
-    showToast: (msg) => { toastMessage = msg; },
-  });
-  r2.overlayProps.feedback.onCopy();
-  assert.equal(toastMessage, "Copied!");
-});
-
 test("overlayProps.confirm structure when confirmDialog is set", () => {
-  const i18n = { t: (key) => key };
-  const harness = createOverlayActionsHarness(i18n);
+  const harness = createOverlayActionsHarness();
   const onConfirm = () => undefined;
 
-  const r = harness.render({
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
+  const r = harness.render();
   assert.equal(r.overlayProps.confirm, undefined);
-
   r.showConfirm({ title: "Delete?", message: "Are you sure?", onConfirm, danger: true, confirmLabel: "Delete" });
-  const r2 = harness.render({
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
+
+  const r2 = harness.render();
   const c = r2.overlayProps.confirm;
   assert.equal(c.open, true);
   assert.equal(c.props.title, "Delete?");
@@ -257,179 +141,83 @@ test("overlayProps.confirm structure when confirmDialog is set", () => {
 });
 
 test("overlayProps.confirm onCancel clears confirmDialog", () => {
-  const i18n = { t: (key) => key };
-  const harness = createOverlayActionsHarness(i18n);
-  const params = { appInfo: mkAppInfo(), showToast: () => undefined };
-
-  const r = harness.render(params);
+  const harness = createOverlayActionsHarness();
+  const r = harness.render();
   r.showConfirm({ title: "X", message: "Y", onConfirm: () => undefined });
 
-  const r2 = harness.render(params);
+  const r2 = harness.render();
   r2.overlayProps.confirm.props.onCancel();
 
-  const r3 = harness.render(params);
+  const r3 = harness.render();
   assert.equal(r3.confirmDialog, null);
   assert.equal(r3.overlayProps.confirm, undefined);
 });
 
 test("overlayProps.trust structure when trustRequest is set", () => {
-  const i18n = { t: (key) => key };
   let trustChoice;
   const desktopApi = wrapDesktopApi({
     projects: {
       respondTrustRequest: (requestId, choice) => { trustChoice = { requestId, choice }; },
     },
   });
-  const harness = createOverlayActionsHarness(i18n, desktopApi);
+  const harness = createOverlayActionsHarness(desktopApi);
 
-  const r = harness.render({
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
+  const r = harness.render();
   assert.equal(r.overlayProps.trust, undefined);
-
   r.setTrustRequest({ requestId: "r1", cwd: "/tmp/proj", projectName: "Test" });
-  const r2 = harness.render({
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
-  const t = r2.overlayProps.trust;
-  assert.equal(t.open, true);
-  assert.equal(t.requestId, "r1");
-  assert.equal(t.cwd, "/tmp/proj");
-  assert.equal(t.projectName, "Test");
-  assert.equal(typeof t.onChoose, "function");
 
-  // onChoose sends response and clears request
-  t.onChoose("trust-remember");
+  const r2 = harness.render();
+  const trust = r2.overlayProps.trust;
+  assert.equal(trust.open, true);
+  assert.equal(trust.requestId, "r1");
+  assert.equal(trust.cwd, "/tmp/proj");
+  assert.equal(trust.projectName, "Test");
+  assert.equal(typeof trust.onChoose, "function");
+
+  trust.onChoose("trust-remember");
   assert.deepEqual(trustChoice, { requestId: "r1", choice: "trust-remember" });
 
-  const r3 = harness.render({
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
+  const r3 = harness.render();
   assert.equal(r3.trustRequest, null);
   assert.equal(r3.overlayProps.trust, undefined);
 });
 
 test("overlayProps.trust onChoose supports all three trust choices", () => {
-  const i18n = { t: (key) => key };
   const choices = [];
   const desktopApi = wrapDesktopApi({
     projects: {
-      respondTrustRequest: (requestId, choice) => choices.push(choice),
+      respondTrustRequest: (_requestId, choice) => choices.push(choice),
     },
   });
-  const harness = createOverlayActionsHarness(i18n, desktopApi);
-  const params = { appInfo: mkAppInfo(), showToast: () => undefined };
+  const harness = createOverlayActionsHarness(desktopApi);
 
-  const r = harness.render(params);
+  const r = harness.render();
   r.setTrustRequest({ requestId: "r1", cwd: "/tmp", projectName: "T" });
-  const r2 = harness.render(params);
-
+  const r2 = harness.render();
   r2.overlayProps.trust.onChoose("trust-remember");
+
   r2.setTrustRequest({ requestId: "r2", cwd: "/tmp", projectName: "T" });
-  const r3 = harness.render(params);
+  const r3 = harness.render();
   r3.overlayProps.trust.onChoose("trust-session");
 
   r3.setTrustRequest({ requestId: "r3", cwd: "/tmp", projectName: "T" });
-  const r4 = harness.render(params);
+  const r4 = harness.render();
   r4.overlayProps.trust.onChoose("deny");
 
   assert.deepEqual(choices, ["trust-remember", "trust-session", "deny"]);
 });
 
-test("overlayProps combines all three overlays simultaneously", () => {
-  const i18n = { t: (key) => key };
-  const harness = createOverlayActionsHarness(i18n);
-  const project = mkProject();
-
-  const r = harness.render({
-    activeProject: project,
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
-
-  // Set all three concurrently
+test("overlayProps combines confirm and trust overlays simultaneously", () => {
+  const harness = createOverlayActionsHarness();
+  const r = harness.render();
   r.showConfirm({ title: "Delete?", message: "Confirm delete", onConfirm: () => undefined });
   r.setTrustRequest({ requestId: "r1", cwd: "/tmp", projectName: "Test" });
-  r.setFeedbackOpen(true);
 
-  const r2 = harness.render({
-    activeProject: project,
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
-
+  const r2 = harness.render();
   const props = r2.overlayProps;
-  assert.equal(props.feedback.open, true);
-  assert.equal(props.feedback.project, project);
+  assert.equal(props.feedback, undefined);
   assert.equal(props.confirm.open, true);
   assert.equal(props.confirm.props.title, "Delete?");
   assert.equal(props.trust.open, true);
   assert.equal(props.trust.requestId, "r1");
-
-  // Clear each and verify
-  r2.clearConfirm();
-  const r3 = harness.render({
-    activeProject: project,
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
-  assert.equal(r3.overlayProps.confirm, undefined);
-  assert.equal(r3.overlayProps.feedback.open, true);
-  assert.equal(r3.overlayProps.trust.open, true);
-});
-
-test("overlayProps.feedback uses activeProject passed from params", () => {
-  const i18n = { t: (key) => key };
-  const harness = createOverlayActionsHarness(i18n);
-  const projectA = mkProject({ id: "proj-a", name: "Alpha" });
-  const projectB = mkProject({ id: "proj-b", name: "Beta" });
-
-  const r = harness.render({
-    activeProject: projectA,
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
-  r.setFeedbackOpen(true);
-
-  const r2 = harness.render({
-    activeProject: projectB,
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
-  // useMemo recomputes on dependency change, so project should be Beta
-  assert.equal(r2.overlayProps.feedback.project.name, "Beta");
-});
-
-test("overlayProps.feedback is undefined when feedbackOpen is false", () => {
-  const i18n = { t: (key) => key };
-  const harness = createOverlayActionsHarness(i18n);
-
-  const r = harness.render({
-    activeProject: mkProject(),
-    appInfo: mkAppInfo(),
-    showToast: () => undefined,
-  });
-  // feedbackOpen defaults to false
-  assert.equal(r.overlayProps.feedback, undefined);
-});
-
-test("overlayProps carries correct appInfo", () => {
-  const i18n = { t: (key) => key };
-  const harness = createOverlayActionsHarness(i18n);
-
-  const r = harness.render({
-    appInfo: mkAppInfo({ version: "2.0.0", platform: "darwin" }),
-    showToast: () => undefined,
-  });
-  r.setFeedbackOpen(true);
-
-  const r2 = harness.render({
-    appInfo: mkAppInfo({ version: "2.0.0", platform: "darwin" }),
-    showToast: () => undefined,
-  });
-  assert.equal(r2.overlayProps.feedback.appInfo.version, "2.0.0");
-  assert.equal(r2.overlayProps.feedback.appInfo.platform, "darwin");
 });

@@ -7,7 +7,9 @@
 //   scrollbar-hide 换成 Tailwind 任意属性（仓库不引入第三方 scrollbar 工具类）；
 // - 额外的 `compact` 可选密度开关（默认 false = 官方类/行为原样）：仅由 PiDeck
 //   宿主（Header Popover）传入，把官方 text-sm/text-xs 换成 PiDeck 语义字号 token
-//   （text-control/text-caption，跟随全局 UI 字号设置）并收紧垂直度量（h-11→h-9、
+//   （字号体系 text-widget > text-widget-item > text-widget-detail：默认 11/10/9px，
+//   均比右侧徽章小且随「界面字号」联动，窄窗口 vw 收缩；计数用 text-caption）并收紧垂直度量
+//   （h-11→h-9、
 //   min-h-9→min-h-8）；compact 头部 pr-8 为宿主层关闭按钮预留右上角空间，
 //   保证叠放的关闭控件不盖住官方折叠 chevron。
 // - 已完成的 todo 项去掉官方删除线（横线动画）：状态图标已有对勾标记，删除线
@@ -123,9 +125,11 @@ function TodoHeaderIcon({ complete }: { complete: boolean }) {
 function TodoStatusIcon({
   status,
   progress,
+  compact = false,
 }: {
   status: TodoItemStatus;
   progress?: number;
+  compact?: boolean;
 }) {
   const reduce = useReducedMotion() ?? false;
   const normalizedProgress =
@@ -137,7 +141,10 @@ function TodoStatusIcon({
       viewBox="0 0 24 24"
       initial={false}
       className={cn(
-        "mx-0.5 size-5 shrink-0 overflow-visible text-muted-foreground",
+        "mx-0.5 shrink-0 overflow-visible text-muted-foreground",
+        // 状态图标随 compact 收两档：官方 size-5（20px）配 text-sm；compact 条目 10px 时
+        // 用 size-3.5（14px）保持同比例，也略大于 chip 图标（11px）以示层级
+        compact ? "size-3.5" : "size-5",
         status === "in-progress" && "text-foreground",
         status === "cancelled" && "text-rose-600 dark:text-rose-400",
       )}
@@ -300,7 +307,7 @@ export function TodoList({
         <h3
           className={cn(
             "min-w-0 flex-1 truncate font-medium text-foreground/90",
-            compact ? "text-control" : "text-sm",
+            compact ? "text-widget" : "text-sm",
           )}
         >
           {title}
@@ -376,7 +383,11 @@ export function TodoList({
                       compact ? "min-h-8 gap-2" : "min-h-9 gap-2.5",
                     )}
                   >
-                    <TodoStatusIcon status={status} progress={item.progress} />
+                    <TodoStatusIcon
+                      status={status}
+                      progress={item.progress}
+                      compact={compact}
+                    />
                     <span className="sr-only">{statusLabel(status)}: </span>
                     {/* 标题允许多行换行显示全文：去掉官方单行 truncate，长文案（尤其 plan 步骤的完整描述）
                         不再被省略号截断；flex-1 + min-w-0 保证行内可分配宽度并参与换行，
@@ -384,8 +395,17 @@ export function TodoList({
                     <span
                       className={cn(
                         "min-w-0 flex-1 break-words",
-                        compact ? "text-control leading-normal" : "text-sm leading-5",
-                        status === "pending" && "text-muted-foreground/65",
+                        // ⚠️ 不能写 text-widget-item（命名 token 形式）：tailwind-merge 会把
+                        // 未知的 text-* 误判为颜色类，与下方状态色 text-muted-foreground/65
+                        // 同组冲突而被丢弃（条目会退回继承 body 14px——“字体特别大”的根因）。
+                        // text-[length:var(--text-widget-item)] 显式声明字号类型，twMerge 归入
+                        // font-size 组，与颜色类共存；官方分支 text-sm 是内置字号白名单，无此问题。
+                        compact
+                          ? "text-[length:var(--text-widget-item)]"
+                          : "text-sm leading-5",
+                        // 2027-01 用户要求条目文字“黑色”：pending 与 in-progress 同用
+                        // 前景色；完成/取消保留淡色弱化（☑ 对勾已足够区分完成态）
+                        status === "pending" && "text-foreground",
                         status === "in-progress" && "text-foreground",
                         status === "completed" && "text-muted-foreground/60",
                         status === "cancelled" && "text-muted-foreground/55",
@@ -396,8 +416,12 @@ export function TodoList({
                     {item.detail ? (
                       <span
                         className={cn(
-                          "shrink-0 text-muted-foreground/55",
-                          compact ? "text-caption" : "text-sm",
+                          "shrink-0",
+                          // 与条目同理：text-widget-detail 会被 twMerge 误删或反删颜色，
+                          // 用显式 length: 类型声明与状态色共存
+                          compact
+                            ? "text-[length:var(--text-widget-detail)] text-muted-foreground/55"
+                            : "text-sm text-muted-foreground/55",
                         )}
                       >
                         {item.detail}
@@ -412,7 +436,7 @@ export function TodoList({
             <p
               className={cn(
                 "px-1.5 py-2 text-muted-foreground",
-                compact ? "text-caption" : "text-sm",
+                compact ? "text-widget" : "text-sm",
               )}
             >
               {t("app.todoListEmpty")}

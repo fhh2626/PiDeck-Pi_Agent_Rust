@@ -41,7 +41,8 @@ test("tool card name uses medium weight like process summary, not bold 650", () 
 test("auto-collapse process waits 1.5s after agent stops (not merely endedAt)", () => {
   assert.match(turnExecution, /}, 1500\)/);
   assert.match(turnExecution, /1\.5s 后自动收起/);
-  assert.match(turnExecution, /autoCollapseTick/);
+  // 收起只改折叠态，不再回调滚动（对准最终回答会解锁跟底并点亮回底按钮）
+  assert.doesNotMatch(turnExecution, /autoCollapseTick/);
   // 以 agentRunning 停转为准，避免流式中 endedAt>0 误触发收起
   assert.match(turnExecution, /if \(opts\.agentRunning \|\| userOverrideRef\.current\) return;/);
   // 上升沿才强制展开，避免用户收起后被 busy 抖动撑开
@@ -58,24 +59,19 @@ test("scrollToBottom uses stick-to-bottom spring via scrollerScrollApiRef", () =
   assert.match(timeline, /scrollApiRef=\{controller\.scrollerScrollApiRef\}/);
 });
 
-test("auto-collapse anchors viewport to final answer start when following", () => {
-  assert.match(controller, /scrollFinalAnswerIntoView/);
-  assert.match(controller, /data-final-answer/);
+test("auto-collapse does not steal follow or show the jump-to-bottom button", () => {
+  // 最终回答标记仍在（折叠后阅读用），但不再接线滚动对准
   assert.match(turnRow, /data-final-answer=\{run\.id\}/);
-  assert.match(turnRow, /onProcessAutoCollapsed/);
-  assert.match(timeline, /onProcessAutoCollapsed=\{controller\.scrollFinalAnswerIntoView\}/);
-  // 仅跟随中才对准；先解除 autoScroll 避免 stick 锁在末尾
-  assert.match(controller, /if \(!autoScrollRef\.current\) return;/);
-  assert.match(controller, /autoScrollRef\.current = false;/);
-  // 中上部 35%，不要贴顶 -20（对准最终回答路径）
-  assert.match(controller, /clientHeight \* 0\.35/);
-  assert.match(
-    controller,
-    /scrollFinalAnswerIntoView[\s\S]*?viewportAnchor[\s\S]*?rowTop - viewportAnchor/,
-  );
-  // 旧轮迟到定时器：只对准最后一条最终回答
-  assert.match(controller, /finals\[finals\.length - 1\]/);
+  assert.doesNotMatch(controller, /scrollFinalAnswerIntoView/);
+  assert.doesNotMatch(turnRow, /onProcessAutoCollapsed/);
+  assert.doesNotMatch(timeline, /onProcessAutoCollapsed/);
+  assert.doesNotMatch(controller, /clientHeight \* 0\.35/);
+  // isLatestRun（自动收起）保持按「最后一条显示条目」判定；
+  // live 挂载门用单独的 isLastAgentRun（最后一个 agent-run）判定——
+  // 两者语义不同，不能合并（见 liveMountDecision 回归）
   assert.match(timeline, /isLatestRun=\{index === displayRuns\.length - 1\}/);
+  assert.match(timeline, /isLastAgentRun=\{index === lastAgentRunIndex\}/);
+  assert.match(timeline, /lastAgentRunIndex/);
 });
 
 test("followOutput re-lock uses spring when far from bottom", () => {

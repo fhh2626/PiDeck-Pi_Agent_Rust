@@ -5,6 +5,7 @@ import {
   ResizablePanelGroup,
 } from "../ui-shadcn/resizable";
 import { t } from "../../i18n";
+import { useNotifyLayoutResized } from "../../hooks/useNotifyLayoutResized";
 import {
   SESSION_TAB_DRAG_MIME,
   canAcceptSplitDrop,
@@ -89,6 +90,7 @@ export function SessionSplitStage(props: SessionSplitStageProps) {
     renderSession,
   } = props;
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const notifyLayoutResized = useNotifyLayoutResized();
   const [hover, setHover] = useState<HoverState | null>(null);
 
   // layout 变化时旧落点失效（如焦点替换改了结构），清空预览

@@ -8,7 +8,7 @@ import { test, expect } from "./mock-pi-fixture";
  * 2) 思考/工具帧 → 折叠思考卡片 + 工具卡片渲染
  * 3) 会话切换 → useChat per-id 缓存保留历史消息
  * 4) 暗色模式（prefers-color-scheme）→ data-theme=dark
- * 5) 移动端视口 → 布局不横向溢出
+ * 5) 移动端/平板视口 → 布局不横向溢出，头部与输入区完整落在视觉视口内
  */
 test.use({
 	seedSettings: {
@@ -137,21 +137,51 @@ test("web service: dark mode follows prefers-color-scheme", async ({ app }) => {
 		.toBe("dark");
 });
 
-test("web service: mobile viewport does not overflow horizontally", async ({ app }) => {
+test("web service: mobile and tablet viewports keep the shell fully visible", async ({ app }) => {
 	test.setTimeout(120_000);
 
 	const baseUrl = "http://127.0.0.1:8765";
 	expect(await waitForHealthy(baseUrl)).toBe(true);
 
 	const page = await app.firstWindow();
-	// 手机视口：390×844（iPhone 12/13 系）；断点 760px 以下侧栏应改为顶部/可滚动
-	await page.setViewportSize({ width: 390, height: 844 });
-	await page.goto(baseUrl);
-	await expect(page.locator(".app")).toBeVisible({ timeout: 20_000 });
-	await expect(page.locator("textarea#prompt")).toBeVisible({ timeout: 20_000 });
-	const overflow = await page.evaluate(() => {
-		const doc = document.documentElement;
-		return { scrollWidth: doc.scrollWidth, innerWidth: window.innerWidth };
-	});
-	expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth + 1);
+	for (const viewportSize of [
+		{ width: 390, height: 844 },
+		{ width: 768, height: 1024 },
+	]) {
+		// 手机与窄平板都走 Web 的视口适配；地址栏/键盘变化由 visualViewport
+		// 更新 CSS 变量，不能只靠固定的 100vh。
+		await page.setViewportSize(viewportSize);
+		await page.goto(baseUrl);
+		await expect(page.locator(".app")).toBeVisible({ timeout: 20_000 });
+		await expect(page.locator("textarea#prompt")).toBeVisible({ timeout: 20_000 });
+		const layout = await page.evaluate(() => {
+			const rectOf = (selector: string) => {
+				const element = document.querySelector<HTMLElement>(selector);
+				if (!element) return null;
+				const rect = element.getBoundingClientRect();
+				return { top: rect.top, bottom: rect.bottom, height: rect.height };
+			};
+			const visualViewport = window.visualViewport;
+			const doc = document.documentElement;
+			return {
+				scrollWidth: doc.scrollWidth,
+				innerWidth: window.innerWidth,
+				innerHeight: window.innerHeight,
+				visualHeight: visualViewport?.height ?? window.innerHeight,
+				app: rectOf(".app"),
+				header: rectOf(".chat-header"),
+				composer: rectOf(".composer"),
+			};
+		});
+		if (!layout.app || !layout.header || !layout.composer) {
+			throw new Error("Web layout landmarks are missing");
+		}
+		expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth + 1);
+		expect(layout.app.top).toBeGreaterThanOrEqual(-1);
+		expect(layout.app.bottom).toBeLessThanOrEqual(layout.innerHeight + 1);
+		expect(layout.app.height).toBeCloseTo(layout.visualHeight, 0);
+		expect(layout.header.top).toBeGreaterThanOrEqual(layout.app.top - 1);
+		expect(layout.composer.bottom).toBeLessThanOrEqual(layout.app.bottom + 1);
+		expect(layout.composer.bottom).toBeLessThanOrEqual(layout.innerHeight + 1);
+	}
 });

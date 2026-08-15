@@ -22,6 +22,12 @@ import { normalizePiRpcModels } from "../../shared/piCompatibility";
 let cachedListModels: AvailableModel[] | null = null;
 /** 在途请求去重：并发调用只 fork 一次 */
 let cachedListModelsPending: Promise<AvailableModel[]> | null = null;
+/**
+ * 配置变更标记：invalidate 后在途请求的结果不得写缓存（其数据对应失效前的配置），
+ * 否则保存 models.json 时若存在旧的在途 fork，旧结果会覆盖新缓存——
+ * 表现为「新模型添加后下拉列表有时候没有」。refreshModelList 重取时复位。
+ */
+let configInvalidated = false;
 
 /** pi --list-models 加速参数：offline 跳过网络目录刷新，no-ext/skills/themes 跳过发现加载。 */
 export const MODEL_LIST_FAST_ARGS = [
@@ -54,7 +60,11 @@ export const MODEL_LIST_RPC_ARGS = [
  * 解析 pi --list-models 的文本表格输出。
  * 表格格式：provider  model  context  max-out  thinking  images
  * context/max-out 为人类可读 token 数（如 1M / 65.5K / 272K），解析为数字；
- * thinking/images 为 yes/no。从右往左取后 4 列，避免 provider/model 列含空格时错位。
+ * thinking/images 为 yes/no。
+ * 关键：不能按空白切分前两列——provider 名可能含空格（如用户把 provider 复制为
+ * "grok.weishiair.de copy"），split 后 token 数 > 列数。因此从右往左解析：
+ * 后 4 列固定是 context/max-out/thinking/images（数值/yes/no 不含空格），
+ * 倒数第 5 个 token 是模型 id，再往前的所有 token 拼回 provider 名。
  */
 export function parsePiListModels(stdout: string): AvailableModel[] {
 	const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -70,13 +80,15 @@ export function parsePiListModels(stdout: string): AvailableModel[] {
 		if (parts.length < 3) continue;
 		// Rust appends "Showing N of M providers..." after the rows. It is not a
 		// model row; requiring a trailing yes/no pair rejects it safely.
-		const provider = parts[0];
-		const modelId = parts[1];
-		if (!provider || !modelId || /^showing$/i.test(provider)) continue;
+		if (/^showing$/i.test(parts[0] ?? "")) continue;
 		if (parts.length >= 6) {
-			// 完整 6 列表格：后 4 列固定为 context/max-out/thinking/images
+			// 完整 6 列表格：后 4 列固定为 context/max-out/thinking/images；
+			// provider 名可含空格，模型 id 之前的所有 token 拼回 provider
 			const tail = parts.slice(-4);
 			if (!isYesNo(tail[2]) || !isYesNo(tail[3])) continue;
+			const provider = parts.slice(0, -5).join(" ");
+			const modelId = parts[parts.length - 5];
+			if (!provider || !modelId) continue;
 			const key = `${provider}\u0000${modelId}`.toLowerCase();
 			if (seen.has(key)) continue;
 			seen.add(key);
@@ -90,9 +102,12 @@ export function parsePiListModels(stdout: string): AvailableModel[] {
 				images: tail[3]?.toLowerCase() === "yes",
 			});
 		} else {
-			// 兼容旧格式（provider/model/thinking），仅解析可确认字段
+			// 兼容旧格式（provider/model/thinking）：从右侧识别固定列，允许 provider 含空格。
 			const thinking = parts[parts.length - 1];
 			if (!isYesNo(thinking)) continue;
+			const provider = parts.slice(0, -2).join(" ");
+			const modelId = parts[parts.length - 2];
+			if (!provider || !modelId) continue;
 			const key = `${provider}\u0000${modelId}`.toLowerCase();
 			if (seen.has(key)) continue;
 			seen.add(key);
@@ -100,7 +115,7 @@ export function parsePiListModels(stdout: string): AvailableModel[] {
 				provider,
 				id: modelId,
 				name: `${provider}/${modelId}`,
-				reasoning: thinking?.toLowerCase() === "yes",
+				reasoning: thinking.toLowerCase() === "yes",
 			});
 		}
 	}
@@ -250,7 +265,8 @@ export function fetchModelList(
 				models = await runPiListModels(piLocator, settingsStore).catch(() => models);
 			}
 			// 仅非空结果入缓存；空结果（pi 未就绪/无可用模型）保持 null，下次重试。
-			if (models.length > 0) cachedListModels = models;
+			// 期间配置被保存过（configInvalidated）则丢弃本次结果，由 refresh 重取。
+			if (models.length > 0 && !configInvalidated) cachedListModels = models;
 			return models;
 		})
 		.finally(() => {
@@ -261,20 +277,45 @@ export function fetchModelList(
 
 /**
  * 强制刷新模型列表（绕过缓存）：配置变更 / 启动 Agent 时调用。
- * 并发去重：同一时刻只 fork 一次，返回最新结果。
+ * 若存在在途请求（可能对应保存前的旧配置），不直接复用其结果——
+ * 链式等它结束后重新 fork，保证返回的是新配置的列表。
  */
 export function refreshModelList(
 	piLocator: PiLocator,
 	settingsStore: SettingsStore,
 ): Promise<AvailableModel[]> {
-	if (cachedListModelsPending) return cachedListModelsPending;
+	const pending = cachedListModelsPending;
+	if (pending) {
+		// 旧请求结束后（其结果已被 invalidate 时的标记挡在缓存外）重新 fork；
+		// 必须等旧 then 跑完再复位，否则旧结果会趁标记已清写进缓存。
+		cachedListModelsPending = pending
+			.catch(() => undefined)
+			.then(() => {
+				configInvalidated = false;
+				return runPiListModels(piLocator, settingsStore);
+			})
+			.then(async (models) => {
+				if (models.length === 0) {
+					await new Promise((resolve) => setTimeout(resolve, 500));
+					models = await runPiListModels(piLocator, settingsStore).catch(() => models);
+				}
+				if (models.length > 0 && !configInvalidated) cachedListModels = models;
+				return models;
+			})
+			.finally(() => {
+				cachedListModelsPending = null;
+			});
+		return cachedListModelsPending;
+	}
+	// 无在途请求：立即复位，否则新 fork 结果会被 !configInvalidated 挡在缓存外。
+	configInvalidated = false;
 	cachedListModelsPending = runPiListModels(piLocator, settingsStore)
 		.then(async (models) => {
 			if (models.length === 0) {
 				await new Promise((resolve) => setTimeout(resolve, 500));
 				models = await runPiListModels(piLocator, settingsStore).catch(() => models);
 			}
-			if (models.length > 0) cachedListModels = models;
+			if (models.length > 0 && !configInvalidated) cachedListModels = models;
 			return models;
 		})
 		.finally(() => {
@@ -286,7 +327,8 @@ export function refreshModelList(
 /** 清空模型列表缓存（配置变更后调用；后续 fetch 会重新 fork）。 */
 export function invalidateModelListCache(): void {
 	cachedListModels = null;
-	// 在途请求让其自然完成并覆盖缓存；不主动中断
+	// 在途请求让其自然完成；其结果不得写缓存（对应失效前配置），由 refreshModelList 重取。
+	configInvalidated = true;
 }
 
 /** 获取当前缓存的模型列表（不触发新的 fork）。 */

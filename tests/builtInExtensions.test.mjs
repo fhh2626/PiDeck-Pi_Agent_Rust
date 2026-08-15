@@ -67,11 +67,36 @@ test("listActiveBuiltInExtensionPaths respects removedBuiltIn and missing files"
 		);
 		assert.equal(paths.length, 1);
 		assert.ok(String(paths[0]).endsWith("pi-deck-ask-question.ts"));
-		// 内置扩展清单随版本增长：ask/nul-redirect/plan-mode/security-gate/todo/vision
-		assert.equal(BUILT_IN_EXTENSIONS.length, 6);
+		// 内置扩展清单随版本增长：ask/nul-redirect/plan-mode/security-gate/todo/vision/better-compaction
+		assert.equal(BUILT_IN_EXTENSIONS.length, 7);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
+});
+
+test("pi-better-compaction is packaged as a built-in and disabled by default", () => {
+	const { BUILT_IN_EXTENSIONS, DEFAULT_DISABLED_BUILT_IN_EXTENSIONS } = loadBuiltInExtensionsModule();
+	assert.ok(BUILT_IN_EXTENSIONS.includes("pi-better-compaction.ts"));
+	assert.ok(DEFAULT_DISABLED_BUILT_IN_EXTENSIONS.includes("pi-better-compaction.ts"));
+	assert.match(
+		readFileSync("src/main/settings/SettingsStore.ts", "utf8"),
+		/removedBuiltInExtensions:\s*\[\.\.\.DEFAULT_DISABLED_BUILT_IN_EXTENSIONS\]/,
+	);
+	assert.ok(readFileSync("resources/extensions/pi-better-compaction.ts", "utf8").includes("extension-runtime.ts"));
+});
+
+test("default-disabled built-in migration is one-time and preserves a later restore", () => {
+	const {
+		BUILT_IN_EXTENSION_DEFAULTS_VERSION,
+		migrateBuiltInExtensionDefaults,
+	} = loadBuiltInExtensionsModule();
+	const migrated = migrateBuiltInExtensionDefaults(["pi-deck-todo.ts"], undefined);
+	assert.equal(migrated.migrated, true);
+	assert.equal(migrated.removedBuiltInExtensions.includes("pi-better-compaction.ts"), true);
+
+	const restored = migrateBuiltInExtensionDefaults([], BUILT_IN_EXTENSION_DEFAULTS_VERSION);
+	assert.equal(restored.migrated, false);
+	assert.equal(JSON.stringify(restored.removedBuiltInExtensions), "[]");
 });
 
 test("built-in extension removal has a registered IPC handler", () => {

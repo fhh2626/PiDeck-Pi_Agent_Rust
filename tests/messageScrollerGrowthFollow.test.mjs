@@ -38,11 +38,16 @@ test("follow scroll only on content growth, not on shrink", () => {
 
 // needsInstant 过渡窗口（busy true→false 后 150ms）：期间追底用 instant，
 // 避免流式结束时最终文本长高触发平滑滚动动画造成跳屏。
-// busy 本身在 agent 忙碌（含工具执行）期间也强制 instant，避免工具卡弹出弹簧滞后砰抖。
+// 流式进行中不再因 busy 强制 instant——小增高走弹簧，大跳变交给 28px 阈值。
 test("needsInstant window forces instant resize after stream ends", () => {
   // MessageScroller 用 state 跟踪 busy 结束窗口（必须 state，resize 需随渲染更新）
   assert.match(scrollerSource, /const \[busyEnding, setBusyEnding\] = useState\(false\)/);
   assert.match(
+    scrollerSource,
+    /resize: busyEnding \|\| reduce \|\| !smooth \? "instant" : "smooth"/,
+  );
+  // 忙碌期本身不得再一刀切 instant，否则逐行增高没有弹簧。
+  assert.doesNotMatch(
     scrollerSource,
     /resize: busy \|\| busyEnding \|\| reduce \|\| !smooth \? "instant" : "smooth"/,
   );
@@ -85,7 +90,8 @@ test("mergeAnimations cache key includes instant flag", () => {
   );
 });
 
-// 时间线把整段 agent 忙碌传给 scroller busy，不只「等待首条助手」窗口。
+// 时间线仍把整段 agent 忙碌传给 scroller busy：驱动 aria-busy 和结束后 150ms
+// instant 窗口。流式增高是否弹簧不再看这个 flag。
 test("timeline marks scroller busy for full agent run", () => {
   const timelineSource = readFileSync(
     "src/renderer/src/components/session/SessionMessageTimeline.tsx",
@@ -179,7 +185,13 @@ test("TurnRow liveInterimId requires an active text stream", () => {
   );
   // 订阅「活动流」派生 atom（稳定 boolean：流式期间 content 变化不触发重渲染）
   assert.match(turnSource, /liveTextStreamingBySessionAtom\(props\.sessionId\)/);
-  assert.match(turnSource, /if \(!liveTextActive\) return undefined;/);
+  // 判定逻辑收敛到 liveMount.ts（纯函数可单测），TurnRow 只做接线
+  assert.match(turnSource, /resolveLiveInterimId\(\{/);
+  const liveMountSource = readFileSync(
+    "src/renderer/src/components/session/timeline/liveMount.ts",
+    "utf8",
+  );
+  assert.match(liveMountSource, /if \(!input\.liveTextActive\) return undefined;/);
   // 派生 atom 输出 streaming 位（session 级单槽），false 时立即落回 settled
   const atomsSource = readFileSync(
     "src/renderer/src/atoms/session-atoms.ts",

@@ -68,12 +68,15 @@ export function entriesFromRows(rows: ModelSpecRow[]): {
 			modelsDev.push({
 				provider: row.provider ?? "",
 				id: row.id,
+				// 保留数据源：builtin 为官方权威行（合并时能力位直接覆盖）
+				source: row.source,
 				contextWindow:
 					typeof row.contextWindow === "number" && row.contextWindow > 0 ? row.contextWindow : undefined,
 				maxTokens: typeof row.maxTokens === "number" && row.maxTokens > 0 ? row.maxTokens : undefined,
 				reasoning: row.reasoning === 1 ? true : undefined,
 				toolCall: row.toolCall === 1 ? true : undefined,
-				attachment: row.attachment === 1 ? true : undefined,
+				// 0/1 语义保留：0 = 厂商显式声明不支持（合并时一票否决），1 = 支持
+				attachment: row.attachment === 1 ? true : row.attachment === 0 ? false : undefined,
 				inputModalities,
 			});
 		}

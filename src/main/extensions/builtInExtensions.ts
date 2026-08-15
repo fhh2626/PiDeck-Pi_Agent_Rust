@@ -12,9 +12,45 @@ export const BUILT_IN_EXTENSIONS = [
 	"pi-deck-security-gate.ts",
 	"pi-deck-todo.ts",
 	"pi-deck-vision.ts",
+	"pi-better-compaction.ts",
 ] as const;
 
 export type BuiltInExtensionName = (typeof BUILT_IN_EXTENSIONS)[number];
+
+/** 出厂默认关闭的内置扩展；用户可在设置页恢复。 */
+export const DEFAULT_DISABLED_BUILT_IN_EXTENSIONS = [
+	"pi-better-compaction.ts",
+] as const satisfies readonly BuiltInExtensionName[];
+
+/** 每次新增默认关闭的内置扩展时递增，用于老配置的一次性迁移。 */
+export const BUILT_IN_EXTENSION_DEFAULTS_VERSION = 1;
+
+export function migrateBuiltInExtensionDefaults(
+	removedBuiltInExtensions: readonly string[] | undefined,
+	persistedVersion: number | undefined,
+): {
+	removedBuiltInExtensions: string[];
+	version: number;
+	migrated: boolean;
+} {
+	if (persistedVersion === BUILT_IN_EXTENSION_DEFAULTS_VERSION) {
+		return {
+			removedBuiltInExtensions: [...(removedBuiltInExtensions ?? [])],
+			version: persistedVersion,
+			migrated: false,
+		};
+	}
+
+	const next = new Set(removedBuiltInExtensions ?? []);
+	for (const name of DEFAULT_DISABLED_BUILT_IN_EXTENSIONS) {
+		next.add(name);
+	}
+	return {
+		removedBuiltInExtensions: [...next],
+		version: BUILT_IN_EXTENSION_DEFAULTS_VERSION,
+		migrated: true,
+	};
+}
 
 export type BuiltInExtensionPathRoots = {
 	/** 开发态 app 根（含 resources/extensions） */

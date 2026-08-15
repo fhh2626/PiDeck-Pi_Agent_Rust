@@ -27,7 +27,7 @@ export function useTurnExecution(opts: {
 	isComplete: boolean;
 	/** 本轮是否存在最终回答：无最终回答的 run 不自动收起。 */
 	hasFinalAnswer?: boolean;
-	/** 是否时间线上最新一轮。非最新轮不自动收起、不触发对准回调。 */
+	/** 是否时间线上最新一轮。非最新轮不自动收起。 */
 	isLatestRun?: boolean;
 	/** 设置①：流式对话时展开中间过程。默认关。 */
 	expandInterimDuringStream?: boolean;
@@ -35,17 +35,13 @@ export function useTurnExecution(opts: {
 	collapsePrevRunsOnNewTurn?: boolean;
 	/** 新一轮开始信号（session 级单调递增）。变化时非最新轮被强制收起。 */
 	newTurnCollapseTick?: number;
-}): TurnExecutionState & {
-	/** 自动收起触发次数；TurnRow 用来在收起后对准最终回答开头。 */
-	autoCollapseTick: number;
-} {
+}): TurnExecutionState {
 	const [stepsVisible, setStepsVisible] = useState(() => {
 		// 历史已完成且有最终回答的轮：始终折叠（时间线只留最终回答）。
 		if (opts.isComplete && !opts.agentRunning && opts.hasFinalAnswer) return false;
 		// 进行中/无最终回答（中断）的轮：默认折叠；设置①开启时才默认展开。
 		return Boolean(opts.expandInterimDuringStream);
 	});
-	const [autoCollapseTick, setAutoCollapseTick] = useState(0);
 	const userOverrideRef = useRef(false);
 	const wasRunningRef = useRef(Boolean(opts.agentRunning));
 
@@ -69,12 +65,9 @@ export function useTurnExecution(opts: {
 		if (opts.isLatestRun === false) return;
 		const timer = window.setTimeout(() => {
 			if (userOverrideRef.current) return;
-			if (opts.isLatestRun === false) {
-				setStepsVisible(false);
-				return;
-			}
+			// 只收起执行过程，不回调滚动：对准最终回答会主动解锁跟底、点亮回底按钮，
+			// 并把视口从最新位置拽回本轮回答开头（用户体感「发了新消息还停在上一条」）。
 			setStepsVisible(false);
-			setAutoCollapseTick((n) => n + 1);
 		}, 1500);
 		return () => window.clearTimeout(timer);
 	}, [opts.agentRunning, opts.hasFinalAnswer, opts.isLatestRun]);
@@ -103,5 +96,5 @@ export function useTurnExecution(opts: {
 		setStepsVisible((prev) => !prev);
 	}, []);
 
-	return { stepsVisible, setStepsVisibleFromUser, toggleSteps, autoCollapseTick };
+	return { stepsVisible, setStepsVisibleFromUser, toggleSteps };
 }

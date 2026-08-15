@@ -428,9 +428,10 @@ export class WebServiceManager {
 			if (url.pathname === "/api/chat" && request.method === "POST") {
 				const body = await this.readJson<{
 					id?: string;
+					messageId?: string;
 					messages?: Array<{ role?: string; content?: unknown; parts?: Array<{ type?: string; text?: string }> }>;
 				}>(request);
-				const sessionId = body.id?.trim();
+				const sessionId = typeof body.id === "string" ? body.id.trim() : "";
 				if (!sessionId) {
 					this.sendError(response, 400, "webError.requestIdRequired", "session id is required");
 					return;
@@ -452,15 +453,23 @@ export class WebServiceManager {
 
 				// 先开流（事件可能在 prompt 预检返回前就到达），再发 prompt。
 				this.handleStream(sessionId, request, response);
+				const messageId = typeof body.messageId === "string" ? body.messageId.trim() : "";
 				const result = await this.deps.sendSessionPrompt({
 					sessionId,
-					requestId: String(body.id ?? crypto.randomUUID()),
+					requestId: messageId || crypto.randomUUID(),
 					message,
 				}).catch((error: unknown) => ({
 					accepted: false as const,
+					delivery: "unknown" as const,
 					error: error instanceof Error ? error.message : String(error),
 				}));
 				if (!result.accepted) {
+					if (result.delivery === "unknown") {
+						// RPC 写入后无法确认响应时，pi 可能已经接收并继续运行。
+						// 不把这种不确定性伪装成 Web 终态错误，继续等待事件并由 /api/state
+						// 的权威消息快照补偿，避免“PC 正常、Web 报错”。
+						return;
+					}
 					// 预检拒绝：向已建立的流写入 error + finish + [DONE]，
 					// 前端 useChat 会进入 error 状态并可重试。
 					// 无法直接访问 router 的 entry，走响应流写协议帧。
@@ -1033,7 +1042,7 @@ export class WebServiceManager {
 					return;
 				}
 				// 已接受：立刻打开 SSE 订阅该会话的流式事件；
-				// 流结束后（agent_end → [DONE]）再 refresh() 同步权威消息列表。
+				// 流结束后（agent_settled → [DONE]）再 refresh() 同步权威消息列表。
 				if (activeSessionId === targetSessionId) {
 					void startStream(targetSessionId);
 				} else {
@@ -1102,9 +1111,17 @@ export class WebServiceManager {
 			? (existsSync(webEntry) ? "web.html" : "index.html")
 			: requestedPath.replace(/^\/+/, "");
 		const filePath = normalize(join(this.rendererRoot, relativePath));
-		// 路径逃逸检查 + 文件存在性；缺失时回退内嵌页
+		// 资源请求（带扩展名且非 .html）缺失时返回 404，不回退内嵌页：
+		// 缺失资源若被 HTML 冒充，浏览器按 module script 解析报 MIME 错误白屏。
+		const isResourceRequest =
+			Boolean(extname(requestedPath)) && !requestedPath.endsWith(".html");
+		// 路径逃逸检查 + 文件存在性；文档请求缺失时回退内嵌页，资源请求 404。
 		if (!filePath.startsWith(normalize(this.rendererRoot)) || !existsSync(filePath)) {
-			this.sendHtml(response, this.renderPage());
+			if (isResourceRequest) {
+				this.sendError(response, 404, "webError.apiNotFound", "Not found: " + requestedPath);
+			} else {
+				this.sendHtml(response, this.renderPage());
+			}
 			return;
 		}
 		await this.sendFile(filePath, response);
@@ -1133,19 +1150,49 @@ export class WebServiceManager {
 				: requestedPath === "/" || !extname(requestedPath)
 					? "/web.html"
 					: `${requestedPath}${url.search}`;
+		// 文档请求（HTML 页面）判定：根路径/无扩展名路径或 .html 结尾；
+		// /@* 是 vite 内部模块（/@vite/client、/@fs/...），即便无扩展名也必须是模块请求，
+		// 对模块请求绝不能回退/转发 HTML——浏览器按 module script 解析会报 "MIME text/html"，
+		// 整页白屏且不自动恢复。
+		const isDocumentRequest =
+			!requestedPath.startsWith("/@") &&
+			(requestedPath === "/" ||
+				!extname(requestedPath) ||
+				requestedPath.endsWith(".html"));
 		let upstream: Response;
 		try {
 			upstream = await fetch(`${this.devRendererUrl}${targetPath}`);
 		} catch {
-			// dev server 未就绪（如只启动了主进程）：回退内嵌页，保证服务不白屏。
-			this.sendHtml(response, this.renderPage());
+			// dev server 未就绪（如只启动了主进程）：文档请求回退内嵌页保证不白屏；
+			// 模块/资源请求返回 503，避免把 HTML 冒充 JS 导致 MIME 报错。
+			if (isDocumentRequest) {
+				this.sendHtml(response, this.renderPage());
+			} else {
+				this.sendError(response, 503, "webError.internal", "Renderer dev server not ready");
+			}
 			return;
 		}
 		const status = upstream.status;
 		const contentType =
 			upstream.headers.get("content-type") ?? "application/octet-stream";
+		// 上游非 200（如 vite 504 Outdated Optimize Dep——deps 重新优化期间旧 URL 失效）：
+		// 文档请求回退 A1 内嵌页；模块请求透传上游状态。绝不能对模块请求回退 HTML。
 		if (status !== 200 || !upstream.body) {
-			this.sendHtml(response, this.renderPage());
+			if (isDocumentRequest) {
+				this.sendHtml(response, this.renderPage());
+			} else {
+				response.writeHead(status, {
+					"content-type": contentType,
+					"cache-control": "no-store",
+				});
+				response.end();
+			}
+			return;
+		}
+		// vite 对不存在的路径按 SPA fallback 返回 200 + index.html：模块请求拿到 HTML
+		// 说明资源不存在（旧 chunk 名/缓存过期），返回 404 而不是转发 HTML，避免 MIME 错误。
+		if (!isDocumentRequest && contentType.includes("text/html")) {
+			this.sendError(response, 404, "webError.apiNotFound", "Not found: " + requestedPath);
 			return;
 		}
 		response.writeHead(status, {
@@ -1253,7 +1300,7 @@ export class WebServiceManager {
 
 	/**
 	 * SSE 流式响应：把 pi agent 事件以 AI SDK UIMessageStream 协议推送给指定 session 的订阅者。
-	 * 连接保持到 agent_end（或客户端断开）；断开时由 response close 事件清理路由注册。
+	 * 连接保持到 agent_settled（或客户端断开）；断开时由 response close 事件清理路由注册。
 	 */
 	private handleStream(
 		sessionId: string,

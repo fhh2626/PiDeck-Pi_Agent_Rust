@@ -25,7 +25,7 @@ async function startAgent(window: Page) {
 			.catch(() => false);
 		if (gone) break;
 	}
-	await expect(composer).toHaveAttribute("aria-disabled", "false", { timeout: 30_000 });
+	await expect(composer).toHaveAttribute("contenteditable", "true", { timeout: 30_000 });
 	return composer;
 }
 
@@ -56,9 +56,9 @@ test("history restore: close app and reopen recovers prior session", async () =>
 	const shimPath = join(userDataRoot, "mock-pi.cmd");
 	const scriptPath = join(repoRoot, "e2e", "mock-pi.cjs");
 	writeFileSync(shimPath, `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`);
-	mkdirSync(join(userDataRoot, "profile-dev"), { recursive: true });
+	mkdirSync(join(userDataRoot, "profile"), { recursive: true });
 	writeFileSync(
-		join(userDataRoot, "profile-dev", "settings.json"),
+		join(userDataRoot, "profile", "settings.json"),
 		JSON.stringify({ customPiPath: shimPath, piEnvironmentChecked: true }),
 	);
 

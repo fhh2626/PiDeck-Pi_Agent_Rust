@@ -252,11 +252,10 @@ src/
 ## 发版要求
 
 1. 核对 `README.md`（英文默认）/ `README.zh-CN.md` 功能与安装说明仍准确。
-2. `CHANGELOG.md` / `CHANGELOG.zh-CN.md` 加版本号与日期，条目记录用户可感知变化，中英文一致。
-3. GitHub Release notes 写明主要变化，不接受只写版本号。
-4. `package.json` 与 `package-lock.json` 版本号一致；发版提交用 `chore: release vX.Y.Z`。
-5. docs-site 官网同步更新。
-6. 架构级变更（如 session-first 切换）先发 pre-release 观察，再标正式版。
+2. GitHub Release notes 写明主要变化，不接受只写版本号。
+3. `package.json` 与 `package-lock.json` 版本号一致；发版提交用 `chore: release vX.Y.Z`。
+4. docs-site 官网同步更新。
+5. 架构级变更（如 session-first 切换）先发 pre-release 观察，再标正式版。
 
 ## 提交 commit 规则
 

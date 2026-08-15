@@ -38,7 +38,7 @@ import {
 import { cn } from "./lib/utils";
 import { showNotice } from "./utils/notice";
 import { collectModelSpecPatches } from "./utils/modelSpecAutoFill";
-import { Component, useState, useEffect, useCallback, type ReactNode } from "react";
+import { Component, useRef, useState, useEffect, useCallback, type ReactNode } from "react";
 import type { PiDesktopApi } from "../../preload";
 import { AuthTab } from "./config/AuthTab";
 import { ModelsTab } from "./config/ModelsTab";
@@ -49,7 +49,7 @@ import { SettingsTab } from "./config/SettingsTab";
 import { PromptsTab } from "./config/PromptsTab";
 import { SkillsTab } from "./config/SkillsTab";
 import { ExtensionsTab } from "./config/ExtensionsTab";
-import { SecuritySection } from "./components/config/SecuritySection";
+import { SecuritySection, type SecuritySectionHandle } from "./components/config/SecuritySection";
 import { t } from "./i18n";
 import { CodeMirrorEditor } from "./components/app/CodeMirrorEditor";
 import { translateBuiltinPromptDescription } from "./composerBehavior";
@@ -1544,6 +1544,18 @@ function ConfigModalContent(props: ConfigModalProps) {
 		input.click();
 	};
 
+	/** 安全管理面板句柄（顶部统一保存按钮经 saveByKey 调用其 save） */
+	const securitySectionRef = useRef<SecuritySectionHandle>(null);
+
+	/** 安全管理草稿脏状态上报：有修改 markDirty("security")，保存成功/卸载清标记。 */
+	const handleSecurityDirtyChange = useCallback(
+		(dirty: boolean) => {
+			if (dirty) markDirty("security");
+			else clearDirty("security");
+		},
+		[markDirty, clearDirty],
+	);
+
 	/** 按 tab 编码分发到对应保存 handler；返回是否保存成功（false = 保存失败，由错误提示区展示原因）。 */
 	const saveByKey = async (tabKey: string): Promise<boolean> => {
 		switch (tabKey) {
@@ -1561,8 +1573,10 @@ function ConfigModalContent(props: ConfigModalProps) {
 				return saveGlobalSkillEditor();
 			case "prompts":
 				return handleSaveEditPrompt();
+			case "security":
+				return securitySectionRef.current?.save() ?? false;
 			default:
-				// extensions/security 等即时生效页无保存语义，无 dirty 时按钮不可点
+				// extensions 即时生效页无保存语义，无 dirty 时按钮不可点
 				return false;
 		}
 	};
@@ -1955,7 +1969,10 @@ function ConfigModalContent(props: ConfigModalProps) {
 
 					<TabsContent value="security" className="config-main min-w-0">
 						<div className="config-content">
-						<SecuritySection />
+						<SecuritySection
+							ref={securitySectionRef}
+							onDirtyChange={handleSecurityDirtyChange}
+						/>
 						</div>
 					</TabsContent>
 

@@ -13,10 +13,11 @@ test("resize state commits via Group onLayoutChanged, not per-frame Panel onResi
   assert.doesNotMatch(shell, /onResize=\{handle/);
 });
 
-test("programmatic layout changes do not write back into React state", () => {
-  // isUserInteraction=false 的变更（effect 同步、挂载）必须被拦截，
-  // 否则 effect → resize → 回写 会形成反馈回路
+test("programmatic layout changes do not write collapsed or expand-to-min width", () => {
+  // isUserInteraction=false 仍须在折叠状态回写前 return，避免 effect → resize → 回写回路。
+  // 抽屉像素宽走 shouldCommitPanelPixels：折叠 0 与 expand→min 都不写，缩放后的真实像素才写。
   assert.match(shell, /if \(!meta\.isUserInteraction\) return;/);
+  assert.match(shell, /shouldCommitPanelPixels/);
 });
 
 test("splitter paints a single neutral diffused line", () => {

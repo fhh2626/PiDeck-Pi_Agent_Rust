@@ -55,6 +55,12 @@ test("widgetProgress counts checkmarks and ignores section headers", () => {
     "── 已完成 ──",
     "☑ #3 审查 PR",
   ]), "2/3");
+  // 新契约（2027-01）：无分组标题，按插入顺序带标记，完成项原位——计数逻辑不变
+  assert.equal(progressOf([
+    "☐ #1 修复登录页样式",
+    "☑ #2 更新依赖文档",
+    "☐ #3 审查 PR",
+  ]), "1/3");
   // plan 扩展行格式（步骤号 + 文本）同样按 ☑/☐ 计数
   assert.equal(progressOf([
     "计划进度 1/3",
@@ -138,7 +144,8 @@ test("chip popover uses the official BeUI TodoList with mapping, not a local imi
   assert.match(chipsSource(), /defaultOpen/);
   assert.match(chipsSource(), /className="rounded-none border-0"/);
   // 外层 Popover 负责唯一的边框和圆角，避免出现两层不重合的角
-  assert.match(chipsSource(), /PopoverContent[\s\S]*className="w-\[min\(28rem/);
+  // （className 带 widget-popover 壁纸标记前缀，断言只约束宽度表达式部分）
+  assert.match(chipsSource(), /PopoverContent[\s\S]*className="[^"]*w-\[min\(28rem/);
 
   assert.match(chipsSource(), /compact/);
   // 桌面紧凑宽度：28rem 上限 + Radix 实际可用宽度约束（留 12px 边界余量），

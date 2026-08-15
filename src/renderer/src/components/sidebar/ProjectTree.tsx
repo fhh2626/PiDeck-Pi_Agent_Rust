@@ -19,7 +19,11 @@ const treeRowClass =
   "group conversation relative flex min-h-7 w-full items-center gap-1.5 rounded-md border border-transparent px-1 py-0 text-body text-foreground shadow-none transition-[background-color,border-color,box-shadow] duration-200 hover:border-border-subtle hover:bg-muted/60 hover:text-foreground";
 
 /** 项目行右侧操作按钮的虚化模式：absolute 浮层，不参与布局（不挤压项目名文字），
- * 默认隐藏（pointer-events 一并关闭防误触），行 hover / 行内聚焦时显现。 */
+ * 默认隐藏（pointer-events 一并关闭防误触），行 hover / 行内聚焦时显现。
+ * 窄侧栏（<256px）时按钮会盖住项目名：conversation-body 上
+ * @max-[255px]:group-hover:pr-29 在 hover 时压出 116px 右侧留白（4 个按钮宽），
+ * 文本截断让位但保持可见——2027-01 用户反馈：整行淡出到透明会导致标题不可读，
+ * 必须点击激活才能看到文字；压缩+截断只损失尾部文字，不影响辨认。 */
 const dimmedActionsClass =
 	"pointer-events-none absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100";
 
@@ -125,7 +129,7 @@ export function ProjectTree(props: {
             <span className="grid size-5 shrink-0 place-items-center text-muted-foreground" aria-hidden="true">
               {collapsed ? <Folder size={14} /> : <FolderOpen size={14} />}
             </span>
-            <div className="conversation-body min-w-0 flex-1">
+            <div className="conversation-body min-w-0 flex-1 transition-[padding-right] @max-[255px]:group-hover:pr-29 @max-[255px]:group-focus-within:pr-29">
               <div className="conversation-title flex min-w-0 items-center">
                 {/* 悬浮展示完整项目目录名 + 路径（目录名在行内常被 truncate） */}
                 <PathTooltip content={`${projectDirectoryName}\n${project.path}`}>

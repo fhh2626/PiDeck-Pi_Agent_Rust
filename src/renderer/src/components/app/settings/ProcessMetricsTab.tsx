@@ -122,6 +122,7 @@ export function ProcessMetricsTab() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t("config.process.column.agentId")}</TableHead>
+                    <TableHead>{t("config.process.column.session")}</TableHead>
                     <TableHead>PID</TableHead>
                     <TableHead>{t("config.process.column.memory")}</TableHead>
                     <TableHead className="text-center">{t("config.process.column.action")}</TableHead>
@@ -132,6 +133,14 @@ export function ProcessMetricsTab() {
                     <TableRow key={agent.pid}>
                       <TableCell className="max-w-56 truncate font-medium" title={agent.agentId}>
                         {agent.agentId}
+                      </TableCell>
+                      {/* 会话列：展示关联会话标题（进程监控与打开的对话对应起来）；
+                          无绑定（匿名/终端 agent）时显示占位符 */}
+                      <TableCell
+                        className="max-w-56 truncate text-text-secondary"
+                        title={agent.sessionId}
+                      >
+                        {agent.sessionTitle ?? agent.sessionId ?? "-"}
                       </TableCell>
                       <TableCell className="font-mono text-text-secondary">{agent.pid}</TableCell>
                       <TableCell className="font-mono text-text-secondary">

@@ -209,6 +209,7 @@ import { registerProjectsIpc } from "./ipc/projectsIpc";
 import { registerUsageStatsIpc } from "./ipc/usageStatsIpc";
 import { UsageStatsService } from "./usageStats/UsageStatsService";
 import { readLastWindowBounds, saveLastWindowBounds } from "./windowState";
+import { createRendererCrashRecoveryGuard } from "./window/rendererCrashRecovery";
 import {
 	registerBackgroundImageProtocol,
 	registerBackgroundsIpc,
@@ -248,6 +249,9 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 /** 标记是否由用户主动退出（托盘菜单「退出」），区别于窗口关闭隐藏到托盘 */
 let isQuitting = false;
+/** 渲染进程崩溃自动恢复守卫（2026-08 黑屏治理，见 window/rendererCrashRecovery.ts）：
+ *  非正常崩溃自动 reload 恢复，崩溃风暴（60s 内超 2 次）放弃。 */
+const rendererCrashGuard = createRendererCrashRecoveryGuard();
 let projectStore: ProjectStore;
 let fileSystemService: FileSystemService;
 let sessionScanner: SessionScanner;
@@ -1135,7 +1139,7 @@ function printStartupInfo() {
 		console.log("%c  Persistent installationType: %c${persistentInstallationType}", "color: #6b7280;", "color: #8b5cf6; font-weight: bold;");
 		console.log("");
 		console.log("%c🐛 Found a bug? Report at:", "color: #6b7280;");
-		console.log("%c  https://github.com/ayuayue/PiDeck/issues", "color: #3b82f6; text-decoration: underline;");
+		console.log("%c  https://github.com/fhh2626/PiDeck-Pi_Agent_Rust/issues", "color: #3b82f6; text-decoration: underline;");
 		console.log("");
 		console.log("%c🎉 Easter egg: You found it! Thanks for exploring.", "color: #ec4899; font-weight: bold;");
 		console.log("");
@@ -1363,6 +1367,22 @@ async function createWindow() {
 			platform: process.platform,
 			arch: process.arch,
 		});
+		// 黑屏治理：非正常崩溃自动 reload 恢复；clean-exit（正常退出）、用户主动退出
+		// 与崩溃风暴（窗口期内超限）不恢复。reload 前检查窗口/webContents 仍存活。
+		if (isQuitting || !rendererCrashGuard.shouldAutoReload(details.reason)) return;
+		void appLogger.warn("app", "Auto-reloading main window after renderer crash", {
+			reason: details.reason,
+			exitCode: details.exitCode,
+			recoveriesInWindow: rendererCrashGuard.recoveriesInWindow(),
+		});
+		if (mainWindow && !mainWindow.isDestroyed()) {
+			try {
+				mainWindow.webContents.reload();
+			} catch (error) {
+				// reload 抛异常（webContents 已销毁等竞态）：记日志，留给用户手动处理
+				void appLogger.error("app", "Auto-reload failed", error);
+			}
+		}
 	});
 	// 子进程（含 GPU/utility）异常退出：Mac 上偶发“整窗闪一下”，需要留下 reason/exitCode。
 	app.on("child-process-gone", (_event, details) => {
@@ -1690,6 +1710,7 @@ function registerIpc() {
 	registerGitIpc({
 		appLogger,
 		mainCopy: mainCopy as (key: string, params?: Record<string, string | number>) => string,
+		getLocale: currentMainProcessLocale,
 		gitService,
 		piLocator,
 		projectStore,
@@ -1801,6 +1822,13 @@ function registerIpc() {
 		appLogger,
 		getMainWindow: () => mainWindow,
 		openExternalUrl,
+		getAuthorizedRoots: () => [
+			...projectStore.list().map((project) => project.path),
+			promptManager.getDir(),
+			...skillManager.getDirs(),
+			join(app.getPath("home"), ".pi", "agent"),
+			app.getPath("userData"),
+		],
 	});
 }
 
@@ -1887,8 +1915,8 @@ app.whenReady().then(async () => {
 			}
 		},
 		securityStore,
-		// spawn pi 前预检修复会话文件（旧版私有 sessionName 头行会让 pi 拒绝加载，见 #114）
-		(filePath) => sessionScanner.repairLegacySessionNameLine(filePath),
+		// spawn pi 前预检并修复旧版私有头行或路径与 session header 粘连的损坏文件。
+		(filePath) => sessionScanner.repairCorruptSessionHeader(filePath),
 	);
 	webServiceManager = new WebServiceManager({
 		// dev 模式（electron-vite dev 不产出 out/renderer 构建物）下，静态资源

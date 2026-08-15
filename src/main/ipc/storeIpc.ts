@@ -7,7 +7,6 @@ import { ipcMain } from "electron";
 import { ipcChannels } from "../../shared/ipc";
 import type {
 	CreatePiPromptTemplateInput,
-	PiPromptTemplateSummary,
 	PromptStoreItem,
 	PromptStoreRawItem,
 	PromptStoreSearchResponse,
@@ -18,6 +17,9 @@ import type { PromptManager } from "../prompts/PromptManager";
 import type { SkillManager } from "../skills/SkillManager";
 import type { XuePromptManager } from "../prompts/XuePromptManager";
 import type { ExtensionManager } from "../extensions/ExtensionManager";
+import { isBuiltInExtensionName } from "../extensions/builtInExtensions";
+import { createUniquePrompt } from "../prompts/createUniquePrompt";
+import { isPromptAlreadyExistsError } from "../prompts/PromptManager";
 
 export type StoreIpcDeps = {
 	promptManager: PromptManager;
@@ -220,20 +222,13 @@ export function registerStoreIpc({
 
 			const { converted, argumentHint, varCount } = convertStoreVarsToPiVars(content);
 
-			const tryCreate = async (tryName: string): Promise<PiPromptTemplateSummary> => {
-				try {
-					return await promptManager.create({ name: tryName, description });
-				} catch {
-					const match = tryName.match(/-(\d+)$/);
-					const nextNum = match ? parseInt(match[1], 10) + 1 : 2;
-					const suffixName = tryName.replace(/-\d+$/, "") + "-" + nextNum;
-					return tryCreate(suffixName);
-				}
-			};
-
 			const hintLine = argumentHint ? `\nargument-hint: ${argumentHint}` : "";
 			const frontmatter = `---\ndescription: ${description.replace(/\n/g, " ")}\nsource: prompts.chat${hintLine}\n---\n\n`;
-			const summary = await tryCreate(name);
+			const summary = await createUniquePrompt({
+				baseName: name,
+				create: (tryName) => promptManager.create({ name: tryName, description }),
+				isAlreadyExists: isPromptAlreadyExistsError,
+			});
 			await promptManager.writeContent(summary.path, frontmatter + converted);
 
 			void appLogger.info("prompt-store", "Imported prompt from store", {
@@ -446,7 +441,7 @@ export function registerStoreIpc({
 	});
 	ipcMain.handle(ipcChannels.extensionsToggle, async (_event, source: string, enabled: boolean) => {
 		// 内置扩展走 removedBuiltInExtensions + RPC -e，不再写用户扩展目录 / pi disabledExtensions。
-		if (source.startsWith("pi-deck-") && source.endsWith(".ts")) {
+		if (isBuiltInExtensionName(source)) {
 			if (enabled) await extensionManager.restoreBuiltIn(source);
 			else await extensionManager.disableBuiltIn(source);
 		} else {

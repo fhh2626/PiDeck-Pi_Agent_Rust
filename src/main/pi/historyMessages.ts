@@ -1,4 +1,7 @@
 import type { ChatMessage } from "../../shared/types";
+import { messageFingerprint } from "../../shared/messageFingerprint";
+
+export { messageFingerprint } from "../../shared/messageFingerprint";
 
 /**
  * 消息内容指纹：跨「运行期事件身份（randomUUID）」与「文件投影身份
@@ -12,38 +15,85 @@ import type { ChatMessage } from "../../shared/types";
  * - user/assistant/system/error：role + text + thinking + 图片签名
  *   （图片签名 = mimeType + data 长度 + 首尾采样，避免大 base64 全量参与比较）。
  */
-function stripAnsi(text: string): string {
-	return text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+
+function messageEntryKey(message: ChatMessage): string {
+	const entryId = message.meta?.entryId;
+	return typeof entryId === "string" && entryId
+		? `e:${entryId}`
+		: `m:${message.id}`;
 }
 
-function imageSignature(message: ChatMessage): string {
-	const images = message.images ?? [];
-	if (images.length === 0) return "";
-	return images
-		.map((image) => {
-			const data = image.data ?? "";
-			const head = data.slice(0, 64);
-			const tail = data.length > 128 ? data.slice(-64) : "";
-			return `${image.mimeType}:${data.length}:${head}${tail}`;
-		})
-		.join(",");
+function isSummaryCard(message: ChatMessage): boolean {
+	return message.role === "system" &&
+		(message.meta?.type === "compaction" || message.meta?.type === "branchSummary");
 }
 
-export function messageFingerprint(message: ChatMessage): string {
-	const role = message.role;
-	const toolCallId =
-		message.role === "tool"
-			? (message.meta as Record<string, unknown> | undefined)?.toolCallId
-			: undefined;
-	if (typeof toolCallId === "string" && toolCallId) {
-		return `tool\u0000${toolCallId}`;
+const COMPACTION_FINGERPRINT_TIME_TOLERANCE_MS = 5_000;
+
+/**
+ * 计算压缩后需要并入 renderer 历史前缀的旧运行期消息。
+ *
+ * Pi 压缩后可能重新投影保留窗口，entryId 也可能变化；只按 id 会把同一条
+ * 最近回复显示两次。因此先按 entryId，再按内容指纹一一消耗新投影副本，
+ * 只返回新投影没有覆盖的旧消息。摘要卡片始终以新投影为准。
+ */
+export function buildCompactionSlideOut(
+	previousMessages: ChatMessage[],
+	nextMessages: ChatMessage[],
+): ChatMessage[] {
+	const previous = previousMessages.filter((message) => !isSummaryCard(message));
+	const next = nextMessages.filter((message) => !isSummaryCard(message));
+	if (previous.length === 0 || next.length === 0) return previous;
+
+	const nextByEntryKey = new Map<string, number[]>();
+	const nextByFingerprint = new Map<string, number[]>();
+	next.forEach((message, index) => {
+		const entryKey = messageEntryKey(message);
+		const entryIndices = nextByEntryKey.get(entryKey);
+		if (entryIndices) entryIndices.push(index);
+		else nextByEntryKey.set(entryKey, [index]);
+
+		const fingerprint = messageFingerprint(message);
+		const fingerprintIndices = nextByFingerprint.get(fingerprint);
+		if (fingerprintIndices) fingerprintIndices.push(index);
+		else nextByFingerprint.set(fingerprint, [index]);
+	});
+
+	const consumedNext = new Set<number>();
+	const preservedIndices = new Set<number>();
+	for (let previousIndex = previous.length - 1; previousIndex >= 0; previousIndex--) {
+		const previousMessage = previous[previousIndex];
+		const entryCandidates = nextByEntryKey.get(messageEntryKey(previousMessage)) ?? [];
+		let matchedIndex: number | undefined;
+		for (let index = entryCandidates.length - 1; index >= 0; index--) {
+			const candidate = entryCandidates[index];
+			if (!consumedNext.has(candidate)) {
+				matchedIndex = candidate;
+				break;
+			}
+		}
+
+		if (matchedIndex === undefined) {
+			const fingerprintCandidates = nextByFingerprint.get(messageFingerprint(previousMessage)) ?? [];
+			for (let index = fingerprintCandidates.length - 1; index >= 0; index--) {
+				const candidate = fingerprintCandidates[index];
+				if (
+					consumedNext.has(candidate) ||
+					Math.abs((next[candidate].timestamp ?? 0) - (previousMessage.timestamp ?? 0)) >
+						COMPACTION_FINGERPRINT_TIME_TOLERANCE_MS
+				) {
+					continue;
+				}
+				matchedIndex = candidate;
+				break;
+			}
+		}
+
+		if (matchedIndex === undefined) preservedIndices.add(previousIndex);
+		else consumedNext.add(matchedIndex);
 	}
-	return [
-		role,
-		stripAnsi(message.text),
-		stripAnsi(message.thinking ?? ""),
-		imageSignature(message),
-	].join("\u0000");
+
+	return previous.filter((_message, index) => preservedIndices.has(index));
 }
 
 /**

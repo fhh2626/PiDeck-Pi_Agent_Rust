@@ -59,3 +59,17 @@ test("file rows use the integer control line-height token", () => {
   assert.match(fileRow, /line-height:\s*var\(--line-height-control\)/);
   assert.doesNotMatch(fileRow, /line-height:\s*1\.28/);
 });
+
+test("file rows animate their hover highlight like sidebar rows", () => {
+  // 2027-01 用户反馈：侧栏行 hover 有平滑过渡，文件列表 hover 高亮是瞬切，体验不一致。
+  // 文件行 class 必须带与侧栏行同款的 transition-[background-color,border-color,box-shadow]
+  // + duration-200；legacy .file-node-row:hover 的颜色变化由此过渡驱动。
+  const surface = readFileSync(
+    "src/renderer/src/components/session/WorkspaceSurface.tsx",
+    "utf8",
+  );
+  assert.match(
+    surface,
+    /file-node-row inline-flex h-\[28px\][\s\S]*?transition-\[background-color,border-color,box-shadow\] duration-200[\s\S]*?hover:bg-muted/,
+  );
+});

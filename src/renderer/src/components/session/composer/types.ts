@@ -28,6 +28,8 @@ export type ComposerEditorProps = {
 	onCursorChange: (cursor: number) => void;
 	onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
 	onPaste?: (event: ClipboardEvent<HTMLDivElement>) => void;
+	/** 右键「粘贴」：返回 true 表示已消费剪贴板（图片/文件路径）；false 表示纯文本，交给编辑器插入 */
+	onPasteClipboard?: () => Promise<boolean>;
 	onDrop?: (event: DragEvent<HTMLDivElement>) => void;
 	onDragOver?: (event: DragEvent<HTMLDivElement>) => void;
 	onFocus?: (event: FocusEvent<HTMLDivElement>) => void;

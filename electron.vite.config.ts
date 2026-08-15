@@ -61,6 +61,30 @@ export default defineConfig({
       // 5173 落在部分 Windows/Hyper-V 动态端口排除范围内时会 EACCES；使用相邻的未保留端口保证 dev server 可监听。
       port: 5181,
     },
+    // dev 预构建：web 端独享的 ai-sdk 依赖树必须启动即优化。
+    // 否则首次访问 web 服务端口时 vite 才在运行中重新优化，页面已引用的
+    // deps URL 会 504/失效，经 WebServiceManager 代理回退 HTML 后浏览器报
+    // "MIME text/html" 模块错误、整页白屏。
+    optimizeDeps: {
+      include: [
+        "@ai-sdk/react",
+        "ai",
+        "@ai-sdk/provider",
+        "@ai-sdk/provider-utils",
+        "@ai-sdk/mcp",
+        "@ai-sdk/gateway",
+        "swr",
+        "throttleit",
+        "json-schema",
+        "eventsource-parser",
+        "undici",
+        "pkce-challenge",
+        "dequal",
+        "use-sync-external-store",
+        "@standard-schema/spec",
+        "@workflow/serde",
+      ],
+    },
     resolve: {
       alias: {
         "@": resolve("src/renderer/src"),
@@ -98,9 +122,6 @@ export default defineConfig({
             }
             if (id.includes("/node_modules/lucide-react/")) {
               return "vendor-icons";
-            }
-            if (id.includes("/node_modules/react-markdown/") || id.includes("/node_modules/remark-") || id.includes("/node_modules/rehype-") || id.includes("/node_modules/unified/") || id.includes("/node_modules/katex/") || id.includes("/node_modules/mdast-") || id.includes("/node_modules/hast-") || id.includes("/node_modules/micromark-") || id.includes("/node_modules/vfile") || id.includes("/node_modules/unist-") || id.includes("/node_modules/trough") || id.includes("/node_modules/bail") || id.includes("/node_modules/dequal") || id.includes("/node_modules/devlop") || id.includes("/node_modules/html-to-image/")) {
-              return "vendor-markdown";
             }
           },
         },

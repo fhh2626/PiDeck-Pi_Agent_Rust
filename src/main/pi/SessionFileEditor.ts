@@ -272,7 +272,8 @@ function parseDocument(bytes: Buffer): JsonlDocument {
 			);
 		}
 		line.entry = parsed as JsonlEntry;
-		if (line.entry.type === "deleted") continue;
+		// 墓碑也要进 id 索引：pi 会把最后一条带 id 的记录当 leaf，再沿 parentId
+		// 回溯。旧墓碑没有 id，这里仍会跳过（entryIdOf 为空）。
 		if (line.entry.type === "session") sessionHeaderCount += 1;
 		const entryId = entryIdOf(line.entry);
 		if (entryId) {
@@ -370,6 +371,12 @@ function locateById(
 		);
 	}
 	const entry = document.lines[lineIndex].entry!;
+	if (entry.type === "deleted") {
+		throw new SessionFileEditorError(
+			"SESSION_ENTRY_NOT_FOUND",
+			"The requested entry has already been deleted",
+		);
+	}
 	validateLocatedRole(entry, target);
 	return { lineIndex, entry, entryId };
 }
@@ -455,10 +462,23 @@ function descendantEntryIds(document: JsonlDocument, rootEntryId: string): Set<s
 	return descendants;
 }
 
-function tombstone(entryId: string, now: number, reason?: string): JsonlEntry {
+/**
+ * 删除/重发截断写入的墓碑。必须保留 id + parentId：
+ * pi SessionManager._buildIndex 把文件里最后一条带 id 的记录当成 leaf，
+ * 再沿 parentId 回溯活动分支。旧墓碑只有 originalEntryId，leaf 会落在
+ * 这条「无 id、无父节点」的记录上，get_messages 整页变空。
+ */
+function tombstone(
+	entryId: string,
+	now: number,
+	parentId?: string | null,
+	reason?: string,
+): JsonlEntry {
 	return {
 		type: "deleted",
+		id: entryId,
 		originalEntryId: entryId,
+		parentId: parentId ?? null,
 		ts: now,
 		...(reason ? { reason } : {}),
 	};
@@ -599,16 +619,67 @@ export class SessionFileEditor {
 		if (kind === "delete") {
 			const parentId = parentIdOf(located.entry);
 			const changed = [located.entryId];
+			// 删除 assistant 回答时，同一轮的过程链（thinking-only assistant / toolResult 祖先）
+			// 必须一起墓碑：它们只服务于被删的回答，留在分支上会被 groupToolMessages 并进
+			// 下一轮回答（用户反馈「回答删了，但前面的思考和工具串到另一个上面」）。
+			// 沿父链上溯，遇到 user 或带文本的 assistant（上一段回答）即停，保留它们。
+			const isProcessNode = (entry: JsonlEntry | undefined): boolean => {
+				if (!entry || entry.type !== "message") return false;
+				const role = inputRole(entry);
+				if (role === "toolResult") return true;
+				if (role !== "assistant") return false;
+				const message = messageOf(entry);
+				const content = message?.content;
+				const hasThinking = Array.isArray(content)
+					? content.some((block) => (
+						block && typeof block === "object" &&
+						(block as Record<string, unknown>).type === "thinking" &&
+						typeof (block as Record<string, unknown>).thinking === "string" &&
+						String((block as Record<string, unknown>).thinking).trim() !== ""
+					))
+					: false;
+				// thinking-only：只有思考块、没有可见文本
+				return hasThinking && !textOf(content).trim();
+			};
+			let reparentTarget: string | null = parentId ?? null;
+			if (inputRole(located.entry) === "assistant") {
+				const processIds = new Set<string>();
+				let cursor = parentIdOf(located.entry);
+				const byId = document.entryLineById;
+				while (cursor) {
+					const lineIndex = byId.get(cursor);
+					if (lineIndex === undefined) break;
+					const ancestor = document.lines[lineIndex].entry;
+					// 墓碑前 entry 必在 byId 索引内；undefined 防御直接退出上溯
+					if (!ancestor || !isProcessNode(ancestor)) break;
+					processIds.add(cursor);
+					reparentTarget = parentIdOf(ancestor) ?? null;
+					cursor = parentIdOf(ancestor);
+				}
+				for (const id of processIds) {
+					const lineIndex = byId.get(id);
+					if (lineIndex === undefined) continue;
+					const processEntry = document.lines[lineIndex].entry;
+					// 墓碑前的 entry 一定存在（byId 索引了所有未删除行）；防御空值避免 TS 窄化失败
+					if (!processEntry) continue;
+					replaceLine(document, lineIndex, tombstone(id, this.now(), parentIdOf(processEntry)));
+					changed.push(id);
+				}
+			}
 			for (let index = 0; index < document.lines.length; index += 1) {
 				if (index === located.lineIndex) continue;
 				const child = document.lines[index].entry;
 				if (!child || child.type === "deleted" || parentIdOf(child) !== located.entryId) continue;
-				child.parentId = parentId ?? null;
+				child.parentId = reparentTarget;
 				replaceLine(document, index, child);
 				const childId = entryIdOf(child);
 				if (childId) changed.push(childId);
 			}
-			replaceLine(document, located.lineIndex, tombstone(located.entryId, this.now()));
+			replaceLine(
+				document,
+				located.lineIndex,
+				tombstone(located.entryId, this.now(), parentId),
+			);
 			return changed;
 		}
 
@@ -624,7 +695,11 @@ export class SessionFileEditor {
 			if (!entry || entry.type === "deleted") continue;
 			const entryId = entryIdOf(entry);
 			if (!entryId || !removeIds.has(entryId)) continue;
-			replaceLine(document, index, tombstone(entryId, this.now(), "resend-truncate"));
+			replaceLine(
+				document,
+				index,
+				tombstone(entryId, this.now(), parentIdOf(entry), "resend-truncate"),
+			);
 		}
 		return [...removeIds];
 	}

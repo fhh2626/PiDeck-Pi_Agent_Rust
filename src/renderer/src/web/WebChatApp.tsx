@@ -11,7 +11,7 @@
  * UI 层与桌面端对齐：WebSidebar / WebHeader / WebTimeline / WebComposer，
  * 复用桌面设计 token、shadcn 组件、lucide 图标与 timeline/surfaces 样式类。
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
@@ -29,6 +29,8 @@ import {
 	fetchMessagePage,
 	fetchModels,
 	fetchState,
+	mergeAuthoritativeUiMessages,
+	abortRuntime,
 	setRuntimeModel,
 	setRuntimeThinking,
 	updateSessionRecord,
@@ -46,6 +48,7 @@ export function WebChatApp() {
 		projects: [],
 		sessions: [],
 		runtimes: [],
+		messagesBySession: {},
 	});
 	const [activeSessionId, setActiveSessionId] = useState<string>("");
 	const [creatingProjectId, setCreatingProjectId] = useState<string>("");
@@ -59,11 +62,43 @@ export function WebChatApp() {
 	// 手机端默认把聊天作为主画面，项目树通过抽屉按需打开，避免列表占满首屏。
 	const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
+	// Mobile Safari/Chrome keep 100vh on the layout viewport. The address bar and
+	// keyboard change visualViewport metrics; syncing the whole rectangle keeps
+	// the shell and its drawer aligned with what the user can actually see.
+	useEffect(() => {
+		const updateViewportMetrics = () => {
+			const viewport = window.visualViewport;
+			const height = viewport?.height ?? window.innerHeight;
+			const width = viewport?.width ?? window.innerWidth;
+			const offsetTop = Math.max(0, viewport?.offsetTop ?? 0);
+			const offsetLeft = Math.max(0, viewport?.offsetLeft ?? 0);
+			document.documentElement.style.setProperty("--web-viewport-height", `${height}px`);
+			document.documentElement.style.setProperty("--web-viewport-width", `${width}px`);
+			document.documentElement.style.setProperty("--web-viewport-offset-left", `${offsetLeft}px`);
+			document.documentElement.style.setProperty("--web-viewport-offset-top", `${offsetTop}px`);
+		};
+		const viewport = window.visualViewport;
+		updateViewportMetrics();
+		viewport?.addEventListener("resize", updateViewportMetrics);
+		viewport?.addEventListener("scroll", updateViewportMetrics);
+		window.addEventListener("resize", updateViewportMetrics);
+		return () => {
+			viewport?.removeEventListener("resize", updateViewportMetrics);
+			viewport?.removeEventListener("scroll", updateViewportMetrics);
+			window.removeEventListener("resize", updateViewportMetrics);
+			document.documentElement.style.removeProperty("--web-viewport-height");
+			document.documentElement.style.removeProperty("--web-viewport-width");
+			document.documentElement.style.removeProperty("--web-viewport-offset-left");
+			document.documentElement.style.removeProperty("--web-viewport-offset-top");
+		};
+	}, []);
+
 	// ── 本组件自持的 per-session 消息缓存（useChat 切换 id 会重建 Chat 实例） ──
 	const messagesBySessionRef = useRef<Record<string, UIMessage[]>>({});
 	const loadedSessionsRef = useRef<Set<string>>(new Set());
 	const historyMetaRef = useRef<Record<string, HistoryMeta>>({});
 	const activeSessionIdRef = useRef<string>("");
+	const streamingRef = useRef(false);
 	// 首页直发暂存：新建会话后等 useChat 实例切换完成，再投递首条消息
 	const pendingSendRef = useRef<{ sessionId: string; text: string } | null>(null);
 
@@ -76,6 +111,23 @@ export function WebChatApp() {
 	const streaming = status === "submitted" || status === "streaming";
 
 	activeSessionIdRef.current = activeSessionId;
+	streamingRef.current = streaming;
+
+	/** 将主进程运行时尾部快照合并回 Web 缓存，避免轮询覆盖正在显示的流。 */
+	const syncRuntimeMessages = useCallback((nextState: WebState, sessionId: string) => {
+		if (!sessionId) return;
+		const snapshot = nextState.messagesBySession[sessionId];
+		if (!snapshot) return;
+		const authoritative = chatMessagesToUiMessages(snapshot);
+		const current = messagesBySessionRef.current[sessionId] ?? [];
+		const merged = mergeAuthoritativeUiMessages(current, authoritative);
+		messagesBySessionRef.current[sessionId] = merged;
+		// 流式期间由 SSE/useChat 保持逐 token 画面；状态快照只更新缓存，
+		// 等状态变为空闲后再替换为主进程的最终消息。
+		if (!streamingRef.current && activeSessionIdRef.current === sessionId && merged !== current) {
+			setMessages(merged);
+		}
+	}, [setMessages]);
 
 	const runtimeFor = (sessionId: string) =>
 		state.runtimes.find((runtime) => runtime.sessionId === sessionId);
@@ -92,7 +144,9 @@ export function WebChatApp() {
 		void fetchMessagePage(activeSessionId)
 			.then((page) => {
 				const history = chatMessagesToUiMessages(page.messages);
-				messagesBySessionRef.current[activeSessionId] = history;
+				const cached = messagesBySessionRef.current[activeSessionId] ?? [];
+				const merged = mergeAuthoritativeUiMessages(history, cached);
+				messagesBySessionRef.current[activeSessionId] = merged;
 				historyMetaRef.current[activeSessionId] = {
 					total: page.total,
 					nextBefore: page.nextBefore,
@@ -100,13 +154,20 @@ export function WebChatApp() {
 				loadedSessionsRef.current.add(activeSessionId);
 				// 仅当仍停留在该会话时才注入（避免切走后 setMessages 串台）
 				if (activeSessionIdRef.current === activeSessionId) {
-					setMessages(history);
+					setMessages(merged);
 				}
 			})
 			.catch(() => {
 				// 历史加载失败：保留空时间线，不阻塞流式
 			});
 	}, [activeSessionId, setMessages]);
+
+	// 轮询拿到的运行时快照也要在切换会话/流结束后立即回放，
+	// 否则 Web 只显示自己发出的 SSE，PC 端新增的消息永远要等重新打开页面才出现。
+	useEffect(() => {
+		if (!activeSessionId || streaming) return;
+		syncRuntimeMessages(state, activeSessionId);
+	}, [activeSessionId, state, streaming, syncRuntimeMessages]);
 
 	// 流式期间同步缓存：仅 streaming 时回写（空闲时 setMessages 来自历史恢复/分页，
 	// 对应逻辑已各自写缓存；这里若无条件覆盖会把刚恢复的历史再次清空）
@@ -140,6 +201,7 @@ export function WebChatApp() {
 				const next = await fetchState();
 				if (disposed) return;
 				setState(next);
+				syncRuntimeMessages(next, activeSessionIdRef.current);
 				setConnected(true);
 				// 初始页面保持空会话，让用户明确选择项目/会话；外部删除当前会话时也回到空状态。
 				if (activeSessionIdRef.current && !next.sessions.some((session) => session.id === activeSessionIdRef.current)) {
@@ -157,7 +219,7 @@ export function WebChatApp() {
 		};
 		// activeSessionId 变化后下一轮轮询会补齐最新状态，不必重启轮询
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, []);
+	}, [syncRuntimeMessages]);
 
 	const handleSend = (text: string) => {
 		if (!text.trim()) return;
@@ -167,6 +229,18 @@ export function WebChatApp() {
 			return;
 		}
 		void sendMessage({ text });
+	};
+
+	const handleStop = () => {
+		stop();
+		if (!activeRuntime) return;
+		void abortRuntime({
+			sessionId: activeRuntime.sessionId,
+			agentId: activeRuntime.agentId,
+			runtimeGeneration: activeRuntime.runtimeGeneration ?? 0,
+		}).catch((error) => {
+			setCommandError(error instanceof Error ? error.message : String(error));
+		});
 	};
 
 	// 首页直发流程：优先内置 chat 项目（未配置项目时的兜底），否则取第一个项目；
@@ -329,7 +403,9 @@ export function WebChatApp() {
 
 	const refreshNow = async () => {
 		try {
-			setState(await fetchState());
+			const next = await fetchState();
+			setState(next);
+			syncRuntimeMessages(next, activeSessionIdRef.current);
 			setConnected(true);
 		} catch {
 			setConnected(false);
@@ -376,7 +452,7 @@ export function WebChatApp() {
 		: 0;
 
 	return (
-		<div className="app wechat-shell flex h-screen w-full min-w-0 overflow-hidden bg-background text-foreground">
+		<div className="app wechat-shell flex h-full w-full min-w-0 overflow-hidden bg-background text-foreground">
 			<WebSidebar
 				state={state}
 				activeSessionId={activeSessionId}
@@ -417,7 +493,7 @@ export function WebChatApp() {
 					disabled={Boolean(creatingProjectId)}
 					streaming={streaming}
 					onSend={handleSend}
-					onStop={() => stop()}
+					onStop={handleStop}
 				/>
 			</main>
 		</div>

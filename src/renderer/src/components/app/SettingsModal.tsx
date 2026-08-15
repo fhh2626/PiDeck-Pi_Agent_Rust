@@ -54,7 +54,14 @@ import {
 	AlertDialogTitle,
 } from "../ui-shadcn/alert-dialog";
 import { SettingsSection, StorageTab } from "./settings/SettingsStorageTab";
-import { SettingBox, SettingRow, SettingSwitchRow, SettingTextarea } from "./settings/SettingRows";
+import {
+  SettingBox,
+  SettingRow,
+  SettingSwitchRow,
+  SettingTextarea,
+  DirtyMarker,
+} from "./settings/SettingRows";
+import { ChatTypographySection } from "./settings/ChatTypographySection";
 import { ExternalEditorsSection } from "./settings/ExternalEditorsSection";
 import { ProcessMetricsTab } from "./settings/ProcessMetricsTab";
 import { VisionBridgeSettingsTab, useVisionBridgeDraft } from "./settings/VisionBridgeSettingsTab";
@@ -103,17 +110,6 @@ const PROXY_FIELDS: (keyof AppSettings)[] = [
 	"desktopProxyBypass",
 ];
 
-/** 已修改但未保存的字段标记：在标签右侧显示一个黄色圆点 */
-function DirtyMarker(props: { dirty: boolean; label: string }) {
-	if (!props.dirty) return null;
-	return (
-		<span
-			className="setting-dirty-marker"
-			title={t("settings.dirtyTooltip")}
-			aria-label={props.label}
-		/>
-	);
-}
 
 type SettingsModalProps = {
 	settings: AppSettings;
@@ -1218,6 +1214,12 @@ function SettingsModalContent(props: SettingsModalProps) {
 										</div>
 									</SettingRow>
 								</SettingsSection>
+
+								<ChatTypographySection
+									settings={draftSettings}
+									updateDraft={updateDraft}
+									isDirty={isDirty}
+								/>
 
 								{/* 窗口样式 */}
 								<SettingsSection title={t("settings.sectionWindowStyle")}>

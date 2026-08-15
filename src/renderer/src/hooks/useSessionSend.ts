@@ -261,7 +261,14 @@ export function useSessionSend(options: UseSessionSendOptions) {
         const compactPrompt = trimmedMessage.replace(/^\/compact\s*/, "").trim();
         clearSnapshot(sessionId);
         options.resetComposerUi?.();
-        await options.compact(runtimeTarget, compactPrompt || undefined);
+        try {
+          await options.compact(runtimeTarget, compactPrompt || undefined);
+        } finally {
+          // /compact exits before the normal send finally block; release the
+          // session guard here so a failed/finished compaction cannot freeze
+          // every later submission for this session.
+          sendingSessionIdsRef.current.delete(sourceSessionId);
+        }
         return;
       }
     }

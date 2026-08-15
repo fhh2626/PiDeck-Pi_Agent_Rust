@@ -29,7 +29,12 @@ export type PiEvent = {
 	// tool_execution_*
 	toolName?: string;
 	toolCallId?: string;
+	tool_call_id?: string;
+	id?: string;
 	args?: unknown;
+	input?: unknown;
+	output?: unknown;
+	result?: unknown;
 	isError?: boolean;
 	// agent_end
 	stopReason?: string;
@@ -41,6 +46,8 @@ export class PiEventToUiMessageStream {
 	private textBlockId: string | null = null;
 	private reasoningBlockId: string | null = null;
 	private currentMessageId: string | null = null;
+	private lastPiMessageId: string | null = null;
+	private readonly knownToolCallIds = new Set<string>();
 	private finished = false;
 
 	/**
@@ -55,13 +62,28 @@ export class PiEventToUiMessageStream {
 		if (type === "message_start") {
 			const role = event.message?.role;
 			if (role === "assistant") {
-				this.finished = false;
-				this.currentMessageId = String(
-					(event.message?.id as string | undefined) ?? `msg_${Date.now()}`,
-				);
-				frames.push({ type: "start", messageId: this.currentMessageId });
+				const incomingId = typeof event.message?.id === "string"
+					? event.message.id
+					: this.currentMessageId ?? `msg_${Date.now()}`;
+				if (this.currentMessageId === null) {
+					this.currentMessageId = incomingId;
+					this.lastPiMessageId = incomingId;
+					frames.push({ type: "start", messageId: this.currentMessageId });
+				} else if (incomingId !== this.lastPiMessageId) {
+					this.lastPiMessageId = incomingId;
+					// 一个 agent run 可能包含多个 assistant 段（工具调用前后、自动重试）。
+					// AI SDK 的一个 POST 响应应保持一条 UIMessage；新的 pi message
+					// 只能作为同一条消息的新 step，否则 useChat 会渲染重复回复。
+					frames.push({ type: "start-step" });
+				}
 			}
 			return frames;
+		}
+
+		// 顶层 message_end 只结束当前 assistant 消息的块，不能结束整轮 run；
+		// 后面仍可能紧跟工具调用、自动重试、压缩或 queued follow-up。
+		if (type === "message_end") {
+			return this.closeMessageBlocks();
 		}
 
 		// 消息更新：文本/思考增量都在 assistantMessageEvent 里。
@@ -77,9 +99,10 @@ export class PiEventToUiMessageStream {
 			return this.endTool(event);
 		}
 
-		// agent_end：本轮 run 结束（可能随后 auto-retry/compaction，但对话层先收尾）。
+		// agent_end 只表示一次底层 run 结束。Pi 仍可能自动重试、压缩或继续队列，
+		// 所以这里只关闭当前消息块，必须等 agent_settled 才关闭 SSE。
 		if (type === "agent_end") {
-			return this.finishMessage(event);
+			return this.closeMessageBlocks();
 		}
 
 		// agent_settled 是 Pi 最终稳定点；部分版本不会把 agent_end 作为外部流的最后事件。
@@ -150,37 +173,27 @@ export class PiEventToUiMessageStream {
 
 		// 工具调用（message_update 路径：toolcall_start / toolcall_end）。
 		if (eventType === "toolcall_start") {
-			const toolCall = ev.toolCall as Record<string, unknown> | undefined;
-			if (toolCall && typeof toolCall.id === "string" && typeof toolCall.name === "string") {
-				frames.push({
-					type: "tool-input-start",
-					toolCallId: toolCall.id,
-					toolName: toolCall.name,
-				});
-				frames.push({
-					type: "tool-input-available",
-					toolCallId: toolCall.id,
-					toolName: toolCall.name,
-					input: toolCall.input ?? {},
-				});
-			}
-			return frames;
+			const toolCall = this.readToolCall(ev);
+			return toolCall
+				? this.ensureToolInput(toolCall.id, toolCall.name, toolCall.input)
+				: frames;
 		}
 		if (eventType === "toolcall_end") {
-			const toolCall = ev.toolCall as Record<string, unknown> | undefined;
-			if (toolCall && typeof toolCall.id === "string") {
-				frames.push({
-					type: "tool-output-available",
-					toolCallId: toolCall.id,
-					output: toolCall.output ?? {},
-				});
-			}
+			const toolCall = this.readToolCall(ev);
+			if (!toolCall) return frames;
+			frames.push(...this.ensureToolInput(toolCall.id, toolCall.name, toolCall.input));
+			frames.push({
+				type: "tool-output-available",
+				toolCallId: toolCall.id,
+				output: toolCall.output,
+			});
 			return frames;
 		}
 
-		// message_update 的 done 事件：当前 assistant 消息完成（对应 thinking 结束）。
+		// message_update 的 done 事件：当前 assistant 消息完成（对应 thinking 结束），
+		// 不是整个 agent run 的终点。
 		if (eventType === "done") {
-			return this.finishMessage({});
+			return this.closeMessageBlocks();
 		}
 
 		return frames;
@@ -188,28 +201,79 @@ export class PiEventToUiMessageStream {
 
 	private startTool(event: PiEvent): UiMessageStreamFrame[] {
 		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
-		const toolCallId = typeof event.toolCallId === "string"
-			? event.toolCallId
-			: `tool_${toolName}_${Date.now()}`;
-		return [
-			{ type: "tool-input-start", toolCallId, toolName },
-			{ type: "tool-input-available", toolCallId, toolName, input: event.args ?? {} },
-		];
+		const toolCallId = this.readToolCallId(event) ?? `tool_${toolName}_${Date.now()}`;
+		return this.ensureToolInput(toolCallId, toolName, event.args ?? event.input ?? {});
 	}
 
 	private endTool(event: PiEvent): UiMessageStreamFrame[] {
-		const toolCallId = typeof event.toolCallId === "string"
-			? event.toolCallId
-			: undefined;
+		const toolCallId = this.readToolCallId(event);
 		if (!toolCallId) return [];
-		return [{ type: "tool-output-available", toolCallId, output: event.isError ? { error: true } : {} }];
+		const frames = this.ensureToolInput(
+			toolCallId,
+			typeof event.toolName === "string" ? event.toolName : "tool",
+			event.args ?? event.input ?? {},
+		);
+		frames.push({
+			type: "tool-output-available",
+			toolCallId,
+			output: event.isError ? { error: true } : event.result ?? event.output ?? {},
+		});
+		return frames;
+	}
+
+	private readToolCallId(event: PiEvent): string | undefined {
+		const value = event.toolCallId ?? event.tool_call_id ?? event.id;
+		return typeof value === "string" && value.trim() ? value : undefined;
+	}
+
+	private readToolCall(event: Record<string, unknown>): {
+		id: string;
+		name: string;
+		input: unknown;
+		output: unknown;
+	} | undefined {
+		const nested = event.toolCall;
+		const toolCall = nested && typeof nested === "object" && !Array.isArray(nested)
+			? nested as Record<string, unknown>
+			: event;
+		const id = toolCall.id ?? toolCall.toolCallId ?? toolCall.tool_call_id;
+		if (typeof id !== "string" || !id.trim()) return undefined;
+		const name = typeof toolCall.name === "string" ? toolCall.name : "tool";
+		return {
+			id,
+			name,
+			input: toolCall.input ?? toolCall.arguments ?? {},
+			output: toolCall.output ?? toolCall.result ?? {},
+		};
+	}
+
+	private ensureToolInput(toolCallId: string, toolName: string, input: unknown): UiMessageStreamFrame[] {
+		if (this.knownToolCallIds.has(toolCallId)) return [];
+		this.knownToolCallIds.add(toolCallId);
+		return [
+			{ type: "tool-input-start", toolCallId, toolName },
+			{ type: "tool-input-available", toolCallId, toolName, input: input ?? {} },
+		];
 	}
 
 	private finishMessage(event: PiEvent): UiMessageStreamFrame[] {
 		if (this.finished) return [];
 		this.finished = true;
+		const frames = this.closeMessageBlocks();
+		if (event.error !== undefined) {
+			const errorText = typeof event.error === "string"
+				? event.error
+				: "Agent 运行失败";
+			frames.push({ type: "error", errorText });
+		}
+		frames.push({ type: "finish" });
+		return frames;
+	}
+
+	/** 结束当前消息的开放块，但保留整条 SSE 连接等待下一轮事件。 */
+	private closeMessageBlocks(): UiMessageStreamFrame[] {
 		const frames: UiMessageStreamFrame[] = [];
-		// 关闭尚未闭合的 text/reasoning 块，保证前端能正确收尾。
+		// 关闭尚未闭合的 text/reasoning 块，保证后续工具/重试消息能重新开块。
 		if (this.textBlockId) {
 			frames.push({ type: "text-end", id: this.textBlockId });
 			this.textBlockId = null;
@@ -218,13 +282,6 @@ export class PiEventToUiMessageStream {
 			frames.push({ type: "reasoning-end", id: this.reasoningBlockId });
 			this.reasoningBlockId = null;
 		}
-		if (event.error !== undefined) {
-			const errorText = typeof event.error === "string"
-				? event.error
-				: "Agent 运行失败";
-			frames.push({ type: "error", errorText });
-		}
-		frames.push({ type: "finish" });
 		return frames;
 	}
 }

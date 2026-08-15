@@ -605,6 +605,11 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
 			sessionRuntimeCoordinator.listRuntimeCommands(target),
 	);
 	ipcMain.handle(
+		ipcChannels.sessionsRuntimeListModels,
+		(_event, target: SessionRuntimeTarget) =>
+			sessionRuntimeCoordinator.listRuntimeModels(target),
+	);
+	ipcMain.handle(
 		ipcChannels.sessionsRuntimeExportHtml,
 		async (_event, target: SessionRuntimeTarget) => {
 			const result = await sessionRuntimeCoordinator.exportRuntimeHtml(target);

@@ -52,6 +52,30 @@ test("restart is offered only when the current session has a bound Agent", () =>
   );
 });
 
+test("model-picker restart must light the SessionView overlay via restartActiveAgent", () => {
+  // 用户可见症状：切新模型确认重启后，时间线应出现半透明 loader +「正在重启」。
+  // overlay 只认 isRestarting；该值来自 restartingAgentId === activeAgentId，
+  // 而 restartingAgentId 只在 App.restartActiveAgent 里置位。
+  const controller = readFileSync(
+    "src/renderer/src/hooks/useSessionRuntimeController.ts",
+    "utf8",
+  );
+  const picker = readFileSync(
+    "src/renderer/src/components/session/ComposerPickerHost.tsx",
+    "utf8",
+  );
+  assert.match(
+    sessionView,
+    /isRestarting \? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"/,
+  );
+  assert.match(sessionView, /t\("app\.restarting"\)/);
+  assert.match(runtimeInjector, /isRestarting=\{runtime\.isRestartingThisAgent\}/);
+  assert.match(controller, /isRestartingThisAgent = restartingAgentId === activeAgentId/);
+  assert.match(app, /setRestartingAgentId\(restartingAgent\.id\)/);
+  assert.match(picker, /await restartActiveAgent\(intent\.agentId\)/);
+  assert.doesNotMatch(picker, /desktopApi\.sessions\.restartRuntime/);
+});
+
 test("split panes show per-pane session title in SessionHeader", () => {
   // 共享顶栏 Tab 时，分屏各栏靠 paneTitle 对上「这栏是谁」；单栏不重复标题。
   const header = readFileSync(

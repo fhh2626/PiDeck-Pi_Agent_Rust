@@ -484,9 +484,41 @@ export type ComposerTrigger = {
 	query: string;
 };
 
+/**
+ * 触发符是否落在「可开建议」的边界上。
+ * 与 chips.ts 的 lookbehind 对齐，并额外挡住 word&name / user@host，
+ * 避免正文里的普通符号把建议框钉住。
+ */
+function isComposerTriggerBoundary(prev: string, char: string): boolean {
+	if (!prev) return true;
+	if (char === "&") {
+		// chip 的 ampStartRe 已排除 :/.#!~?=&
+		// 建议框再排除 \w：cmd&x、100%& 这种不当会话引用
+		return !/[:/.#!~?=&\w]/.test(prev);
+	}
+	// @ / 与 parseRichInputChips 的 (?<![:/.\w#!~]) 一致
+	return !/[:/.\w#!~]/.test(prev);
+}
+
+/**
+ * & 后的查询是否仍像「正在输入某个已知会话名」。
+ * 会话名可含空格（&beta long），所以不能一遇到空格就关；
+ * 但必须是某个白名单名字的前缀，否则 Tom & Jerry 会永远开着建议框。
+ */
+function isSessionTriggerQuery(query: string, validSessionRefs: Set<string>): boolean {
+	if (validSessionRefs.size === 0) return false;
+	if (query.length === 0) return true;
+	const needle = query.toLowerCase();
+	for (const ref of validSessionRefs) {
+		if (ref.toLowerCase().startsWith(needle)) return true;
+	}
+	return false;
+}
+
 export function detectTrigger(
 	text: string,
 	cursor: number,
+	validSessionRefs?: Set<string>,
 ): ComposerTrigger | null {
 	if (cursor < 0 || cursor > text.length) cursor = text.length;
 	const before = text.slice(0, cursor);
@@ -497,11 +529,17 @@ export function detectTrigger(
 	if (start < 0) return null;
 	const char = before[start];
 	const segment = before.slice(start + 1);
+	const prev = start > 0 ? before[start - 1] : "";
 	if (char === "&") {
-		if (/[\n]/.test(segment)) return null;
-		const prev = start > 0 ? before[start - 1] : "";
-		// URL 查询（?a=b&）与 shell && 不成会话触发；单独 &name 仍可触发
-		if (prev === "=" || prev === "?" || prev === "&") return null;
+		if (/\n/.test(segment)) return null;
+		if (!isComposerTriggerBoundary(prev, "&")) return null;
+		// 传入 Set（含 empty）= 严格白名单；未传则只认刚敲的孤立 &，
+		// 避免「A & B」这种正文被当成未完成的会话引用。
+		if (validSessionRefs) {
+			if (!isSessionTriggerQuery(segment, validSessionRefs)) return null;
+		} else if (segment.length > 0) {
+			return null;
+		}
 		return { start, char, query: segment };
 	}
 	if (char === "/") {
@@ -513,14 +551,13 @@ export function detectTrigger(
 		if (atBefore >= 0 && !/\s/.test(beforeSlash.slice(atBefore))) {
 			const fileSegment = before.slice(atBefore + 1);
 			if (/\s/.test(fileSegment)) return null;
+			const atPrev = atBefore > 0 ? before[atBefore - 1] : "";
+			if (!isComposerTriggerBoundary(atPrev, "@")) return null;
 			return { start: atBefore, char: "@", query: fileSegment };
 		}
 	}
 	if (/[\s@/&]/.test(segment)) return null;
-	const prevChar = start > 0 ? before[start - 1] : "";
-	if (prevChar) {
-		if (/[:/]/.test(prevChar)) return null;
-	}
+	if (!isComposerTriggerBoundary(prev, char)) return null;
 	return { start, char, query: segment };
 }
 
@@ -528,11 +565,14 @@ export function applySuggestion(
 	current: string,
 	cursor: number,
 	value: string,
+	validSessionRefs?: Set<string>,
 ): ComposerSuggestionResult {
-	const trigger = detectTrigger(current, cursor);
+	const trigger = detectTrigger(current, cursor, validSessionRefs);
 	if (!trigger) {
-		const text = `${current}${value} `;
-		return { text, cursor: text.length };
+		// 无触发时插在光标处，而不是一律拼到文末——否则误开的建议框选中后
+		// 会把光标/正文一起拽到结尾。
+		const text = `${current.slice(0, cursor)}${value} ${current.slice(cursor)}`;
+		return { text, cursor: cursor + value.length + 1 };
 	}
 	const text = `${current.slice(0, trigger.start)}${value} ${current.slice(cursor)}`;
 	return { text, cursor: trigger.start + value.length + 1 };
@@ -547,8 +587,9 @@ export function applySuggestion(
 export function clearSuggestionTrigger(
 	current: string,
 	cursor: number,
+	validSessionRefs?: Set<string>,
 ): ComposerSuggestionResult {
-	const trigger = detectTrigger(current, cursor);
+	const trigger = detectTrigger(current, cursor, validSessionRefs);
 	if (!trigger) return { text: current, cursor };
 	// 已有查询内容：保留全文，只表示关闭菜单
 	if (trigger.query.length > 0) {
@@ -729,7 +770,11 @@ export function buildSuggestionItems(
 	sessions?: { id: string; filePath: string; projectPath?: string; name?: string; preview: string; updatedAt: number }[],
 ): SuggestionItem[] {
 	const allCommands = mergeCommands(commands);
-	const trigger = detectTrigger(prompt, cursor);
+	// 与 onChange 同一套白名单：& 只有仍是已知会话名前缀时才开建议
+	const sessionRefs = sessions
+		? new Set(sessions.map((session) => session.name ?? session.filePath))
+		: undefined;
+	const trigger = detectTrigger(prompt, cursor, sessionRefs);
 	if (!trigger) return [];
 	const keyword = trigger.query.toLowerCase();
 	if (trigger.char === "/") {
