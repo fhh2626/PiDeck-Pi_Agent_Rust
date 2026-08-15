@@ -428,9 +428,10 @@ export class WebServiceManager {
 			if (url.pathname === "/api/chat" && request.method === "POST") {
 				const body = await this.readJson<{
 					id?: string;
+					messageId?: string;
 					messages?: Array<{ role?: string; content?: unknown; parts?: Array<{ type?: string; text?: string }> }>;
 				}>(request);
-				const sessionId = body.id?.trim();
+				const sessionId = typeof body.id === "string" ? body.id.trim() : "";
 				if (!sessionId) {
 					this.sendError(response, 400, "webError.requestIdRequired", "session id is required");
 					return;
@@ -452,15 +453,23 @@ export class WebServiceManager {
 
 				// 先开流（事件可能在 prompt 预检返回前就到达），再发 prompt。
 				this.handleStream(sessionId, request, response);
+				const messageId = typeof body.messageId === "string" ? body.messageId.trim() : "";
 				const result = await this.deps.sendSessionPrompt({
 					sessionId,
-					requestId: String(body.id ?? crypto.randomUUID()),
+					requestId: messageId || crypto.randomUUID(),
 					message,
 				}).catch((error: unknown) => ({
 					accepted: false as const,
+					delivery: "unknown" as const,
 					error: error instanceof Error ? error.message : String(error),
 				}));
 				if (!result.accepted) {
+					if (result.delivery === "unknown") {
+						// RPC 写入后无法确认响应时，pi 可能已经接收并继续运行。
+						// 不把这种不确定性伪装成 Web 终态错误，继续等待事件并由 /api/state
+						// 的权威消息快照补偿，避免“PC 正常、Web 报错”。
+						return;
+					}
 					// 预检拒绝：向已建立的流写入 error + finish + [DONE]，
 					// 前端 useChat 会进入 error 状态并可重试。
 					// 无法直接访问 router 的 entry，走响应流写协议帧。
@@ -1033,7 +1042,7 @@ export class WebServiceManager {
 					return;
 				}
 				// 已接受：立刻打开 SSE 订阅该会话的流式事件；
-				// 流结束后（agent_end → [DONE]）再 refresh() 同步权威消息列表。
+				// 流结束后（agent_settled → [DONE]）再 refresh() 同步权威消息列表。
 				if (activeSessionId === targetSessionId) {
 					void startStream(targetSessionId);
 				} else {
@@ -1291,7 +1300,7 @@ export class WebServiceManager {
 
 	/**
 	 * SSE 流式响应：把 pi agent 事件以 AI SDK UIMessageStream 协议推送给指定 session 的订阅者。
-	 * 连接保持到 agent_end（或客户端断开）；断开时由 response close 事件清理路由注册。
+	 * 连接保持到 agent_settled（或客户端断开）；断开时由 response close 事件清理路由注册。
 	 */
 	private handleStream(
 		sessionId: string,

@@ -126,6 +126,11 @@ export function setRuntimeThinking(
 	return callRuntimeCommand(target.sessionId, target, "thinking", { level });
 }
 
+/** 中止当前 Session 的运行时，而不是只关掉 Web 前端的 SSE。 */
+export function abortRuntime(target: SessionRuntimeTarget): Promise<unknown> {
+	return callRuntimeCommand(target.sessionId, target, "abort");
+}
+
 export async function fetchMessagePage(
 	sessionId: string,
 	before?: number,
@@ -169,4 +174,90 @@ export function chatMessagesToUiMessages(messages: ChatMessage[]): UIMessage[] {
 			parts,
 		};
 	});
+}
+
+function uiMessageText(message: UIMessage): string {
+	return message.parts
+		.map((part) => {
+			if (part.type === "text" || part.type === "reasoning") return part.text;
+			return "";
+		})
+		.join("");
+}
+
+function sameUiMessage(left: UIMessage, right: UIMessage): boolean {
+	return left.id === right.id
+		&& left.role === right.role
+		&& JSON.stringify(left.parts) === JSON.stringify(right.parts);
+}
+
+/**
+ * 用主进程运行时快照补偿 Web 本地 useChat 缓存。
+ *
+ * Web 自己生成的 user/assistant id 与 pi 落盘 id 不同，因此先按稳定 id 匹配，
+ * 再按角色与文本（含“局部文本 → 完整文本”）匹配，避免 PC 端消息轮询到 Web 后
+ * 变成重复气泡。快照只覆盖运行期尾部，未包含的旧消息保留给历史分页缓存。
+ */
+export function mergeAuthoritativeUiMessages(
+	current: UIMessage[],
+	authoritative: UIMessage[],
+): UIMessage[] {
+	if (authoritative.length === 0) return current;
+	const merged = [...current];
+	const matchedCurrent = new Set<number>();
+	let changed = false;
+
+	for (const incoming of authoritative) {
+		let matchIndex = -1;
+		for (let index = 0; index < merged.length; index += 1) {
+			if (!matchedCurrent.has(index) && merged[index].id === incoming.id) {
+				matchIndex = index;
+				break;
+			}
+		}
+
+		const incomingText = uiMessageText(incoming);
+		if (matchIndex < 0) {
+			for (let index = merged.length - 1; index >= 0; index -= 1) {
+				const candidate = merged[index];
+				if (
+					matchedCurrent.has(index)
+					|| candidate.role !== incoming.role
+					|| uiMessageText(candidate) !== incomingText
+				) continue;
+				matchIndex = index;
+				break;
+			}
+		}
+
+		// 流式缓存可能只保留了前缀，而轮询快照已经拿到完整正文。
+		if (matchIndex < 0 && incomingText) {
+			for (let index = merged.length - 1; index >= 0; index -= 1) {
+				const candidateText = uiMessageText(merged[index]);
+				if (
+					matchedCurrent.has(index)
+					|| merged[index].role !== incoming.role
+					|| !candidateText
+					|| !(incomingText.startsWith(candidateText) || candidateText.startsWith(incomingText))
+				) continue;
+				matchIndex = index;
+				break;
+			}
+		}
+
+		if (matchIndex >= 0) {
+			matchedCurrent.add(matchIndex);
+			if (!sameUiMessage(merged[matchIndex], incoming)) {
+				merged[matchIndex] = incoming;
+				changed = true;
+			}
+			continue;
+		}
+
+		merged.push(incoming);
+		matchedCurrent.add(merged.length - 1);
+		changed = true;
+	}
+
+	return changed ? merged : current;
 }

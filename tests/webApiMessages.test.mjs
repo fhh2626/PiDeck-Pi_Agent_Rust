@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadTsCommonJs } from "./helpers/loadTsCommonJs.mjs";
 
-const { chatMessagesToUiMessages } = loadTsCommonJs(
+const { chatMessagesToUiMessages, mergeAuthoritativeUiMessages } = loadTsCommonJs(
 	"src/renderer/src/web/webApi.ts",
 );
 
@@ -63,4 +63,52 @@ test("omits text part when text empty", () => {
 test("keeps stable ids from message", () => {
 	const result = chatMessagesToUiMessages([message({ id: "stable-id" })]);
 	assert.equal(result[0].id, "stable-id");
+});
+
+test("merges a runtime snapshot into local Web messages without duplicating local ids", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "history-1", role: "assistant", text: "older" }),
+		message({ id: "web-user", role: "user", text: "hello" }),
+		message({ id: "web-assistant", role: "assistant", text: "answer" }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-user", role: "user", text: "hello" }),
+		message({ id: "runtime-assistant", role: "assistant", text: "answer" }),
+		message({ id: "runtime-next", role: "assistant", text: "new from PC" }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.map((item) => item.parts[0]?.type).join(","), "text,text,text,text");
+	assert.equal(merged.map((item) => item.parts[0]?.text).join(","), "older,hello,answer,new from PC");
+	assert.equal(merged[1].id, "runtime-user");
+	assert.equal(merged[2].id, "runtime-assistant");
+});
+
+test("authoritative snapshots replace a stale partial assistant message", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "local-assistant", role: "assistant", text: "partial" }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-assistant", role: "assistant", text: "partial answer" }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.length, 1);
+	assert.equal(merged[0].id, "runtime-assistant");
+	assert.equal(merged[0].parts[0].text, "partial answer");
+});
+
+test("runtime snapshots match the newest repeated message instead of old history", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "old-ok", role: "assistant", text: "ok" }),
+		message({ id: "web-ok", role: "assistant", text: "ok" }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "runtime-ok", role: "assistant", text: "ok" }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.length, 2);
+	assert.equal(merged[0].id, "old-ok");
+	assert.equal(merged[1].id, "runtime-ok");
 });

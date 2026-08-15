@@ -64,6 +64,12 @@ export class PiEventToUiMessageStream {
 			return frames;
 		}
 
+		// 顶层 message_end 只结束当前 assistant 消息的块，不能结束整轮 run；
+		// 后面仍可能紧跟工具调用、自动重试、压缩或 queued follow-up。
+		if (type === "message_end") {
+			return this.closeMessageBlocks();
+		}
+
 		// 消息更新：文本/思考增量都在 assistantMessageEvent 里。
 		if (type === "message_update" && event.assistantMessageEvent) {
 			return this.handleAssistantMessageEvent(event.assistantMessageEvent);
@@ -77,9 +83,10 @@ export class PiEventToUiMessageStream {
 			return this.endTool(event);
 		}
 
-		// agent_end：本轮 run 结束（可能随后 auto-retry/compaction，但对话层先收尾）。
+		// agent_end 只表示一次底层 run 结束。Pi 仍可能自动重试、压缩或继续队列，
+		// 所以这里只关闭当前消息块，必须等 agent_settled 才关闭 SSE。
 		if (type === "agent_end") {
-			return this.finishMessage(event);
+			return this.closeMessageBlocks();
 		}
 
 		// agent_settled 是 Pi 最终稳定点；部分版本不会把 agent_end 作为外部流的最后事件。
@@ -178,9 +185,10 @@ export class PiEventToUiMessageStream {
 			return frames;
 		}
 
-		// message_update 的 done 事件：当前 assistant 消息完成（对应 thinking 结束）。
+		// message_update 的 done 事件：当前 assistant 消息完成（对应 thinking 结束），
+		// 不是整个 agent run 的终点。
 		if (eventType === "done") {
-			return this.finishMessage({});
+			return this.closeMessageBlocks();
 		}
 
 		return frames;
@@ -208,8 +216,21 @@ export class PiEventToUiMessageStream {
 	private finishMessage(event: PiEvent): UiMessageStreamFrame[] {
 		if (this.finished) return [];
 		this.finished = true;
+		const frames = this.closeMessageBlocks();
+		if (event.error !== undefined) {
+			const errorText = typeof event.error === "string"
+				? event.error
+				: "Agent 运行失败";
+			frames.push({ type: "error", errorText });
+		}
+		frames.push({ type: "finish" });
+		return frames;
+	}
+
+	/** 结束当前消息的开放块，但保留整条 SSE 连接等待下一轮事件。 */
+	private closeMessageBlocks(): UiMessageStreamFrame[] {
 		const frames: UiMessageStreamFrame[] = [];
-		// 关闭尚未闭合的 text/reasoning 块，保证前端能正确收尾。
+		// 关闭尚未闭合的 text/reasoning 块，保证后续工具/重试消息能重新开块。
 		if (this.textBlockId) {
 			frames.push({ type: "text-end", id: this.textBlockId });
 			this.textBlockId = null;
@@ -218,13 +239,6 @@ export class PiEventToUiMessageStream {
 			frames.push({ type: "reasoning-end", id: this.reasoningBlockId });
 			this.reasoningBlockId = null;
 		}
-		if (event.error !== undefined) {
-			const errorText = typeof event.error === "string"
-				? event.error
-				: "Agent 运行失败";
-			frames.push({ type: "error", errorText });
-		}
-		frames.push({ type: "finish" });
 		return frames;
 	}
 }

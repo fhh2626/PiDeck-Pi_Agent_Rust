@@ -3107,9 +3107,7 @@ export class AgentManager {
 
 	private handlePiEvent(agentId: string, event: unknown) {
 		// 通知本地监听器（Web SSE 等主进程内部订阅）
-		for (const listener of this.localEventListeners) {
-			try { listener(agentId, event); } catch {}
-		}
+		this.emitLocalEvent(agentId, event);
 		this.emit(ipcChannels.agentsEvent, { agentId, event });
 
 		if (!event || typeof event !== "object") return;
@@ -4645,7 +4643,10 @@ export class AgentManager {
 
 	private async markIdleIfPiReportsNoWork(agentId: string) {
 		const runtime = this.agents.get(agentId);
-		if (!runtime || runtime.tab.status !== "running") return;
+		// Rust 运行时在最终错误路径也不会发 agent_settled；允许 error 状态
+		// 走同一条 get_state 兜底，关闭 Web SSE，但保留桌面端 error 状态。
+		const mayBeSettled = runtime?.tab.status === "running" || runtime?.tab.status === "error";
+		if (!runtime || !mayBeSettled) return;
 		if ((this.pendingUIRequests.get(agentId)?.size ?? 0) > 0) return;
 		if (this.rpcCompactingAgents.has(agentId) || this.compactingAgents.has(agentId)) return;
 		if (this.activeAssistantMessageIds.has(agentId)) return;
@@ -4662,8 +4663,12 @@ export class AgentManager {
 			pendingMessageCount?: number;
 		};
 		if (state.isStreaming || state.isCompacting || (state.pendingMessageCount ?? 0) > 0) return;
+		// 查询期间可能又收到新的 prompt；以查询返回时的实际 runtime 状态为准，
+		// 避免旧的兜底定时器把新一轮运行误发成 settled。
+		if (runtime.tab.status !== "running" && runtime.tab.status !== "error") return;
+		const keepError = runtime.tab.status === "error";
 
-		runtime.tab.status = "idle";
+		if (!keepError) runtime.tab.status = "idle";
 		this.finalizeThinkingIntoMessage(agentId);
 		this.flushMessageEmit(agentId);
 		// 兜底确认空闲同样视为一轮结束：运行期缓存裁剪，与 agent_settled 路径一致
@@ -4673,6 +4678,9 @@ export class AgentManager {
 		this.streamingText.delete(agentId);
 		this.emitState();
 		void this.emitRuntimeState(agentId);
+		// Pi_Agent_Rust 不发 agent_settled；get_state 已确认真正空闲后补发
+		// 一个仅供本地 Web SSE 使用的最终事件，保持 Web 连接与桌面端状态一致。
+		this.emitLocalEvent(agentId, { type: "agent_settled" });
 	}
 
 	private requireRuntime(agentId: string) {
@@ -5117,6 +5125,12 @@ export class AgentManager {
 		const window = this.getWindow();
 		if (!window || window.isDestroyed()) return;
 		window.webContents.send(channel, payload);
+	}
+
+	private emitLocalEvent(agentId: string, event: unknown) {
+		for (const listener of this.localEventListeners) {
+			try { listener(agentId, event); } catch {}
+		}
 	}
 }
 
