@@ -2258,4 +2258,5 @@ export const enUS: Record<TranslationKey, string> = {
   "web.moreSessions": "More sessions ({count})",
   "web.scrollToBottom": "Scroll to bottom",
   "web.streamFailed": "Stream failed",
+  "web.historyLoadFailed": "Failed to load message history. Please retry.",
 };

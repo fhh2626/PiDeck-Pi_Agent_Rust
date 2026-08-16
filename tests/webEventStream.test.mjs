@@ -259,6 +259,58 @@ test("WebEventStreamRouter routes agent events to per-session entries only", () 
 	router.unbindPiSource();
 });
 
+test("WebEventStreamRouter ignores an old settled event after a newer run starts", () => {
+	const received = [];
+	let finished = 0;
+	const router = new WebEventStreamRouter(() => "session-1");
+	router.add("session-1", (wire) => { received.push(wire); return true; }, () => {}, () => { finished += 1; });
+	router.bindPiSource((handler) => {
+		handler("agent-a", { type: "agent_start" }, 2);
+		handler("agent-a", { type: "agent_settled" }, 1);
+		handler("agent-a", {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", delta: "new" },
+		}, 2);
+		return () => {};
+	});
+
+	assert.equal(finished, 0);
+	assert.equal(received.some((wire) => wire.includes('"delta":"new"')), true);
+});
+
+test("WebEventStreamRouter replaces an existing session stream instead of broadcasting", () => {
+	const first = [];
+	const second = [];
+	let firstFinished = 0;
+	let firstClosed = 0;
+	const router = new WebEventStreamRouter(() => "session-1");
+	router.add("session-1", (wire) => { first.push(wire); return true; }, () => { firstClosed += 1; }, () => { firstFinished += 1; });
+	router.add("session-1", (wire) => { second.push(wire); return true; }, () => {});
+	router.bindPiSource((handler) => {
+		handler("agent-a", { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "only-second" } }, 1);
+		return () => {};
+	});
+
+	assert.equal(firstFinished, 0, "displaced stream must not be reported as naturally finished");
+	assert.equal(firstClosed, 1, "displaced stream must be closed");
+	assert.equal(first.some((wire) => wire.includes("only-second")), false);
+	assert.equal(first.some((wire) => wire.includes("[DONE]")), false);
+	assert.equal(second.some((wire) => wire.includes("only-second")), true);
+});
+
+test("WebEventStreamRouter triggers onClose when writeRaw fails", () => {
+	let closed = 0;
+	const router = new WebEventStreamRouter(() => "session-1");
+	router.add("session-1", () => false, () => { closed += 1; });
+	router.bindPiSource((handler) => {
+		handler("agent-a", { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "boom" } }, 1);
+		return () => {};
+	});
+
+	assert.equal(closed, 1);
+	assert.equal(router.has("session-1"), false);
+});
+
 test("WebServiceManager registers /stream SSE endpoint with protocol header", () => {
 	assert.match(webServiceSource, /\/api\/sessions\/([^/]+)\/stream/);
 	assert.match(webServiceSource, /x-vercel-ai-ui-message-stream/);

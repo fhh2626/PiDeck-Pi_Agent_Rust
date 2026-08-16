@@ -58,6 +58,34 @@ test("omits text part when text empty", () => {
 	assert.equal(result[0].parts.length, 0);
 });
 
+test("preserves validated historical images as local file parts", () => {
+	const result = chatMessagesToUiMessages([
+		message({
+			role: "user",
+			text: "",
+			images: [{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }],
+		}),
+	]);
+	assert.equal(result[0].parts.length, 1);
+	assert.equal(result[0].parts[0].type, "file");
+	assert.equal(result[0].parts[0].url, "data:image/png;base64,aGVsbG8=");
+});
+
+test("rejects external or unsupported historical image payloads", () => {
+	const result = chatMessagesToUiMessages([
+		message({
+			role: "user",
+			text: "caption",
+			images: [
+				{ type: "image", mimeType: "text/html", data: "aGVsbG8=" },
+				{ type: "image", mimeType: "image/png", data: "not base64" },
+			],
+		}),
+	]);
+	assert.equal(result[0].parts.length, 1);
+	assert.equal(result[0].parts[0].type, "text");
+});
+
 test("keeps stable ids from message", () => {
 	const result = chatMessagesToUiMessages([message({ id: "stable-id" })]);
 	assert.equal(result[0].id, "stable-id");

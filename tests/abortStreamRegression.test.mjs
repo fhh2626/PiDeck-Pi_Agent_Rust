@@ -70,6 +70,9 @@ test("abort failures surface to the user and escalate when pi keeps running", ()
 	assert.match(agentManager, /request\(\{ type: "abort_bash"/);
 	assert.match(agentManager, /request\(\{ type: "abort"/);
 	assert.match(agentManager, /ABORT_ESCALATION_VERIFY_MS/);
+	assert.match(agentManager, /scheduleAbortSettledFallback\(agentId, runtime\.process, sealedGate\.currentGeneration\)/);
+	assert.match(agentManager, /runtime\.process !== abortedProcess/);
+	assert.match(agentManager, /sealedGeneration/);
 
 	// 2) 升级后仍未停止必须通知用户（不能只写日志）
 	assert.match(agentManager, /i18nKey: "app\.abortSlow"/);

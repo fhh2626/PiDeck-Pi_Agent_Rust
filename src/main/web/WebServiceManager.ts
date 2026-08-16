@@ -31,7 +31,7 @@ import { serializeWebClientDictionaries, webEnUS } from "./WebI18n";
 import {
 	WebEventStreamRouter,
 	serializeSseFrame,
-	type PiEvent,
+	type PiEventSourceHandler,
 } from "./WebEventStream";
 
 type WebServiceSettings = Pick<
@@ -47,8 +47,8 @@ type WebServiceDependencies = {
 	 * out/renderer 构建产物（打包/正式构建场景）。
 	 */
 	devRendererUrl?: string;
-	/** 订阅主进程内部的 pi agent 事件流（agentId, event），返回退订函数。 */
-	subscribePiEvents: (handler: (agentId: string, event: PiEvent) => void) => () => void;
+	/** 订阅主进程内部的 pi agent 事件流（含 stream generation），返回退订函数。 */
+	subscribePiEvents: (handler: PiEventSourceHandler) => () => void;
 	/** agentId → sessionId 路由，用于把 pi 事件导向对应 session 的 SSE 连接。 */
 	getSessionIdForAgent: (agentId: string) => string | undefined;
 	listProjects: () => Project[];
@@ -147,6 +147,9 @@ export class WebServiceManager {
 	private readonly rendererRoot = join(__dirname, "../renderer");
 
 	private readonly eventStreamRouter: WebEventStreamRouter;
+	/** Web 端每个 session 只允许一个进行中的 prompt，避免多个请求共享 pi 事件而串流。 */
+	private readonly activeWebPrompts = new Map<string, string>();
+	private readonly activeWebPromptTimers = new Map<string, NodeJS.Timeout>();
 
 	constructor(private readonly deps: WebServiceDependencies) {
 		this.devRendererUrl = deps.devRendererUrl?.trim() ? deps.devRendererUrl.trim().replace(/\/$/, "") : "";
@@ -183,6 +186,9 @@ export class WebServiceManager {
 	async stop() {
 		// 解绑 pi 事件源，避免服务关闭后仍在转发事件到已失效的 SSE 连接。
 		this.eventStreamRouter.unbindPiSource();
+		for (const timer of this.activeWebPromptTimers.values()) clearTimeout(timer);
+		this.activeWebPromptTimers.clear();
+		this.activeWebPrompts.clear();
 		if (!this.server) return;
 		const server = this.server;
 		this.server = null;
@@ -403,11 +409,19 @@ export class WebServiceManager {
 					this.sendError(response, 400, "webError.messageRequired", "message or images is required");
 					return;
 				}
+				if (!this.reserveWebPrompt(sessionId, body.requestId.trim())) {
+					this.sendError(response, 409, "webError.sessionBusy", "A Web prompt is already running for this session");
+					return;
+				}
 				const result = await this.deps.sendSessionPrompt({
 					...body,
 					sessionId,
 					message,
+				}).catch((error: unknown) => {
+					this.releaseWebPrompt(sessionId, body.requestId.trim());
+					throw error;
 				});
+				if (!result.accepted) this.releaseWebPrompt(sessionId, body.requestId.trim());
 				this.sendJson(response, { result });
 				return;
 			}
@@ -418,6 +432,10 @@ export class WebServiceManager {
 			const streamMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/stream$/);
 			if (streamMatch && request.method === "GET") {
 				const sessionId = decodeURIComponent(streamMatch[1]);
+				if (this.eventStreamRouter.has(sessionId) && this.activeWebPrompts.has(sessionId)) {
+					this.sendError(response, 409, "webError.sessionBusy", "A Web prompt is already streaming for this session");
+					return;
+				}
 				this.handleStream(sessionId, request, response);
 				return;
 			}
@@ -429,7 +447,11 @@ export class WebServiceManager {
 				const body = await this.readJson<{
 					id?: string;
 					messageId?: string;
-					messages?: Array<{ role?: string; content?: unknown; parts?: Array<{ type?: string; text?: string }> }>;
+					messages?: Array<{
+						role?: string;
+						content?: unknown;
+						parts?: Array<{ type?: string; text?: string; url?: string; mediaType?: string }>;
+					}>;
 				}>(request);
 				const sessionId = typeof body.id === "string" ? body.id.trim() : "";
 				if (!sessionId) {
@@ -444,26 +466,44 @@ export class WebServiceManager {
 					.filter((part) => part.type === "text" && typeof part.text === "string")
 					.map((part) => part.text ?? "")
 					.join("");
+				const images: ImageContent[] = (lastUser?.parts ?? [])
+					.filter((part) => part.type === "file" && typeof part.url === "string" && typeof part.mediaType === "string")
+					.map((part) => {
+						const match = part.url?.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/i);
+						return match
+							? { type: "image" as const, mimeType: match[1].toLowerCase(), data: match[2] }
+							: undefined;
+					})
+					.filter((image): image is ImageContent => image !== undefined && image.data.length <= 8 * 1024 * 1024);
 				const contentText = typeof lastUser?.content === "string" ? lastUser.content : "";
 				const message = (partsText || contentText).trim();
-				if (!message) {
-					this.sendError(response, 400, "webError.messageRequired", "message is required");
+				if (!message && images.length === 0) {
+					this.sendError(response, 400, "webError.messageRequired", "message or images is required");
 					return;
 				}
 
-				// 先开流（事件可能在 prompt 预检返回前就到达），再发 prompt。
-				this.handleStream(sessionId, request, response);
 				const messageId = typeof body.messageId === "string" ? body.messageId.trim() : "";
+				const requestId = messageId || crypto.randomUUID();
+				if (!this.reserveWebPrompt(sessionId, requestId)) {
+					this.sendError(response, 409, "webError.sessionBusy", "A Web prompt is already running for this session");
+					return;
+				}
+				// 先开流（事件可能在 prompt 预检返回前到达），再发 prompt。
+				this.handleStream(sessionId, request, response, () => {
+					this.releaseWebPrompt(sessionId, requestId);
+				});
 				const result = await this.deps.sendSessionPrompt({
 					sessionId,
-					requestId: messageId || crypto.randomUUID(),
+					requestId,
 					message,
+					images: images.length > 0 ? images : undefined,
 				}).catch((error: unknown) => ({
 					accepted: false as const,
 					delivery: "unknown" as const,
 					error: error instanceof Error ? error.message : String(error),
 				}));
 				if (!result.accepted) {
+					if (result.delivery !== "unknown") this.releaseWebPrompt(sessionId, requestId);
 					if (result.delivery === "unknown") {
 						// RPC 写入后无法确认响应时，pi 可能已经接收并继续运行。
 						// 不把这种不确定性伪装成 Web 终态错误，继续等待事件并由 /api/state
@@ -966,6 +1006,8 @@ export class WebServiceManager {
 				);
 				if (!res.ok || !res.body) {
 					el("status").textContent = tr("web.streamFailed");
+					// 断线不把 partial UI 当最终结果；回退到已落盘的权威历史。
+					await finishStream(sessionId);
 					return;
 				}
 				const reader = res.body.getReader();
@@ -1000,6 +1042,8 @@ export class WebServiceManager {
 			} catch (error) {
 				if (error && error.name === "AbortError") return;
 				el("status").textContent = tr("web.streamFailed");
+				// SSE 失败后重新读取历史，下一次 prompt 再建立新流，不尝试伪造 replay。
+				await finishStream(sessionId);
 			} finally {
 				if (streamingSessionId === sessionId) streamingSessionId = "";
 			}
@@ -1306,7 +1350,14 @@ export class WebServiceManager {
 		sessionId: string,
 		request: IncomingMessage,
 		response: ServerResponse,
+		onStreamClosed?: () => void,
 	): void {
+		const attachedRequestId = this.activeWebPrompts.get(sessionId);
+		const notifyStreamClosed = onStreamClosed ?? (() => {
+			if (attachedRequestId) {
+				this.releaseWebPrompt(sessionId, attachedRequestId);
+			}
+		});
 		// 写入 SSE 响应头；AI SDK 前端（useChat）靠 x-vercel-ai-ui-message-stream: v1 识别协议。
 		response.writeHead(200, {
 			"content-type": "text/event-stream; charset=utf-8",
@@ -1334,6 +1385,7 @@ export class WebServiceManager {
 			sessionId,
 			writeRaw,
 			() => {
+				notifyStreamClosed();
 				if (!response.writableEnded) {
 					try {
 						response.end();
@@ -1343,6 +1395,7 @@ export class WebServiceManager {
 				}
 			},
 			() => {
+				notifyStreamClosed();
 				if (!response.writableEnded) response.end();
 			},
 		);
@@ -1373,6 +1426,30 @@ export class WebServiceManager {
 			response.removeListener("close", onClientClose);
 			request.removeListener("close", onClientClose);
 		});
+	}
+
+	private reserveWebPrompt(sessionId: string, requestId: string): boolean {
+		if (this.activeWebPrompts.has(sessionId)) return false;
+		this.activeWebPrompts.set(sessionId, requestId);
+		const previousTimer = this.activeWebPromptTimers.get(sessionId);
+		if (previousTimer) clearTimeout(previousTimer);
+		const timer = setTimeout(() => {
+			if (this.activeWebPrompts.get(sessionId) !== requestId) return;
+			if (this.eventStreamRouter.has(sessionId)) return;
+			this.activeWebPrompts.delete(sessionId);
+			this.activeWebPromptTimers.delete(sessionId);
+		}, 120_000);
+		timer.unref?.();
+		this.activeWebPromptTimers.set(sessionId, timer);
+		return true;
+	}
+
+	private releaseWebPrompt(sessionId: string, requestId: string): void {
+		if (this.activeWebPrompts.get(sessionId) !== requestId) return;
+		this.activeWebPrompts.delete(sessionId);
+		const timer = this.activeWebPromptTimers.get(sessionId);
+		if (timer) clearTimeout(timer);
+		this.activeWebPromptTimers.delete(sessionId);
 	}
 
 	/**

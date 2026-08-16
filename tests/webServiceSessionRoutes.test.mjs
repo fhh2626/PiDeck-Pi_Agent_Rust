@@ -281,6 +281,113 @@ test("AI SDK chat requests use messageId rather than reusing the Session id", as
 	});
 });
 
+test("AI SDK rejects a concurrent Web prompt for the same Session", async () => {
+	await withServer(async ({ baseUrl }) => {
+		const controller = new AbortController();
+		const first = await fetch(`${baseUrl}/api/chat`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				id: "session-1",
+				messageId: "message-active",
+				messages: [{ role: "user", parts: [{ type: "text", text: "first" }] }],
+			}),
+			signal: controller.signal,
+		});
+		assert.equal(first.status, 200);
+
+		const second = await fetch(`${baseUrl}/api/chat`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				id: "session-1",
+				messageId: "message-second",
+				messages: [{ role: "user", parts: [{ type: "text", text: "second" }] }],
+			}),
+		});
+		assert.equal(second.status, 409);
+		assert.equal((await second.json()).code, "webError.sessionBusy");
+
+		const sseStream = await fetch(`${baseUrl}/api/sessions/session-1/stream`);
+		assert.equal(sseStream.status, 409);
+		assert.equal((await sseStream.json()).code, "webError.sessionBusy");
+
+		controller.abort();
+	}, {
+		subscribePiEvents: () => () => undefined,
+	});
+});
+
+test("Closing an idle /stream does not clear a subsequent /api/chat prompt lock", async () => {
+	await withServer(async ({ baseUrl }) => {
+		const streamController = new AbortController();
+		const idleStream = await fetch(`${baseUrl}/api/sessions/session-1/stream`, {
+			signal: streamController.signal,
+		});
+		assert.equal(idleStream.status, 200);
+		// 客户端断开只读流
+		streamController.abort();
+		await new Promise((resolve) => setImmediate(resolve));
+
+		const chatController = new AbortController();
+		const chat = await fetch(`${baseUrl}/api/chat`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				id: "session-1",
+				messageId: "message-after-stream",
+				messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+			}),
+			signal: chatController.signal,
+		});
+		assert.equal(chat.status, 200);
+
+		const secondChat = await fetch(`${baseUrl}/api/chat`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				id: "session-1",
+				messageId: "message-concurrent",
+				messages: [{ role: "user", parts: [{ type: "text", text: "hello again" }] }],
+			}),
+		});
+		assert.equal(secondChat.status, 409, "chat lock must still be intact");
+		chatController.abort();
+	}, {
+		subscribePiEvents: () => () => undefined,
+	});
+});
+
+test("AI SDK chat forwards validated image parts to the Session prompt", async () => {
+	let emitPiEvent = null;
+	await withServer(async ({ baseUrl, calls }) => {
+		const response = await fetch(`${baseUrl}/api/chat`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				id: "session-1",
+				messageId: "image-message",
+				messages: [{
+					role: "user",
+					parts: [{ type: "file", mediaType: "image/png", url: "data:image/png;base64,aGVsbG8=" }],
+				}],
+			}),
+		});
+		assert.equal(response.status, 200);
+		emitPiEvent("agent-1", { type: "agent_settled" });
+		await response.text();
+		assert.equal(
+			JSON.stringify(calls.send[0].images),
+			JSON.stringify([{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }]),
+		);
+	}, {
+		subscribePiEvents: (handler) => {
+			emitPiEvent = handler;
+			return () => { emitPiEvent = null; };
+		},
+	});
+});
+
 test("indeterminate AI SDK dispatch keeps the stream open for the authoritative runtime event", async () => {
 	let emitPiEvent = null;
 	await withServer(async ({ baseUrl }) => {

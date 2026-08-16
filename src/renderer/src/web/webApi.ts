@@ -11,6 +11,7 @@ import type { UIMessage } from "ai";
 import type {
 	AvailableModel,
 	ChatMessage,
+	ImageContent,
 	SessionCommandResult,
 	SessionLaunchPreferences,
 	SessionMessagePage,
@@ -226,6 +227,26 @@ function createWebToolPart(message: ChatMessage): UIMessage["parts"][number] {
 	};
 }
 
+const WEB_IMAGE_MIME = /^image\/(?:png|jpeg|gif|webp)$/i;
+const MAX_WEB_IMAGE_BASE64_LENGTH = 8 * 1024 * 1024;
+
+/** 将持久化图片转换为受限 data URL，拒绝任意外部 URL 和过大的 payload。 */
+function createWebImagePart(image: ImageContent): UIMessage["parts"][number] | undefined {
+	const mimeType = image.mimeType.trim().toLowerCase();
+	const data = image.data.trim();
+	if (
+		!WEB_IMAGE_MIME.test(mimeType) ||
+		!data ||
+		data.length > MAX_WEB_IMAGE_BASE64_LENGTH ||
+		!/^[a-z0-9+/]+={0,2}$/i.test(data)
+	) return undefined;
+	return {
+		type: "file",
+		mediaType: mimeType,
+		url: `data:${mimeType};base64,${data}`,
+	};
+}
+
 /**
  * 历史 ChatMessage 列表 → useChat 的 UIMessage[]（text-only parts）。
  * 历史消息仅注入正文；流式思考/工具由 useChat 从 SSE 实时构建，避免与
@@ -250,6 +271,10 @@ export function chatMessagesToUiMessages(messages: ChatMessage[]): UIMessage[] {
 			}
 			if (message.text) {
 				parts.push({ type: "text", text: message.text });
+			}
+			for (const image of message.images ?? []) {
+				const part = createWebImagePart(image);
+				if (part) parts.push(part);
 			}
 		}
 		return {

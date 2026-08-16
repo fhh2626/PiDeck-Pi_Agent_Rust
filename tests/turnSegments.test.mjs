@@ -290,6 +290,22 @@ test("groupToolMessages 不合并连续 assistant 消息：多段回答各自独
 	assert.equal(run.items[1].message.thinking, "T2");
 });
 
+test("groupToolMessages keeps a compaction card after the preceding assistant run", () => {
+	const { groupToolMessages } = loadAppUtils();
+	const messages = [
+		{ id: "u1", agentId: "a", role: "user", text: "问题 1", timestamp: 1 },
+		{ id: "a1", agentId: "a", role: "assistant", text: "回答 1", timestamp: 2 },
+		{ id: "summary", agentId: "a", role: "system", text: "摘要", timestamp: 3, meta: { type: "compaction" } },
+		{ id: "u2", agentId: "a", role: "user", text: "问题 2", timestamp: 4 },
+		{ id: "a2", agentId: "a", role: "assistant", text: "回答 2", timestamp: 5 },
+	];
+	const rendered = groupToolMessages(messages);
+	const outline = rendered.map((item) => item.kind === "agent-run"
+		? item.items.filter((child) => child.kind === "message").map((child) => child.message.text).join("/")
+		: item.message?.text ?? item.kind);
+	assert.equal(JSON.stringify(outline), JSON.stringify(["问题 1", "回答 1", "摘要", "问题 2", "回答 2"]));
+});
+
 /* ── stopReason 协议信号判定（2026-08 升级）──
  * pi RPC message_end 携带 provider 归一化 stopReason：
  * stop=最终回复 / toolUse=中间回复（工具调用回合）/ pending=message_start 占位。

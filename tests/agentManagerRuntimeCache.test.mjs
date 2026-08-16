@@ -12,6 +12,12 @@ const entryLine = (id, parentId, role, text) => JSON.stringify({
   message: { id: `m-${id}`, role, content: [{ type: "text", text }] },
 });
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((nextResolve) => { resolve = nextResolve; });
+  return { promise, resolve };
+}
+
 /** 6 轮 × 每条 user/assistant，尾部 3 轮（e7..e12）在运行时缓存中。 */
 async function createHarness() {
   const directory = await mkdtemp(join(tmpdir(), "pideck-runtime-cache-"));
@@ -301,6 +307,109 @@ test("loadMessages aligns trimmed runtime messages with their real entry ids", a
   }
 });
 
+test("loadMessages ignores an older snapshot that resolves after a newer load", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pideck-runtime-cache-sequence-"));
+  const sessionPath = join(directory, "session.jsonl");
+  try {
+    await writeFile(sessionPath, "{}", "utf8");
+    const runtime = {
+      tab: {
+        id: "agent-sequence",
+        projectId: "project-1",
+        cwd: "C:/project",
+        title: "Session",
+        status: "idle",
+        sessionPath,
+        sessionEnvironment: "native",
+        sessionSource: "pi",
+        createdAt: 1,
+      },
+      process: { client: { request: async () => ({ success: true, data: {} }) } },
+    };
+    const manager = new AgentManager(
+      () => ({ id: "project-1", name: "Project", path: "C:/project" }),
+      () => null,
+      { get: () => ({}) },
+      {},
+    );
+    manager.agents.set("agent-sequence", runtime);
+
+    const older = deferred();
+    const newer = deferred();
+    const oldLoad = manager.loadMessages("agent-sequence", true, older.promise);
+    const newLoad = manager.loadMessages("agent-sequence", true, newer.promise);
+
+    newer.resolve({
+      success: true,
+      data: { messages: [{ role: "assistant", content: [{ type: "text", text: "new" }] }] },
+    });
+    await newLoad;
+    older.resolve({
+      success: true,
+      data: { messages: [{ role: "assistant", content: [{ type: "text", text: "old" }] }] },
+    });
+    await oldLoad;
+
+    assert.equal(manager.messages.get("agent-sequence")[0].text, "new");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("loadMessages stat error in older load does not delete sessionFileVersion of newer load", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pideck-runtime-cache-stat-"));
+  const sessionPath = join(directory, "session.jsonl");
+  try {
+    await writeFile(sessionPath, "{}", "utf8");
+    const runtime = {
+      tab: {
+        id: "agent-stat-race",
+        projectId: "project-1",
+        cwd: "C:/project",
+        title: "Session",
+        status: "idle",
+        sessionPath,
+        sessionEnvironment: "native",
+        sessionSource: "pi",
+        createdAt: 1,
+      },
+      process: { client: { request: async () => ({ success: true, data: {} }) } },
+    };
+    const manager = new AgentManager(
+      () => ({ id: "project-1", name: "Project", path: "C:/project" }),
+      () => null,
+      { get: () => ({}) },
+      {},
+    );
+    manager.agents.set("agent-stat-race", runtime);
+
+    const older = deferred();
+    const newer = deferred();
+    const oldLoad = manager.loadMessages("agent-stat-race", true, older.promise);
+    const newLoad = manager.loadMessages("agent-stat-race", true, newer.promise);
+
+    newer.resolve({
+      success: true,
+      data: { messages: [{ role: "assistant", content: [{ type: "text", text: "new" }] }] },
+    });
+    await newLoad;
+    assert.ok(manager.sessionFileVersionByAgent.has("agent-stat-race"));
+    const currentVersion = manager.sessionFileVersionByAgent.get("agent-stat-race");
+
+    // 现在让旧 load 的 RPC 完成，但临时把 sessionPath 删掉或者让其 stat 出错
+    await rm(sessionPath);
+    older.resolve({
+      success: true,
+      data: { messages: [{ role: "assistant", content: [{ type: "text", text: "old" }] }] },
+    });
+    await oldLoad;
+
+    assert.equal(manager.sessionFileVersionByAgent.get("agent-stat-race"), currentVersion, "stale load stat failure must not delete newer version");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("trimRuntimeCache keeps leading compaction summary cards", async () => {
   const { manager, sessionPath, directory } = await createHarness();
   try {
@@ -478,6 +587,47 @@ test("manual compact uses the RPC customInstructions field and always returns to
   assert.equal(manager.rpcCompactingAgents.has("agent-compact"), false);
 });
 
+test("manual compact ignores a late compaction_end reload after RPC reload", async () => {
+  const runtime = {
+    tab: {
+      id: "agent-compact-late-end",
+      projectId: "project-1",
+      cwd: "C:/project",
+      title: "Session",
+      status: "idle",
+      createdAt: 1,
+    },
+    process: {
+      client: { request: async () => ({ success: true, data: {} }) },
+      isRunning: () => true,
+    },
+  };
+  const manager = new AgentManager(
+    () => ({ id: "project-1", name: "Project", path: "C:/project" }),
+    () => null,
+    { get: () => ({}) },
+    {},
+  );
+  manager.agents.set("agent-compact-late-end", runtime);
+  let reloads = 0;
+  let resolveLoad;
+  const loadStarted = new Promise((resolve) => { resolveLoad = resolve; });
+  manager.loadMessages = async () => {
+    reloads += 1;
+    resolveLoad();
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  manager.getRuntimeState = async () => ({});
+
+  const compacting = manager.compact("agent-compact-late-end");
+  await loadStarted;
+  manager.handlePiEvent("agent-compact-late-end", { type: "compaction_end" });
+  await compacting;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(reloads, 1, "compaction_end during RPC reload must not start a second load");
+});
+
 test("manual compact failure does not leave the runtime stuck in compacting", async () => {
   const runtime = {
     tab: {
@@ -581,6 +731,46 @@ test("manual compact owns the reload while compaction_end is in flight", () => {
   manager.compactingAgents.delete("agent-compact-reload");
   manager.handlePiEvent("agent-compact-reload", { type: "compaction_end" });
   assert.equal(reloads, 1);
+});
+
+test("manual compact claim is consumed by delayed compaction_end and cleared after load", async () => {
+  const runtime = {
+    tab: {
+      id: "agent-compact-claim",
+      projectId: "project-1",
+      cwd: "C:/project",
+      title: "Session",
+      status: "running",
+      createdAt: 1,
+    },
+    process: { client: { request: async () => ({ success: true, data: {} }) } },
+  };
+  const manager = new AgentManager(
+    () => ({ id: "project-1", name: "Project", path: "C:/project" }),
+    () => null,
+    { get: () => ({}) },
+    {},
+  );
+  manager.agents.set("agent-compact-claim", runtime);
+  let reloads = 0;
+  let resolveLoad;
+  const loadStarted = new Promise((resolve) => { resolveLoad = resolve; });
+  manager.loadMessages = async () => {
+    reloads += 1;
+    resolveLoad();
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  manager.getRuntimeState = async () => ({});
+
+  const compacting = manager.compact("agent-compact-claim");
+  await loadStarted;
+  manager.handlePiEvent("agent-compact-claim", { type: "compaction_end" });
+  await compacting;
+  assert.equal(reloads, 1, "RPC reload owns the in-flight compaction_end");
+
+  manager.handlePiEvent("agent-compact-claim", { type: "compaction_end" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reloads, 2, "automatic compaction after the claim window must reload");
 });
 
 test("automatic compaction reload preserves history and runtime messages", () => {

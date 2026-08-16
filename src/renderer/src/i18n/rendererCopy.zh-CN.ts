@@ -2225,6 +2225,7 @@ export const zhCN = {
   "web.moreSessions": "更多会话 ({count})",
   "web.scrollToBottom": "滚动到底部",
   "web.streamFailed": "流式连接失败",
+  "web.historyLoadFailed": "历史消息加载失败，请重试",
 } as const;
 
 export type TranslationKey = keyof typeof zhCN;

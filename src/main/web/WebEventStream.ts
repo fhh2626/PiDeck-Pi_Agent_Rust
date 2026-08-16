@@ -20,6 +20,13 @@ export type AgentToSessionRouter = (agentId: string) => string | undefined;
 /** SSE 帧写出函数；返回 false 表示连接已失效（对方已断开）。 */
 export type SseWriter = (frame: UiMessageStreamFrame) => boolean;
 
+/** 主进程事件源携带的 stream generation；旧 generation 不得结束新连接。 */
+export type PiEventSourceHandler = (
+	agentId: string,
+	event: PiEvent,
+	streamGeneration?: number,
+) => void;
+
 /** 单个 pi 事件（与 AgentManager.handlePiEvent 收到的结构一致）。 */
 export type PiEvent = {
 	type?: string;
@@ -309,9 +316,12 @@ export const SSE_DONE = "data: [DONE]\n\n";
 export type SessionStreamEntry = {
 	sessionId: string;
 	adapter: PiEventToUiMessageStream;
+	/** 当前 SSE 连接所属的 agent run；首次 agent_start 到达时可懒绑定。 */
+	streamGeneration?: number;
 	/** 写出原始 wire 文本（含 data: 前缀）；返回是否成功。 */
 	writeRaw: (wire: string) => boolean;
 	closed: boolean;
+	onClose: () => void;
 	onFinish?: () => void;
 };
 
@@ -328,18 +338,27 @@ export class WebEventStreamRouter {
 
 	constructor(private readonly resolveSession: AgentToSessionRouter) {}
 
+	/** 检查指定 session 是否有处于活跃连接状态的流。 */
+	has(sessionId: string): boolean {
+		const set = this.sessionStreams.get(sessionId);
+		return Boolean(set && set.size > 0);
+	}
+
 	/** 注册一个 session 的 SSE 连接。返回关闭函数。 */
 	add(
 		sessionId: string,
 		writeRaw: (wire: string) => boolean,
 		onClose: () => void,
 		onFinish?: () => void,
+		streamGeneration?: number,
 	): () => void {
 		const entry: SessionStreamEntry = {
 			sessionId,
 			adapter: new PiEventToUiMessageStream(),
+			streamGeneration,
 			writeRaw,
 			closed: false,
+			onClose,
 			onFinish,
 		};
 		let set = this.sessionStreams.get(sessionId);
@@ -347,6 +366,10 @@ export class WebEventStreamRouter {
 			set = new Set();
 			this.sessionStreams.set(sessionId, set);
 		}
+		// 一个 session 同时只允许一条 Web 流。多个标签页/重复 prompt 共享同一
+		// pi 事件源时，广播会把 A 的 token 混到 B；终止旧连接比静默混流安全。
+		// 被替换的旧流属于被中断，绝不能写出伪造的 finish 或 [DONE]。
+		for (const previous of [...set]) this.abortEntry(previous, set);
 		set.add(entry);
 
 		const close = () => {
@@ -360,14 +383,15 @@ export class WebEventStreamRouter {
 	}
 
 	/** 供后端绑定：从 pi 事件源订阅全量事件（应只订阅一次）。 */
-	bindPiSource(subscribe: ((handler: (agentId: string, event: PiEvent) => void) => () => void) | undefined): void {
+	bindPiSource(subscribe: ((handler: PiEventSourceHandler) => () => void) | undefined): void {
 		this.unsubscribePi?.();
 		if (!subscribe) {
 			// 装配方未提供订阅器（例如测试/受限环境）：不订阅也不抛错，路由器保持空闲。
 			this.unsubscribePi = null;
 			return;
 		}
-		this.unsubscribePi = subscribe((agentId, event) => this.onPiEvent(agentId, event));
+		this.unsubscribePi = subscribe((agentId, event, streamGeneration) =>
+			this.onPiEvent(agentId, event, streamGeneration));
 	}
 
 	/** 解绑 pi 事件源（服务停止时调用）。 */
@@ -376,7 +400,7 @@ export class WebEventStreamRouter {
 		this.unsubscribePi = null;
 	}
 
-	private onPiEvent(agentId: string, event: PiEvent): void {
+	private onPiEvent(agentId: string, event: PiEvent, streamGeneration?: number): void {
 		const sessionId = this.resolveSession(agentId);
 		if (!sessionId) return;
 		const set = this.sessionStreams.get(sessionId);
@@ -384,12 +408,22 @@ export class WebEventStreamRouter {
 
 		for (const entry of set) {
 			if (entry.closed) continue;
+			if (streamGeneration !== undefined) {
+				if (entry.streamGeneration === undefined) {
+					// 新连接通常先看到 agent_start；旧版/legacy 端点若错过 start，
+					// 则用第一条非 settled 事件绑定，不能让旧 settled 抢先结束新流。
+					if (event.type === "agent_settled") continue;
+					entry.streamGeneration = streamGeneration;
+				}
+				if (entry.streamGeneration !== streamGeneration) continue;
+			}
 			const frames = entry.adapter.push(event);
 			for (const frame of frames) {
 				if (!entry.writeRaw(serializeSseFrame(frame))) {
-					// 写出失败（对方断开）：立即标记关闭，避免持续写已失效的 socket。
+					// 写出失败（对方断开）：立即标记关闭并触发 onClose 清理，避免持续写已失效的 socket 或挂起 prompt 锁。
 					entry.closed = true;
 					set.delete(entry);
+					entry.onClose();
 					break;
 				}
 				// AI SDK 协议：finish 帧后必须跟 [DONE] 终止标记，前端据此关闭连接。
@@ -397,6 +431,7 @@ export class WebEventStreamRouter {
 					if (!entry.writeRaw(SSE_DONE)) {
 						entry.closed = true;
 						set.delete(entry);
+						entry.onClose();
 						break;
 					}
 					// [DONE] 是协议终止标记，但 Node response 仍需显式 end，
@@ -409,6 +444,13 @@ export class WebEventStreamRouter {
 			}
 		}
 		if (set.size === 0) this.sessionStreams.delete(sessionId);
+	}
+
+	private abortEntry(entry: SessionStreamEntry, set: Set<SessionStreamEntry>): void {
+		if (entry.closed) return;
+		entry.closed = true;
+		set.delete(entry);
+		entry.onClose();
 	}
 }
 

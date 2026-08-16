@@ -25,13 +25,32 @@ export const WebUserBubble = memo(function WebUserBubble(props: { message: UIMes
 		.filter((part) => part.type === "text")
 		.map((part) => (part.type === "text" ? part.text : ""))
 		.join("");
-	if (!text.trim()) return null;
+	const images = props.message.parts.filter(
+		(part): part is Extract<UIMessage["parts"][number], { type: "file" }> =>
+			part.type === "file" && part.mediaType.startsWith("image/"),
+	);
+	if (!text.trim() && images.length === 0) return null;
 	return (
 		<article className="user-turn group/user flex w-full min-w-0 max-w-full flex-col items-end">
 			<div className="w-fit min-w-0 max-w-[min(82%,64ch)] rounded-[14px] border border-border bg-muted/60 px-3 py-2 text-sm text-foreground [overflow-wrap:anywhere] break-words">
-				<div className="text-chat leading-[1.6] text-text-primary whitespace-pre-wrap break-words">
-					{text}
-				</div>
+				{images.length > 0 && (
+					<div className="mb-2 grid max-w-full grid-cols-2 gap-2">
+						{images.map((image, index) => (
+							<img
+								key={`${image.url}-${index}`}
+								src={image.url}
+								alt=""
+								loading="lazy"
+								className="max-h-64 max-w-full rounded-md border border-border object-contain"
+							/>
+						))}
+					</div>
+				)}
+				{text.trim() && (
+					<div className="text-chat leading-[1.6] text-text-primary whitespace-pre-wrap break-words">
+						{text}
+					</div>
+				)}
 			</div>
 		</article>
 	);

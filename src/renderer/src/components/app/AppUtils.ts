@@ -370,6 +370,15 @@ export function groupToolMessages(messages: ChatMessage[]): RenderMessage[] {
 			if (currentRun.length === 0) runStartedAt = message.timestamp;
 			currentTools.push(message);
 		} else if (message.role === "system") {
+			const isCompactionCard =
+				message.meta?.type === "compaction" || message.meta?.type === "branchSummary";
+			if (isCompactionCard) {
+				// 压缩/分支摘要是时间线中的真实边界：先收口前一个 run，
+				// 否则摘要会被 result 提前放到当前 assistant 回答之前。
+				flushRun();
+				result.push({ kind: "message", message });
+				continue;
+			}
 			// System 消息（如 askQuestion 卡片）不应中断当前 agent run。
 			// 工具、thinking 和后续 assistant 消息应合并为同一轮回答，
 			// 否则会被拆成两个独立的折叠区域。
@@ -939,4 +948,3 @@ export function getToolChangedLineCount(toolName: string, args: any): number {
 	}
 	return 0;
 }
-
