@@ -213,6 +213,9 @@ test("i18n dictionaries contain matching context switch keys in both locales", (
 		"ctx.switches.pluginDisabled",
 		"ctx.switches.nextTurnNote",
 		"ctx.switches.savedEstimate",
+		"ctx.switches.webAllTools",
+		"ctx.switches.webFileContent",
+		"ctx.switches.webCommandOutput",
 	];
 
 	for (const key of keys) {

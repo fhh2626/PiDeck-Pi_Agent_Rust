@@ -149,6 +149,11 @@ function fixture(overrides = {}) {
 				runtimeGeneration: runtime.runtimeGeneration,
 			};
 		},
+		getContextControllerState: async () => ({
+			clearToolHistory: false,
+			clearReadContent: false,
+			clearCommandContent: false,
+		}),
 		listSessionRuntimes: () => [runtime],
 		listSessionRuntimeModels: async (target) => {
 			calls.modelTargets.push(target);
@@ -240,6 +245,54 @@ test("native Session HTTP routes create drafts and send by stable Session identi
 		assert.equal(prompted.result.sessionId, "session-1");
 		assert.equal(calls.send.length, 1);
 		assert.equal(calls.send[0].message, "hello");
+	});
+});
+
+test("context-controller routes share silent sendSessionPrompt and do not lock prompts", async () => {
+	await withServer(async ({ baseUrl, calls }) => {
+		const snapshot = await fetch(`${baseUrl}/api/sessions/session-1/context-controller-state`);
+		assert.equal(snapshot.status, 200);
+		assert.deepEqual(await snapshot.json(), {
+			clearToolHistory: false,
+			clearReadContent: false,
+			clearCommandContent: true,
+		});
+
+		const posted = await fetch(`${baseUrl}/api/sessions/session-1/context-controller`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ command: "/context-commands off" }),
+		});
+		assert.equal(posted.status, 200);
+		const body = await posted.json();
+		assert.equal(body.result.accepted, true);
+		assert.equal(calls.send.length, 1);
+		assert.equal(calls.send[0].silent, true);
+		assert.equal(calls.send[0].agentMessage, "/context-commands off");
+		assert.equal(calls.send[0].message, "");
+
+		const rejected = await fetch(`${baseUrl}/api/sessions/session-1/context-controller`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ command: "/context-tools flip" }),
+		});
+		assert.equal(rejected.status, 400);
+		assert.equal(calls.send.length, 1);
+
+		const promptResponse = await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ requestId: "after-ctx", message: "hello" }),
+		});
+		assert.equal(promptResponse.status, 200);
+		assert.equal((await promptResponse.json()).result.accepted, true);
+		assert.equal(calls.send.length, 2);
+	}, {
+		getContextControllerState: async () => ({
+			clearToolHistory: false,
+			clearReadContent: false,
+			clearCommandContent: true,
+		}),
 	});
 });
 

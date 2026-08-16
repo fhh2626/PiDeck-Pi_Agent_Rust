@@ -9,6 +9,7 @@ import type {
 	AppSettings,
 	AvailableModel,
 	ChatMessage,
+	ContextControllerState,
 	CreateAnonymousSessionInput,
 	CreateAnonymousSessionResult,
 	CreateSessionDraftInput,
@@ -74,6 +75,7 @@ type WebServiceDependencies = {
 		pageSize?: number,
 	) => Promise<SessionMessagePage>;
 	sendSessionPrompt: (input: SendSessionPromptInput) => Promise<SendSessionPromptResult>;
+	getContextControllerState: (sessionId: string) => Promise<ContextControllerState>;
 	listSessionRuntimes: () => SessionRuntimeInfo[];
 	listSessionRuntimeModels: (target: SessionRuntimeTarget) => Promise<
 		SessionCommandResult<SessionTargetedValue<AvailableModel[]>>
@@ -121,6 +123,19 @@ type WebServiceDependencies = {
 		[key: string]: unknown;
 	}>>;
 };
+
+const CONTEXT_CONTROLLER_COMMANDS = new Set([
+	"/context-tools on",
+	"/context-tools off",
+	"/context-files on",
+	"/context-files off",
+	"/context-commands on",
+	"/context-commands off",
+]);
+
+function isAllowedContextControllerCommand(command: string): boolean {
+	return CONTEXT_CONTROLLER_COMMANDS.has(command);
+}
 
 function serializePublicWebPayload(body: unknown): string {
 	return JSON.stringify(body, function (key, value) {
@@ -394,6 +409,38 @@ export class WebServiceManager {
 					decodeURIComponent(sessionMessagesMatch[1]),
 				);
 				this.sendJson(response, { messages });
+				return;
+			}
+			const contextStateMatch = url.pathname.match(
+				/^\/api\/sessions\/([^/]+)\/context-controller-state$/,
+			);
+			if (contextStateMatch && request.method === "GET") {
+				const sessionId = decodeURIComponent(contextStateMatch[1]);
+				const state = await this.deps.getContextControllerState(sessionId);
+				this.sendJson(response, state);
+				return;
+			}
+			const contextCommandMatch = url.pathname.match(
+				/^\/api\/sessions\/([^/]+)\/context-controller$/,
+			);
+			if (contextCommandMatch && request.method === "POST") {
+				const sessionId = decodeURIComponent(contextCommandMatch[1]);
+				const body = await this.readJson<{ command?: string }>(request);
+				const command = body.command?.trim() ?? "";
+				if (!isAllowedContextControllerCommand(command)) {
+					this.sendError(response, 400, "webError.invalidContextCommand", "invalid context-controller command");
+					return;
+				}
+				// 静默改开关不占 Web prompt 锁，避免挡住随后的正常发送。
+				const requestId = `ctx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+				const result = await this.deps.sendSessionPrompt({
+					sessionId,
+					requestId,
+					message: "",
+					agentMessage: command,
+					silent: true,
+				});
+				this.sendJson(response, { result });
 				return;
 			}
 			const sessionPromptMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/prompt$/);

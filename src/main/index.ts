@@ -190,6 +190,10 @@ import {
 	type SessionRuntimeBinding,
 } from "./sessions/SessionRuntimeCoordinator";
 import { SessionCommandIpcError } from "./sessions/SessionCommandIpcError";
+import {
+	DEFAULT_CONTEXT_CONTROLLER_STATE,
+	parseContextControllerStateFromJsonl,
+} from "./sessions/contextControllerStateReader";
 import { CodexSessionImporter } from "./sessions/CodexSessionImporter";
 import { ClaudeSessionImporter } from "./sessions/ClaudeSessionImporter";
 import { OpenCodeSessionImporter } from "./sessions/OpenCodeSessionImporter";
@@ -2064,6 +2068,19 @@ app.whenReady().then(async () => {
 				if (tab) emitSessionRuntimeEvent(tab.id, ipcChannels.agentsState, tab);
 			}
 			return result;
+		},
+		getContextControllerState: async (sessionId) => {
+			if (typeof sessionId !== "string" || !sessionId.trim()) {
+				return { ...DEFAULT_CONTEXT_CONTROLLER_STATE };
+			}
+			const entry = sessionCatalog.get(sessionId);
+			if (!entry?.filePath) return { ...DEFAULT_CONTEXT_CONTROLLER_STATE };
+			try {
+				const content = await sessionScanner.readSessionRawText(entry.filePath);
+				return parseContextControllerStateFromJsonl(content);
+			} catch {
+				return { ...DEFAULT_CONTEXT_CONTROLLER_STATE };
+			}
 		},
 		listSessionRuntimes: () => sessionRuntimeCoordinator.listRuntimes(),
 		listSessionRuntimeModels: (target) => sessionRuntimeCoordinator.listRuntimeModels(target),
