@@ -24,6 +24,10 @@ import type {
 	SessionRecord,
 } from "../../shared/types";
 import { BackgroundScanCoordinator } from "../sessions/BackgroundScanCoordinator";
+import {
+	DEFAULT_CONTEXT_CONTROLLER_STATE,
+	parseContextControllerStateFromJsonl,
+} from "../sessions/contextControllerStateReader";
 
 /**
  * 已扫描过项目的集合（模块级）：决定 catalogList 走「首次同步扫描」还是
@@ -431,6 +435,22 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
 	ipcMain.handle(
 		ipcChannels.sessionsCatalogReadReferenceMessages,
 		(_event, sessionId: string) => readCatalogSessionReferenceMessages(sessionId),
+	);
+	ipcMain.handle(
+		ipcChannels.sessionsCatalogGetContextControllerState,
+		async (_event, sessionId: string) => {
+			if (typeof sessionId !== "string" || !sessionId.trim()) {
+				return { ...DEFAULT_CONTEXT_CONTROLLER_STATE };
+			}
+			const entry = sessionCatalog.get(sessionId);
+			if (!entry?.filePath) return { ...DEFAULT_CONTEXT_CONTROLLER_STATE };
+			try {
+				const content = await sessionScanner.readSessionRawText(entry.filePath);
+				return parseContextControllerStateFromJsonl(content);
+			} catch {
+				return { ...DEFAULT_CONTEXT_CONTROLLER_STATE };
+			}
+		},
 	);
 	// 按需读取消息完整文本（工具结果截断后的「查看完整输出」）：
 	// 入参校验在边界（渲染层数据不可信），agentId/messageId 必须为非空字符串。

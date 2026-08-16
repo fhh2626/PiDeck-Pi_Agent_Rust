@@ -1390,8 +1390,8 @@ export class AgentManager {
 		const trimmed = input.message.trim();
 		const hasImages = input.images && input.images.length > 0;
 		const agentMessage = input.agentMessage?.trim() || trimmed || "Describe this image.";
-		// 允许只有图片没有文字的情况发送
-		if (!trimmed && !hasImages) {
+		// 允许只有图片没有文字的情况发送；silent 模式下允许 message 为空由 agentMessage 驱动
+		if (!trimmed && !hasImages && !input.agentMessage?.trim()) {
 			return {
 				accepted: false,
 				error: "消息不能为空",
@@ -1424,29 +1424,52 @@ export class AgentManager {
 		if (!runtime.process.isRunning()) {
 			const errorMessage = "Agent 进程已停止，请重启 Agent 后重试";
 			runtime.tab.status = "error";
-			this.addLocalizedMessage(
-				input.agentId,
-				"error",
-				"diagnostic.agentStopped",
-				errorMessage,
-			);
+			if (!input.silent) {
+				this.addLocalizedMessage(
+					input.agentId,
+					"error",
+					"diagnostic.agentStopped",
+					errorMessage,
+				);
+			}
 			this.emitState();
 			return { accepted: false, error: errorMessage, i18nKey: "diagnostic.agentStopped" };
 		}
 
-		runtime.tab.status = "running";
-		this.emitState();
+		// 静默命令必须是已注册扩展命令；否则会当成普通 prompt 发给模型。
+		if (input.silent) {
+			const isExtensionCommand = await this.promptMatchesRegisteredExtensionCommand(runtime, agentMessage);
+			if (!isExtensionCommand) {
+				return {
+					accepted: false,
+					error: "Context controller command is unavailable",
+					i18nKey: "ctx.switches.pluginDisabled",
+				};
+			}
+			if (alreadyBusy) {
+				return {
+					accepted: false,
+					error: "Can't change context while generating",
+					i18nKey: "ctx.switches.busyDisabled",
+				};
+			}
+		}
 
-		// 乐观更新：在等待 RPC 返回前先把用户消息写入会话，让用户立即看到自己的消息。
-		// 只展示用户原文；agentMessage 里的宿主指令不进 UI 气泡。
-		// 如果后续 RPC 失败，再追加错误消息；用户消息本身仍保留在聊天中（用户确已发送）。
-		this.addMessage(
-			input.agentId,
-			"user",
-			trimmed || this.translate("session.imagePlaceholder"),
-			promptDeliveryBehavior ? { streamingBehavior: promptDeliveryBehavior } : undefined,
-			input.images,
-		);
+		if (!input.silent) {
+			runtime.tab.status = "running";
+			this.emitState();
+
+			// 乐观更新：在等待 RPC 返回前先把用户消息写入会话，让用户立即看到自己的消息。
+			// 只展示用户原文；agentMessage 里的宿主指令不进 UI 气泡。
+			// 如果后续 RPC 失败，再追加错误消息；用户消息本身仍保留在聊天中（用户确已发送）。
+			this.addMessage(
+				input.agentId,
+				"user",
+				trimmed || this.translate("session.imagePlaceholder"),
+				promptDeliveryBehavior ? { streamingBehavior: promptDeliveryBehavior } : undefined,
+				input.images,
+			);
+		}
 
 		// streamingBehavior 只在 agent 忙碌时需要；UI 可以显式传 steer/followUp 以复用 pi 队列语义。
 		// 当前端排队 flush 连续发送多条消息时，第一条会触发 agent_start 使 agent 变忙碌，
@@ -1467,9 +1490,12 @@ export class AgentManager {
 			}
 			// 使用用户配置的 RPC 超时时间，因为用户提示词可能触发长时间运行的命令或复杂操作
 			const rpcStartedAt = Date.now();
-			// 首字计时起点：RPC 请求发出时刻（而非收到 message_start），把 pi 内部排队与
-			// 模型服务端等待计入用户体感的首 token 延迟，避免统计系统性偏短。
-			this.promptRequestedAtByAgent.set(input.agentId, rpcStartedAt);
+			// 静默扩展命令不进入模型回合，不能占用首字计时起点，否则会污染下一次真实回复的 TTFT。
+			if (!input.silent) {
+				// 首字计时起点：RPC 请求发出时刻（而非收到 message_start），把 pi 内部排队与
+				// 模型服务端等待计入用户体感的首 token 延迟，避免统计系统性偏短。
+				this.promptRequestedAtByAgent.set(input.agentId, rpcStartedAt);
+			}
 			void this.appLogger?.info("session-perf", "Prompt RPC request started", {
 				agentId: input.agentId,
 				requestId: input.requestId,
@@ -1489,13 +1515,15 @@ export class AgentManager {
 				// 必须显式显示出来，否则 UI 会停在"已发送但无响应"的状态。
 				const errorMessage = response.error ?? "图片消息发送失败";
 				runtime.tab.status = statusBeforePrompt === "running" ? "running" : "idle";
-				this.addLocalizedMessage(
-					input.agentId,
-					"error",
-					"diagnostic.promptRejected",
-					"消息发送失败。",
-					{ debugDetails: errorMessage },
-				);
+				if (!input.silent) {
+					this.addLocalizedMessage(
+						input.agentId,
+						"error",
+						"diagnostic.promptRejected",
+						"消息发送失败。",
+						{ debugDetails: errorMessage },
+					);
+				}
 				this.emitState();
 				return {
 					accepted: false,
@@ -1519,13 +1547,15 @@ export class AgentManager {
 			// preflight 响应未到达，无法证明 pi 没有接收。返回 unknown，renderer 会永久禁用
 			// 该快照的重试/编辑/取消，防止用户把同一条消息提交两次。
 			runtime.tab.status = statusBeforePrompt === "running" ? "running" : "error";
-			this.addLocalizedMessage(
-				input.agentId,
-				"error",
-				"diagnostic.promptDeliveryUnknown",
-				"消息接收结果未知。请先检查当前会话，避免重复发送；必要时重启 Agent。",
-				{ debugDetails: errorMessage },
-			);
+			if (!input.silent) {
+				this.addLocalizedMessage(
+					input.agentId,
+					"error",
+					"diagnostic.promptDeliveryUnknown",
+					"消息接收结果未知。请先检查当前会话，避免重复发送；必要时重启 Agent。",
+					{ debugDetails: errorMessage },
+				);
+			}
 			this.emitState();
 			return {
 				accepted: false,

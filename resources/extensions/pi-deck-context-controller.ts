@@ -299,11 +299,10 @@ export default function piDeckContextControllerExtension(pi: ExtensionAPI): void
 		pi.appendEntry(ENTRY_TYPE, currentState);
 	}
 
-	function applyState(next: ContextControllerState, ctx: ExtensionContext, notifyText?: string): void {
+	function applyState(next: ContextControllerState, ctx: ExtensionContext): void {
 		currentState = normalizeState(next);
 		persistSessionState();
 		refreshWidget(ctx);
-		if (notifyText) ctx.ui.notify(notifyText, "info");
 	}
 
 	function refreshWidget(ctx: ExtensionContext): void {
@@ -326,15 +325,13 @@ export default function piDeckContextControllerExtension(pi: ExtensionAPI): void
 		args: unknown,
 		ctx: ExtensionContext,
 		usage: string,
-		onText: string,
-		offText: string,
 	): void {
 		const include = parseOnOffArg(args);
 		if (include == null) {
 			ctx.ui.notify(`Usage: ${usage}`, "warning");
 			return;
 		}
-		applyState(applyIncludeSwitch(currentState, key, include), ctx, include ? onText : offText);
+		applyState(applyIncludeSwitch(currentState, key, include), ctx);
 	}
 
 	pi.registerCommand("context-tool-content", {
@@ -345,8 +342,6 @@ export default function piDeckContextControllerExtension(pi: ExtensionAPI): void
 				args,
 				ctx,
 				"/context-tool-content on|off",
-				"Context controller: tool outputs kept in context.",
-				"Context controller: tool outputs omitted, call history kept.",
 			);
 		},
 	});
@@ -359,8 +354,6 @@ export default function piDeckContextControllerExtension(pi: ExtensionAPI): void
 				args,
 				ctx,
 				"/context-tools on|off",
-				"Context controller: tool-call history kept (outputs still follow /context-tool-content).",
-				"Context controller: all historical tool calls/results omitted. Current-turn tools stay available.",
 			);
 		},
 	});
@@ -376,7 +369,7 @@ export default function piDeckContextControllerExtension(pi: ExtensionAPI): void
 	pi.registerCommand("context-reset", {
 		description: "Restore default: keep tool content and tool history in context",
 		handler: async (_args, ctx) => {
-			applyState(DEFAULT_STATE, ctx, "Context controller: restored default (tool content + history kept).");
+			applyState(DEFAULT_STATE, ctx);
 		},
 	});
 

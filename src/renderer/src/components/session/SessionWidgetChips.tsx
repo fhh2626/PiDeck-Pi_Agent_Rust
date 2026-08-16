@@ -123,6 +123,7 @@ export function SessionWidgetChips(props: { sessionId: string }) {
 	const widgets = coherent?.widgets ?? {};
 	const entries = Object.entries(widgets).filter(
 		([widgetKey, lines]) =>
+			widgetKey !== "pi-deck-context-controller" &&
 			!isWidgetDismissed(dismissed, props.sessionId, widgetKey, lines),
 	);
 

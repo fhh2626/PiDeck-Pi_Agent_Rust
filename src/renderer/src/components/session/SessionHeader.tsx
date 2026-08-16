@@ -14,10 +14,12 @@ import { isUserFacingSessionStart } from "../../hooks/useSessionTimelineControll
 import { t } from "../../i18n";
 import { displayProjectDirectoryName } from "../../rendererUtils";
 import { Button } from "../ui-shadcn/button";
+import { ContextControllerSwitches } from "./ContextControllerSwitches";
 import { SessionStatus } from "./SurfaceParts";
 
 type HeaderActions = {
   headerRef: RefObject<HTMLDivElement | null>;
+  sessionId?: string;
   compactionCount?: number;
   isAnonymous?: boolean;
   duration?: number;
@@ -41,7 +43,6 @@ type HeaderActions = {
 
 type LegacySessionHeaderProps = HeaderActions & {
   mode?: "legacy";
-  sessionId?: never;
   title: string;
   runtimeState?: AgentRuntimeState;
   isStarting: boolean;
@@ -66,7 +67,7 @@ export type SessionHeaderProps = LegacySessionHeaderProps | ModernSessionHeaderP
  */
 export function SessionHeader(props: SessionHeaderProps) {
   const sessionMode = props.mode === "session";
-  const sessionId = sessionMode ? props.sessionId : "";
+  const sessionId = props.sessionId ?? "";
   const legacyProps = props as LegacySessionHeaderProps;
   const session = useAtomValue(sessionRecordByIdAtomFamily(sessionId));
   const runtime = useAtomValue(sessionRuntimeBySessionIdAtomFamily(sessionId));
@@ -105,6 +106,7 @@ export function SessionHeader(props: SessionHeaderProps) {
           <HatGlasses size={14} aria-hidden="true" />
         </span>
       )}
+      {sessionId ? <ContextControllerSwitches sessionId={sessionId} /> : null}
       <SessionStatus state={runtimeState} duration={props.duration} cacheHitHistory={cacheStats[sessionId]?.cacheHitHistory} />
     </div>
   );

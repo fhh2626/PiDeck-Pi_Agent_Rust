@@ -196,7 +196,9 @@ export class SessionRuntimeCoordinator {
 		const requestId = input.requestId.trim();
 		if (!sessionId) return Promise.resolve(this.rejected(input, "Session ID is required"));
 		if (!requestId) return Promise.resolve(this.rejected(input, "Request ID is required"));
-		if (!input.message.trim() && !input.images?.length) {
+		// 静默扩展命令允许 message 为空、由 agentMessage 驱动（如顶栏上下文开关）。
+		const hasSilentCommand = Boolean(input.silent && input.agentMessage?.trim());
+		if (!input.message.trim() && !input.images?.length && !hasSilentCommand) {
 			return Promise.resolve(this.rejected(input, "消息不能为空", {
 				i18nKey: "diagnostic.messageRequired",
 			}));
@@ -862,6 +864,7 @@ export class SessionRuntimeCoordinator {
 					agentMessage: input.agentMessage,
 					description: input.description,
 					requestId: input.requestId,
+					silent: input.silent,
 				});
 				void this.logger?.info("session-perf", "Prompt dispatch completed", {
 					sessionId: input.sessionId,

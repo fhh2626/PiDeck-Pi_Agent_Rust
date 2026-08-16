@@ -441,6 +441,7 @@ export function SessionView({
           本栏只保留会话状态徽章与分屏身份标题（抽屉开关在共享 Tab 栏）。 */}
       <SessionHeader
         headerRef={chatHeaderRef}
+        sessionId={sessionId}
         title={sessionTitle}
         projectName={projectName}
         paneTitle={splitPane ? sessionTitle : undefined}

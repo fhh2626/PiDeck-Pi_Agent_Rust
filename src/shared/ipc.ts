@@ -56,6 +56,8 @@ export const ipcChannels = {
 	sessionsCatalogReadMessages: "sessions:catalog-read-messages",
 	sessionsCatalogReadMessagePage: "sessions:catalog-read-message-page",
 	sessionsCatalogReadReferenceMessages: "sessions:catalog-read-reference-messages",
+	/** 读取会话文件中最近保存的上下文控制器状态（开关初始化用） */
+	sessionsCatalogGetContextControllerState: "sessions:catalog-get-context-controller-state",
 	/** 按需读取单条消息完整文本（工具结果截断后的「查看完整输出」入口）。 */
 	sessionsCatalogReadMessageFullText: "sessions:catalog-read-message-full-text",
 	sessionsCatalogCopy: "sessions:catalog-copy",

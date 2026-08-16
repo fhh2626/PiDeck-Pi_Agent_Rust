@@ -267,6 +267,10 @@ export function createBrowserApi(): PiDesktopApi {
 				}>(`/api/sessions/${encodeURIComponent(sessionId)}/reference-messages`);
 				return result.messages;
 			},
+			getContextControllerState: async () => ({
+				clearToolContent: false,
+				clearToolHistory: false,
+			}),
 			sendPrompt: async (input) => {
 				const response = await request<{
 					result: Awaited<ReturnType<PiDesktopApi["sessions"]["sendPrompt"]>>;

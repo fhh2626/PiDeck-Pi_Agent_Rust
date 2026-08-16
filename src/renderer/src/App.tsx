@@ -28,7 +28,7 @@ import {
   isLanWeb,
   missingElectronPreload,
 } from "./desktopApi";
-import { turnFlowSettingsAtom } from "./atoms/app-ui-atoms";
+import { contextControllerSettingsAtom, turnFlowSettingsAtom } from "./atoms/app-ui-atoms";
 // 文件链接路由：图片类型走弹窗预览
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico"]);
 const ConfigModal = lazy(() => import("./ConfigModal").then((m) => ({ default: m.ConfigModal })));
@@ -579,6 +579,18 @@ export function App() {
     settings.expandInterimDuringStream,
     settings.collapsePrevRunsOnNewTurn,
     setTurnFlowSettings,
+  ]);
+
+  const setContextControllerSettings = useSetAtom(contextControllerSettingsAtom);
+  useEffect(() => {
+    setContextControllerSettings({
+      piRpcNoExtensions: Boolean(settings.piRpcNoExtensions),
+      removedBuiltInExtensions: settings.removedBuiltInExtensions ?? [],
+    });
+  }, [
+    settings.piRpcNoExtensions,
+    settings.removedBuiltInExtensions,
+    setContextControllerSettings,
   ]);
 
   // Guard: hide git drawer when git management is disabled.

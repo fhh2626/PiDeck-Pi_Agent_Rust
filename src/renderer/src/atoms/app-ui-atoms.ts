@@ -41,3 +41,13 @@ export const turnFlowSettingsAtom = atom<TurnFlowSettings>({
 	collapsePrevRunsOnNewTurn: true,
 });
 
+export type ContextControllerSettings = {
+	piRpcNoExtensions: boolean;
+	removedBuiltInExtensions: readonly string[];
+};
+
+export const contextControllerSettingsAtom = atom<ContextControllerSettings>({
+	piRpcNoExtensions: false,
+	removedBuiltInExtensions: ["pi-better-compaction.ts"],
+});
+
