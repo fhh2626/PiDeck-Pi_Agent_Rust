@@ -187,8 +187,10 @@ export const zhCN = {
   "ctx.detail.costCny": "约合人民币",
   "ctx.switches.allTools": "全部工具",
   "ctx.switches.allToolsTooltip": "上下文包括工具所有内容（关闭时移除全部历史工具调用与结果）",
-  "ctx.switches.toolOutput": "工具输出",
-  "ctx.switches.toolOutputTooltip": "上下文包括工具执行内容（关闭时省略输出正文，保留调用记录）",
+  "ctx.switches.fileContent": "文件内容",
+  "ctx.switches.fileContentTooltip": "上下文包括 read 读出的文件正文（关闭时省略正文，保留路径与行号）",
+  "ctx.switches.commandOutput": "命令输出",
+  "ctx.switches.commandOutputTooltip": "上下文包括非 read 工具的输出（关闭时省略 bash/grep/websearch 等执行结果）",
   "ctx.switches.busyDisabled": "生成中不可改上下文",
   "ctx.switches.pluginDisabled": "上下文控制器未启用（可在设置中开启）",
   "ctx.switches.nextTurnNote": "设置在下一轮对话生效；官方上下文数字在下一次回复后更新。",
@@ -1149,7 +1151,7 @@ export const zhCN = {
   // 扩展管理：pi list 输出的 "(filtered)" 标记（settings 里对象形式配置，只选择性加载资源）
   "config.extensionFiltered": "过滤式安装",
   // 推荐扩展列表的本地化描述（ExtensionsTab 按 descriptionKey 取文案）
-  "config.extRecommended.piDeckContextController": "PiDeck-Q 内置：上下文控制器。/context-tool-content on|off 保留或去掉工具输出，/context-tools on|off 保留或去掉工具调用历史。默认全部保留。",
+  "config.extRecommended.piDeckContextController": "PiDeck-Q 内置：上下文控制器。/context-tools 控制全部工具历史，/context-files 控制 read 文件正文，/context-commands 控制非 read 工具输出。默认全部保留。",
   "config.extRecommended.piDeckTodo": "PiDeck-Q 内置：TODO 列表扩展，支持在对话中添加和管理任务项，自动追踪完成状态并在会话间持久化。",
   "config.extRecommended.piDeckPlanMode": "PiDeck-Q 内置：计划模式扩展，让 AI 在回复前首先生成执行计划，复杂任务一目了然。",
   "config.extRecommended.piDeckAskQuestion": "PiDeck-Q 内置：在对话中插入精心设计的问题卡片，引导 AI 给出更精准的回答。",

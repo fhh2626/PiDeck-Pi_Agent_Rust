@@ -268,8 +268,9 @@ export function createBrowserApi(): PiDesktopApi {
 				return result.messages;
 			},
 			getContextControllerState: async () => ({
-				clearToolContent: false,
 				clearToolHistory: false,
+				clearReadContent: false,
+				clearCommandContent: false,
 			}),
 			sendPrompt: async (input) => {
 				const response = await request<{

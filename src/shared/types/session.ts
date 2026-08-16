@@ -165,8 +165,12 @@ export type ImageContent = {
 };
 
 export type ContextControllerState = {
-	clearToolContent: boolean;
+	/** 丢掉全部 toolCall + toolResult */
 	clearToolHistory: boolean;
+	/** stub read 正文 */
+	clearReadContent: boolean;
+	/** stub 非 read 正文 */
+	clearCommandContent: boolean;
 };
 
 export type SendPromptInput = {

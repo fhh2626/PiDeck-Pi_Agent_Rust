@@ -1,7 +1,7 @@
 import { useAtomValue } from "jotai";
 import { selectAtom } from "jotai/utils";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Terminal, Wrench } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { FileText, Terminal, Wrench } from "lucide-react";
 import {
 	contextControllerSettingsAtom,
 	sessionRuntimeBySessionIdAtomFamily,
@@ -16,36 +16,42 @@ import { Switch } from "../ui-shadcn/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui-shadcn/tooltip";
 
 export type ContextSwitchState = {
-	toolContent: boolean;
 	toolHistory: boolean;
+	fileContent: boolean;
+	commandOutput: boolean;
 };
 
 const DEFAULT_SWITCH_STATE: ContextSwitchState = {
-	toolContent: true,
 	toolHistory: true,
+	fileContent: true,
+	commandOutput: true,
 };
 
 /**
  * 从 CTX widget 文本行解析当前开/关状态。
  * 行契约：
- *   "Tool content ON" | "Tool content OFF"
  *   "Tool history ON" | "Tool history OFF"
+ *   "File content ON" | "File content OFF"
+ *   "Command output ON" | "Command output OFF"
  */
 export function parseSwitchStateFromWidgetLines(lines?: readonly string[]): ContextSwitchState | null {
 	if (!lines || lines.length === 0) return null;
-	let toolContent: boolean | null = null;
 	let toolHistory: boolean | null = null;
+	let fileContent: boolean | null = null;
+	let commandOutput: boolean | null = null;
 
 	for (const line of lines) {
 		const trimmed = line.trim().toUpperCase();
-		if (trimmed === "TOOL CONTENT ON") toolContent = true;
-		else if (trimmed === "TOOL CONTENT OFF") toolContent = false;
-		else if (trimmed === "TOOL HISTORY ON") toolHistory = true;
+		if (trimmed === "TOOL HISTORY ON") toolHistory = true;
 		else if (trimmed === "TOOL HISTORY OFF") toolHistory = false;
+		else if (trimmed === "FILE CONTENT ON") fileContent = true;
+		else if (trimmed === "FILE CONTENT OFF") fileContent = false;
+		else if (trimmed === "COMMAND OUTPUT ON") commandOutput = true;
+		else if (trimmed === "COMMAND OUTPUT OFF") commandOutput = false;
 	}
 
-	if (toolContent != null && toolHistory != null) {
-		return { toolContent, toolHistory };
+	if (toolHistory != null && fileContent != null && commandOutput != null) {
+		return { toolHistory, fileContent, commandOutput };
 	}
 	return null;
 }
@@ -66,17 +72,100 @@ export function parseSavedEstimateFromWidgetLines(lines?: readonly string[]): st
 	return null;
 }
 
+/** 与插件 applyIncludeSwitch 同一张联动表：关总闸三项全关；开文件/命令则打开总闸。 */
+export function applyLocalSwitch(
+	state: ContextSwitchState,
+	key: keyof ContextSwitchState,
+	include: boolean,
+): ContextSwitchState {
+	if (key === "toolHistory") {
+		return include
+			? { ...state, toolHistory: true }
+			: { toolHistory: false, fileContent: false, commandOutput: false };
+	}
+	if (include) {
+		return { ...state, [key]: true, toolHistory: true };
+	}
+	return { ...state, [key]: false };
+}
+
+function commandForKey(key: keyof ContextSwitchState, include: boolean): string {
+	const flag = include ? "on" : "off";
+	if (key === "toolHistory") return `/context-tools ${flag}`;
+	if (key === "fileContent") return `/context-files ${flag}`;
+	return `/context-commands ${flag}`;
+}
+
+function tooltipKeyFor(key: keyof ContextSwitchState): "ctx.switches.allToolsTooltip" | "ctx.switches.fileContentTooltip" | "ctx.switches.commandOutputTooltip" {
+	if (key === "toolHistory") return "ctx.switches.allToolsTooltip";
+	if (key === "fileContent") return "ctx.switches.fileContentTooltip";
+	return "ctx.switches.commandOutputTooltip";
+}
+
+function ContextSwitchRow(props: {
+	icon: ReactNode;
+	label: string;
+	tooltip: string;
+	checked: boolean;
+	disabled: boolean;
+	disabledReason?: string;
+	savedEstimate: string | null;
+	onToggle: (next: boolean) => void;
+}) {
+	const rowClass = `flex items-center gap-1 text-xs text-muted-foreground select-none ${
+		props.disabled ? "cursor-not-allowed" : "cursor-pointer"
+	}`;
+	const labelClass = `flex items-center gap-1 ${props.disabled ? "opacity-50" : ""}`;
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<div
+					onClick={() => {
+						if (!props.disabled) props.onToggle(!props.checked);
+					}}
+					className={rowClass}
+				>
+					<span className={labelClass}>
+						{props.icon}
+						<span className="text-caption font-medium">{props.label}</span>
+					</span>
+					<Switch
+						size="sm"
+						disabled={props.disabled}
+						checked={props.checked}
+						onCheckedChange={props.onToggle}
+						onClick={(e) => e.stopPropagation()}
+						aria-label={props.tooltip}
+					/>
+				</div>
+			</TooltipTrigger>
+			<TooltipContent side="bottom" align="end" className="max-w-72">
+				{props.disabledReason ? (
+					props.disabledReason
+				) : (
+					<div className="grid gap-1">
+						<div>{props.tooltip}</div>
+						{!props.checked && (
+							<div className="border-t border-border/60 pt-1 text-muted-foreground text-micro">
+								{props.savedEstimate ? (
+									<div className="font-semibold text-primary">
+										{t("ctx.switches.savedEstimate", { saved: props.savedEstimate })}
+									</div>
+								) : null}
+								<div>{t("ctx.switches.nextTurnNote")}</div>
+							</div>
+						)}
+					</div>
+				)}
+			</TooltipContent>
+		</Tooltip>
+	);
+}
+
 /**
  * 会话头部右上角的上下文控制器开关组。
  * 挂载在官方上下文统计（SessionStatus）的左侧。
- *
- * 交互契约：
- * 1. 默认双 ON（新会话全部保留进上下文）。
- * 2. 历史会话：进入时优先读实时 widget；未启动时从会话 JSONL 解析上次 customEntry 快照。
- * 3. 拨动开关时静默下发 `/context-tools on|off` 或 `/context-tool-content on|off`（不向时间线添加气泡）。
- * 4. 互锁规则：关 history 则 content 联动关；开 content 则 history 联动开。
- * 5. 忙碌/生成中：禁用并提示「生成中不可改上下文」。
- * 6. 插件未启用：设置中关扩展或移除内置插件时禁用并提示「上下文控制器未启用」。
  */
 export function ContextControllerSwitches(props: { sessionId: string }) {
 	const { sessionId } = props;
@@ -94,24 +183,19 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 	);
 	const sendState = useAtomValue(sendStateSelector);
 
-	// 插件可用性判断：设置层全局禁用或内置列表移除本插件
 	const isPluginDisabled =
 		extSettings.piRpcNoExtensions ||
 		extSettings.removedBuiltInExtensions.includes("pi-deck-context-controller.ts");
 
-	// 忙碌状态检测：运行中或用户正在启动发送时不可改上下文（Rust 协议限制）
 	const isBusy = runtime?.status === "running" || isUserFacingSessionStart(sendState?.status);
 
 	const widgetLines = runtimeUi?.widgets?.["pi-deck-context-controller"];
 	const widgetState = useMemo(() => parseSwitchStateFromWidgetLines(widgetLines), [widgetLines]);
 	const savedEstimate = useMemo(() => parseSavedEstimateFromWidgetLines(widgetLines), [widgetLines]);
 
-	// 本地乐观状态（未收到 widget 事件时回退历史 IPC 查询结果或默认值）
 	const [persistedState, setPersistedState] = useState<ContextSwitchState>(DEFAULT_SWITCH_STATE);
-	// 拨动后短暂覆盖旧 widget，避免「先翻回去再等插件刷新」的闪烁。
 	const [pendingState, setPendingState] = useState<ContextSwitchState | null>(null);
 
-	// 会话切换时异步预拉取历史快照
 	useEffect(() => {
 		let cancelled = false;
 		if (!sessionId) return;
@@ -122,8 +206,9 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 			.then((res) => {
 				if (cancelled || !res) return;
 				setPersistedState({
-					toolContent: !res.clearToolContent,
 					toolHistory: !res.clearToolHistory,
+					fileContent: !res.clearReadContent,
+					commandOutput: !res.clearCommandContent,
 				});
 			})
 			.catch(() => {
@@ -138,65 +223,38 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 	useEffect(() => {
 		if (!pendingState || !widgetState) return;
 		if (
-			widgetState.toolContent === pendingState.toolContent &&
-			widgetState.toolHistory === pendingState.toolHistory
+			widgetState.toolHistory === pendingState.toolHistory &&
+			widgetState.fileContent === pendingState.fileContent &&
+			widgetState.commandOutput === pendingState.commandOutput
 		) {
 			setPendingState(null);
 		}
 	}, [pendingState, widgetState]);
 
-	// 权威状态：进行中的乐观更新 > 实时 widget > 历史快照
 	const currentState = pendingState ?? widgetState ?? persistedState;
 
-	const handleToggleHistory = useCallback(async (nextHistory: boolean) => {
+	const sendSilentCommand = useCallback(async (
+		key: keyof ContextSwitchState,
+		include: boolean,
+	) => {
 		if (isBusy || isPluginDisabled || !sessionId) return;
 		const prev = currentState;
-		const next = { toolHistory: nextHistory, toolContent: nextHistory ? prev.toolContent : false };
+		const next = applyLocalSwitch(prev, key, include);
 		setPendingState(next);
 		setPersistedState(next);
 
 		try {
-			const command = `/context-tools ${nextHistory ? "on" : "off"}`;
 			const result = await desktopApi.sessions.sendPrompt({
 				sessionId,
 				requestId: crypto.randomUUID(),
 				message: "",
-				agentMessage: command,
+				agentMessage: commandForKey(key, include),
 				silent: true,
 			});
 			if (!result.accepted) {
 				setPendingState(null);
 				setPersistedState(prev);
-				showNotice(result.error || t("ctx.switches.allToolsTooltip"), 3000, "error");
-			}
-		} catch (error) {
-			setPendingState(null);
-			setPersistedState(prev);
-			const message = error instanceof Error ? error.message : String(error);
-			showNotice(message, 3000, "error");
-		}
-	}, [currentState, isBusy, isPluginDisabled, sessionId]);
-
-	const handleToggleContent = useCallback(async (nextContent: boolean) => {
-		if (isBusy || isPluginDisabled || !sessionId) return;
-		const prev = currentState;
-		const next = { toolHistory: nextContent ? true : prev.toolHistory, toolContent: nextContent };
-		setPendingState(next);
-		setPersistedState(next);
-
-		try {
-			const command = `/context-tool-content ${nextContent ? "on" : "off"}`;
-			const result = await desktopApi.sessions.sendPrompt({
-				sessionId,
-				requestId: crypto.randomUUID(),
-				message: "",
-				agentMessage: command,
-				silent: true,
-			});
-			if (!result.accepted) {
-				setPendingState(null);
-				setPersistedState(prev);
-				showNotice(result.error || t("ctx.switches.toolOutputTooltip"), 3000, "error");
+				showNotice(result.error || t(tooltipKeyFor(key)), 3000, "error");
 			}
 		} catch (error) {
 			setPendingState(null);
@@ -213,100 +271,38 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 			? t("ctx.switches.busyDisabled")
 			: undefined;
 
-	const rowClass = `flex items-center gap-1 text-xs text-muted-foreground select-none ${
-		disabled ? "cursor-not-allowed" : "cursor-pointer"
-	}`;
-	const labelClass = `flex items-center gap-1 ${disabled ? "opacity-50" : ""}`;
-
 	return (
 		<div className="flex shrink-0 items-center gap-2 pr-1">
-			{/* 开关 1：全部工具。整行可点，但不做嵌套 button，避免 Space 冒泡连发两次命令。 */}
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<div
-						onClick={() => {
-							if (!disabled) void handleToggleHistory(!currentState.toolHistory);
-						}}
-						className={rowClass}
-					>
-						<span className={labelClass}>
-							<Wrench size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />
-							<span className="text-caption font-medium">{t("ctx.switches.allTools")}</span>
-						</span>
-						<Switch
-							size="sm"
-							disabled={disabled}
-							checked={currentState.toolHistory}
-							onCheckedChange={handleToggleHistory}
-							onClick={(e) => e.stopPropagation()}
-							aria-label={t("ctx.switches.allToolsTooltip")}
-						/>
-					</div>
-				</TooltipTrigger>
-				<TooltipContent side="bottom" align="end" className="max-w-72">
-					{disabledReason ? (
-						disabledReason
-					) : (
-						<div className="grid gap-1">
-							<div>{t("ctx.switches.allToolsTooltip")}</div>
-							{!currentState.toolHistory && (
-								<div className="border-t border-border/60 pt-1 text-muted-foreground text-micro">
-									{savedEstimate ? (
-										<div className="font-semibold text-primary">
-											{t("ctx.switches.savedEstimate", { saved: savedEstimate })}
-										</div>
-									) : null}
-									<div>{t("ctx.switches.nextTurnNote")}</div>
-								</div>
-							)}
-						</div>
-					)}
-				</TooltipContent>
-			</Tooltip>
-
-			{/* 开关 2：工具输出 */}
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<div
-						onClick={() => {
-							if (!disabled) void handleToggleContent(!currentState.toolContent);
-						}}
-						className={rowClass}
-					>
-						<span className={labelClass}>
-							<Terminal size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />
-							<span className="text-caption font-medium">{t("ctx.switches.toolOutput")}</span>
-						</span>
-						<Switch
-							size="sm"
-							disabled={disabled}
-							checked={currentState.toolContent}
-							onCheckedChange={handleToggleContent}
-							onClick={(e) => e.stopPropagation()}
-							aria-label={t("ctx.switches.toolOutputTooltip")}
-						/>
-					</div>
-				</TooltipTrigger>
-				<TooltipContent side="bottom" align="end" className="max-w-72">
-					{disabledReason ? (
-						disabledReason
-					) : (
-						<div className="grid gap-1">
-							<div>{t("ctx.switches.toolOutputTooltip")}</div>
-							{!currentState.toolContent && (
-								<div className="border-t border-border/60 pt-1 text-muted-foreground text-micro">
-									{savedEstimate ? (
-										<div className="font-semibold text-primary">
-											{t("ctx.switches.savedEstimate", { saved: savedEstimate })}
-										</div>
-									) : null}
-									<div>{t("ctx.switches.nextTurnNote")}</div>
-								</div>
-							)}
-						</div>
-					)}
-				</TooltipContent>
-			</Tooltip>
+			<ContextSwitchRow
+				icon={<Wrench size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />}
+				label={t("ctx.switches.allTools")}
+				tooltip={t("ctx.switches.allToolsTooltip")}
+				checked={currentState.toolHistory}
+				disabled={disabled}
+				disabledReason={disabledReason}
+				savedEstimate={savedEstimate}
+				onToggle={(next) => void sendSilentCommand("toolHistory", next)}
+			/>
+			<ContextSwitchRow
+				icon={<FileText size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />}
+				label={t("ctx.switches.fileContent")}
+				tooltip={t("ctx.switches.fileContentTooltip")}
+				checked={currentState.fileContent}
+				disabled={disabled}
+				disabledReason={disabledReason}
+				savedEstimate={savedEstimate}
+				onToggle={(next) => void sendSilentCommand("fileContent", next)}
+			/>
+			<ContextSwitchRow
+				icon={<Terminal size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />}
+				label={t("ctx.switches.commandOutput")}
+				tooltip={t("ctx.switches.commandOutputTooltip")}
+				checked={currentState.commandOutput}
+				disabled={disabled}
+				disabledReason={disabledReason}
+				savedEstimate={savedEstimate}
+				onToggle={(next) => void sendSilentCommand("commandOutput", next)}
+			/>
 		</div>
 	);
 }

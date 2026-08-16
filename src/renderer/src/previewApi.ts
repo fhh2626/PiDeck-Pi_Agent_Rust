@@ -391,8 +391,9 @@ export function createPreviewApi(): PiDesktopApi {
 				{ role: "assistant", content: "Preview assistant response", timestamp: Date.now() - 30000 },
 			],
 			getContextControllerState: async () => ({
-				clearToolContent: false,
 				clearToolHistory: false,
+				clearReadContent: false,
+				clearCommandContent: false,
 			}),
 			sendPrompt: async (input) => ({
 				accepted: true,

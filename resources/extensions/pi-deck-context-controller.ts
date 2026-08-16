@@ -1,12 +1,13 @@
 /**
  * PiDeck-Q-context-controller
  *
- * 两条命令控制「这些内容要不要进模型上下文」（默认 on = 全部保留）：
- *   /context-tool-content on|off  工具输出
- *   /context-tools on|off         工具调用历史（含输出）
+ * 三条命令控制「这些内容要不要进模型上下文」（默认 on = 全部保留）：
+ *   /context-tools on|off      全部工具调用历史（含输出）
+ *   /context-files on|off      仅 read 工具的文件正文
+ *   /context-commands on|off   非 read 工具的输出（bash/grep/edit/websearch 等）
  *
  * 命令语义：on = 保留，off = 去掉。
- * 蕴含：history off ⇒ content 也 off；content on ⇒ history 也 on。
+ * 联动：history off ⇒ 两项 content 也 off；任一项 content on ⇒ history 也 on。
  * 只裁发给模型的历史，不关当前轮工具能力。
  *
  * 必须走 `context` 钩子改写 AgentMessage：
@@ -18,16 +19,18 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export interface ContextControllerState {
-	clearToolContent: boolean;
 	clearToolHistory: boolean;
+	clearReadContent: boolean;
+	clearCommandContent: boolean;
 }
 
 export const DEFAULT_STATE: ContextControllerState = {
-	clearToolContent: false,
 	clearToolHistory: false,
+	clearReadContent: false,
+	clearCommandContent: false,
 };
 
-const OMITTED_TOOL_RESULT = "[Tool output omitted]";
+export type ContextSwitchKey = keyof ContextControllerState;
 
 export const ENTRY_TYPE = "pi-deck-context-controller";
 export const WIDGET_KEY = "pi-deck-context-controller";
@@ -57,40 +60,43 @@ type CustomStateEntry = {
 	data?: Partial<ContextControllerState>;
 };
 
+type ToolCallInfo = {
+	name: string;
+	arguments: unknown;
+};
+
 /**
- * 正规化两开关，并消化旧版字段。
- * includeTools=false / clearAll=true → 清全部 tools。
+ * 正规化三开关。未知/缺失字段按默认全开。
  */
 export function normalizeState(raw: unknown): ContextControllerState {
 	if (!raw || typeof raw !== "object") return { ...DEFAULT_STATE };
-	const typed = raw as Partial<ContextControllerState> & {
-		includeTools?: boolean;
-		clearAll?: boolean;
+	const typed = raw as Partial<ContextControllerState>;
+	const clearToolHistory = typed.clearToolHistory === true;
+	return {
+		clearToolHistory,
+		clearReadContent: clearToolHistory || typed.clearReadContent === true,
+		clearCommandContent: clearToolHistory || typed.clearCommandContent === true,
 	};
-
-	const clearToolHistory =
-		typed.clearToolHistory === true || typed.clearAll === true || typed.includeTools === false;
-	const clearToolContent = clearToolHistory || typed.clearToolContent === true;
-	return { clearToolContent, clearToolHistory };
 }
 
 /**
  * 按「是否保留进上下文」改开关。
- * include=false 表示去掉；history 去掉则 content 也去掉；content 恢复则 history 也恢复。
+ * include=false 表示去掉。
  */
 export function applyIncludeSwitch(
 	state: ContextControllerState,
-	key: keyof ContextControllerState,
+	key: ContextSwitchKey,
 	include: boolean,
 ): ContextControllerState {
 	if (key === "clearToolHistory") {
 		return include
 			? { ...state, clearToolHistory: false }
-			: { clearToolContent: true, clearToolHistory: true };
+			: { clearToolHistory: true, clearReadContent: true, clearCommandContent: true };
 	}
-	return include
-		? { clearToolContent: false, clearToolHistory: false }
-		: { ...state, clearToolContent: true };
+	if (include) {
+		return { ...state, [key]: false, clearToolHistory: false };
+	}
+	return { ...state, [key]: true };
 }
 
 export function restoreStateFromEntries(
@@ -138,21 +144,99 @@ function hasVisibleAssistantText(content: string | ContentBlock[] | undefined): 
 	});
 }
 
-function stubToolResult(message: AgentLikeMessage): AgentLikeMessage {
+function readStringField(record: Record<string, unknown>, keys: readonly string[]): string | undefined {
+	for (const key of keys) {
+		const value = record[key];
+		if (typeof value === "string" && value.trim()) return value.trim();
+	}
+	return undefined;
+}
+
+function formatLineRange(record: Record<string, unknown>): string | undefined {
+	const offset = record.offset;
+	const limit = record.limit;
+	if (typeof offset !== "number" || !Number.isFinite(offset)) return undefined;
+	const start = Math.max(1, Math.floor(offset));
+	if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
+		return `lines ${start}-${start + Math.floor(limit) - 1}`;
+	}
+	return `from line ${start}`;
+}
+
+/** 从 toolCall 参数拼 read / bash / web 占位文案。 */
+export function formatOmittedToolResult(toolName: string, args: unknown): string {
+	const name = toolName.trim().toLowerCase() || "tool";
+	const record = isRecord(args) ? args : {};
+
+	if (name === "read") {
+		const path = readStringField(record, ["path", "file_path", "filePath"]);
+		const range = formatLineRange(record);
+		if (path && range) return `[File content omitted: ${path} (${range})]`;
+		if (path) return `[File content omitted: ${path}]`;
+		return "[File content omitted]";
+	}
+	if (name === "bash") {
+		const command = readStringField(record, ["command", "cmd"]);
+		return command ? `[Command output omitted: ${command}]` : "[Command output omitted]";
+	}
+	if (name === "websearch" || name === "web_search") {
+		const query = readStringField(record, ["query", "q", "search"]);
+		return query ? `[Web search omitted: "${query}"]` : "[Web search omitted]";
+	}
+	if (name === "webfetch" || name === "web_fetch") {
+		const url = readStringField(record, ["url", "href"]);
+		return url ? `[Web fetch omitted: ${url}]` : "[Web fetch omitted]";
+	}
+	return `[Tool output omitted: ${name}]`;
+}
+
+function isReadTool(name: string): boolean {
+	return name.trim().toLowerCase() === "read";
+}
+
+function collectToolCalls(messages: readonly unknown[]): Map<string, ToolCallInfo> {
+	const calls = new Map<string, ToolCallInfo>();
+	for (const raw of messages) {
+		if (!isRecord(raw)) continue;
+		const message = raw as AgentLikeMessage;
+		if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+		for (const block of message.content) {
+			if (!block || block.type !== "toolCall") continue;
+			const id = typeof block.id === "string" ? block.id : "";
+			if (!id) continue;
+			calls.set(id, {
+				name: typeof block.name === "string" ? block.name : "",
+				arguments: block.arguments,
+			});
+		}
+	}
+	return calls;
+}
+
+function resolveToolInfo(message: AgentLikeMessage, calls: Map<string, ToolCallInfo>): ToolCallInfo {
+	const fromCall = message.toolCallId ? calls.get(message.toolCallId) : undefined;
+	const name = (typeof message.toolName === "string" && message.toolName
+		? message.toolName
+		: fromCall?.name) ?? "";
+	return { name, arguments: fromCall?.arguments };
+}
+
+function stubToolResult(message: AgentLikeMessage, text: string): AgentLikeMessage {
 	return {
 		...message,
-		content: [{ type: "text", text: OMITTED_TOOL_RESULT }],
+		content: [{ type: "text", text }],
 	};
 }
 
-function isPassthrough(state: ContextControllerState): boolean {
-	return !state.clearToolContent && !state.clearToolHistory;
+export function isPassthrough(state: ContextControllerState): boolean {
+	return !state.clearToolHistory && !state.clearReadContent && !state.clearCommandContent;
 }
 
 /**
- * 按两开关过滤发给模型的 AgentMessage。
- * - clearToolContent：toolResult 换成占位，保留 toolCall（满足成对协议）
+ * 按三开关过滤发给模型的 AgentMessage。
  * - clearToolHistory：丢掉 toolResult + toolCall；只剩思考/无正文的 assistant 整条丢掉
+ * - clearReadContent：仅 stub read 的 toolResult
+ * - clearCommandContent：stub 非 read 的 toolResult
  */
 export function filterContextMessages(
 	messages: readonly unknown[],
@@ -160,6 +244,7 @@ export function filterContextMessages(
 ): unknown[] {
 	if (isPassthrough(state)) return [...messages];
 
+	const calls = collectToolCalls(messages);
 	const next: unknown[] = [];
 	for (const raw of messages) {
 		if (!isRecord(raw)) {
@@ -179,8 +264,12 @@ export function filterContextMessages(
 				content: rewritten.content.filter((block) => !block || block.type !== "toolCall"),
 			};
 			if (!hasVisibleAssistantText(rewritten.content)) continue;
-		} else if (state.clearToolContent && rewritten.role === "toolResult") {
-			rewritten = stubToolResult(rewritten);
+		} else if (rewritten.role === "toolResult" && !state.clearToolHistory) {
+			const info = resolveToolInfo(rewritten, calls);
+			const shouldStub = isReadTool(info.name) ? state.clearReadContent : state.clearCommandContent;
+			if (shouldStub) {
+				rewritten = stubToolResult(rewritten, formatOmittedToolResult(info.name, info.arguments));
+			}
 		}
 
 		next.push(rewritten);
@@ -259,20 +348,22 @@ export function formatUsageLine(stats: WidgetUsageStats): string {
 }
 
 export type ContextControllerStatus = {
-	toolContent: "on" | "off";
 	toolHistory: "on" | "off";
+	fileContent: "on" | "off";
+	commandOutput: "on" | "off";
 };
 
-/** 当前对话两档的可读状态，供命令和其它扩展查询。 */
+/** 当前对话三档的可读状态，供命令和其它扩展查询。 */
 export function getContextControllerStatus(state: ContextControllerState): ContextControllerStatus {
 	return {
-		toolContent: state.clearToolContent ? "off" : "on",
 		toolHistory: state.clearToolHistory ? "off" : "on",
+		fileContent: state.clearReadContent ? "off" : "on",
+		commandOutput: state.clearCommandContent ? "off" : "on",
 	};
 }
 
 export function formatStatusText(status: ContextControllerStatus): string {
-	return `tool-content ${status.toolContent} | tool-history ${status.toolHistory}`;
+	return `tool-history ${status.toolHistory} | file-content ${status.fileContent} | command-output ${status.commandOutput}`;
 }
 
 export function buildWidgetLines(
@@ -281,8 +372,9 @@ export function buildWidgetLines(
 ): string[] {
 	const lines = [
 		stats ? formatUsageLine(stats) : "~0 tok",
-		`Tool content ${formatFlag(!state.clearToolContent)}`,
 		`Tool history ${formatFlag(!state.clearToolHistory)}`,
+		`File content ${formatFlag(!state.clearReadContent)}`,
+		`Command output ${formatFlag(!state.clearCommandContent)}`,
 	];
 	if (stats && stats.savedTokens > 0) {
 		lines.push(`Saved ~${formatCompactTokens(stats.savedTokens)} (${stats.percentSaved}%)`);
@@ -321,7 +413,7 @@ export default function piDeckContextControllerExtension(pi: ExtensionAPI): void
 	}
 
 	function applyExplicitSwitch(
-		key: keyof ContextControllerState,
+		key: ContextSwitchKey,
 		args: unknown,
 		ctx: ExtensionContext,
 		usage: string,
@@ -334,32 +426,29 @@ export default function piDeckContextControllerExtension(pi: ExtensionAPI): void
 		applyState(applyIncludeSwitch(currentState, key, include), ctx);
 	}
 
-	pi.registerCommand("context-tool-content", {
-		description: "Keep or drop historical tool outputs in model context. on = keep, off = omit. Requires on|off.",
-		handler: async (args, ctx) => {
-			applyExplicitSwitch(
-				"clearToolContent",
-				args,
-				ctx,
-				"/context-tool-content on|off",
-			);
-		},
-	});
-
 	pi.registerCommand("context-tools", {
 		description: "Keep or drop historical tool calls in model context. on = keep, off = drop (also drops outputs). Requires on|off.",
 		handler: async (args, ctx) => {
-			applyExplicitSwitch(
-				"clearToolHistory",
-				args,
-				ctx,
-				"/context-tools on|off",
-			);
+			applyExplicitSwitch("clearToolHistory", args, ctx, "/context-tools on|off");
+		},
+	});
+
+	pi.registerCommand("context-files", {
+		description: "Keep or drop historical read-tool file contents in model context. on = keep, off = omit. Requires on|off.",
+		handler: async (args, ctx) => {
+			applyExplicitSwitch("clearReadContent", args, ctx, "/context-files on|off");
+		},
+	});
+
+	pi.registerCommand("context-commands", {
+		description: "Keep or drop historical non-read tool outputs in model context. on = keep, off = omit. Requires on|off.",
+		handler: async (args, ctx) => {
+			applyExplicitSwitch("clearCommandContent", args, ctx, "/context-commands on|off");
 		},
 	});
 
 	pi.registerCommand("context-status", {
-		description: "Show whether tool content and tool history are currently in this chat's model context",
+		description: "Show whether tool history, file contents and command outputs are in this chat's model context",
 		handler: async (_args, ctx) => {
 			refreshWidget(ctx);
 			ctx.ui.notify(`Context controller: ${formatStatusText(getContextControllerStatus(currentState))}`, "info");
@@ -367,7 +456,7 @@ export default function piDeckContextControllerExtension(pi: ExtensionAPI): void
 	});
 
 	pi.registerCommand("context-reset", {
-		description: "Restore default: keep tool content and tool history in context",
+		description: "Restore default: keep tool history, file contents and command outputs in context",
 		handler: async (_args, ctx) => {
 			applyState(DEFAULT_STATE, ctx);
 		},
