@@ -1,6 +1,6 @@
 import { useAtomValue } from "jotai";
 import { useState } from "react";
-import { ClipboardList, ListChecks, X } from "lucide-react";
+import { ClipboardList, ListChecks, SlidersHorizontal, X } from "lucide-react";
 import {
 	sessionRuntimeBySessionIdAtomFamily,
 	sessionRuntimeUiBySessionIdAtomFamily,
@@ -163,9 +163,13 @@ function WidgetChip(props: {
 	const title = widgetDisplayTitle(props.widgetKey);
 	const { done, total } = widgetProgress(props.lines);
 	// 无 ☑/☐ 行（如 todo 折叠态只回 "2/4" 一行）时，chip 摘要退化为首行文本
+	const isContextController = props.widgetKey === "pi-deck-context-controller";
 	const summary = total > 0 ? `${done}/${total}` : (props.lines[0] ?? "");
-	const Icon =
-		props.widgetKey === "pi-deck-plan-todos" ? ClipboardList : ListChecks;
+	const Icon = isContextController
+		? SlidersHorizontal
+		: props.widgetKey === "pi-deck-plan-todos"
+			? ClipboardList
+			: ListChecks;
 	// 全部完成时用成功色描边提示，一眼可辨无需再点开
 	const allDone = total > 0 && done === total;
 	return (
@@ -217,15 +221,26 @@ function WidgetChip(props: {
 					>
 						<X className="size-3.5" aria-hidden="true" />
 					</Button>
-					<TodoList
-						title={title}
-						items={parseAgentTodoItems(props.lines)}
-						defaultOpen
-						collapseOnComplete
-						compact
-						maxHeight={320}
-					className="rounded-none border-0"
-					/>
+					{isContextController ? (
+						<div className="px-3 py-3 pr-8">
+							<div className="mb-2 text-xs font-semibold">{title}</div>
+							<div className="space-y-1 text-xs leading-5 text-muted-foreground">
+								{props.lines.map((line) => (
+									<div key={line}>{line}</div>
+								))}
+							</div>
+						</div>
+					) : (
+						<TodoList
+							title={title}
+							items={parseAgentTodoItems(props.lines)}
+							defaultOpen
+							collapseOnComplete
+							compact
+							maxHeight={320}
+							className="rounded-none border-0"
+						/>
+					)}
 				</div>
 			</PopoverContent>
 		</Popover>

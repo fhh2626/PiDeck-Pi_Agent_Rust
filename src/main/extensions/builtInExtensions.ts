@@ -7,6 +7,7 @@ import { basename, join } from "node:path";
  */
 export const BUILT_IN_EXTENSIONS = [
 	"pi-deck-ask-question.ts",
+	"pi-deck-context-controller.ts",
 	"pi-deck-nul-redirect-fix.ts",
 	"pi-deck-plan-mode.ts",
 	"pi-deck-security-gate.ts",

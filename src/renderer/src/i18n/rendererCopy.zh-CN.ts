@@ -519,6 +519,7 @@ export const zhCN = {
   "app.widgetsToggle": "待办",
   "app.widgetTitleTodo": "TODO",
   "app.widgetTitlePlan": "PLAN",
+  "app.widgetTitleContext": "CTX",
   "app.todoListTitle": "待办事项",
   "app.todoListEmpty": "暂无任务",
   "app.todoStatusPending": "待处理",
@@ -1140,6 +1141,7 @@ export const zhCN = {
   // 扩展管理：pi list 输出的 "(filtered)" 标记（settings 里对象形式配置，只选择性加载资源）
   "config.extensionFiltered": "过滤式安装",
   // 推荐扩展列表的本地化描述（ExtensionsTab 按 descriptionKey 取文案）
+  "config.extRecommended.piDeckContextController": "PiDeck-Q 内置：上下文控制器。/context-tool-content on|off 保留或去掉工具输出，/context-tools on|off 保留或去掉工具调用历史。默认全部保留。",
   "config.extRecommended.piDeckTodo": "PiDeck-Q 内置：TODO 列表扩展，支持在对话中添加和管理任务项，自动追踪完成状态并在会话间持久化。",
   "config.extRecommended.piDeckPlanMode": "PiDeck-Q 内置：计划模式扩展，让 AI 在回复前首先生成执行计划，复杂任务一目了然。",
   "config.extRecommended.piDeckAskQuestion": "PiDeck-Q 内置：在对话中插入精心设计的问题卡片，引导 AI 给出更精准的回答。",
