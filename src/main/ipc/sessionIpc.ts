@@ -340,6 +340,10 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
 				}
 				await sessionCatalog.remove(sessionId);
 				void appLogger.info("session", "Catalog session deleted", { sessionId, filePath: entry.filePath });
+				const window = getMainWindow();
+				if (window && !window.isDestroyed()) {
+					window.webContents.send(ipcChannels.sessionsCatalogRefreshed, { projectId: entry.projectId });
+				}
 				return true;
 			} catch (error) {
 				// 会话删除失败（文件删除失败/记录移除失败/会话使用中拦截）也要留痕，便于事后追踪。

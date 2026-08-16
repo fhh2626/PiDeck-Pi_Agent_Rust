@@ -205,7 +205,7 @@ import { XuePromptManager } from "./prompts/XuePromptManager";
 import { SkillManager } from "./skills/SkillManager";
 import { ExtensionManager } from "./extensions/ExtensionManager";
 import { ProjectResourceManager } from "./projects/ProjectResourceManager";
-import { registerProjectsIpc } from "./ipc/projectsIpc";
+import { listVisibleProjects, registerProjectsIpc } from "./ipc/projectsIpc";
 import { registerUsageStatsIpc } from "./ipc/usageStatsIpc";
 import { UsageStatsService } from "./usageStats/UsageStatsService";
 import { readLastWindowBounds, saveLastWindowBounds } from "./windowState";
@@ -410,6 +410,9 @@ async function createAnonymousSession(
 	// Agent 启动可能包含 spawn/get_state/历史准备；匿名会话先返回可选中的 Session，
 	// 再后台绑定 runtime。这样欢迎页点击后能立即进入输入框，启动失败仍通过 detach/日志收敛。
 	void activateAnonymousRuntime(session, project, input).catch(() => undefined);
+	if (mainWindow && !mainWindow.isDestroyed()) {
+		mainWindow.webContents.send(ipcChannels.sessionsCatalogRefreshed, { projectId: session.projectId });
+	}
 	return { session };
 }
 
@@ -1940,6 +1943,12 @@ app.whenReady().then(async () => {
 		deleteProject: async (projectId) => {
 			if (!projectStore.get(projectId) || projectStore.get(projectId)?.kind === "chat") return false;
 			await projectStore.remove(projectId);
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send(
+					ipcChannels.projectsChanged,
+					listVisibleProjects(projectStore, settingsStore),
+				);
+			}
 			return true;
 		},
 		listModels: () => fetchModelList(piLocator, settingsStore),
@@ -1981,13 +1990,17 @@ app.whenReady().then(async () => {
 		createSessionDraft: async (input) => {
 			const project = projectStore.get(input.projectId);
 			if (!project) throw new Error(mainCopy("project.notFound"));
-			return sessionCatalog.createDraft({
+			const record = await sessionCatalog.createDraft({
 				projectId: input.projectId,
 				title: input.title?.trim() || mainCopy("session.newTitle"),
 				environment: settingsStore.get().wslEnabled ? "wsl" : "native",
 				model: input.model,
 				thinkingLevel: input.thinkingLevel,
 			});
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send(ipcChannels.sessionsCatalogRefreshed, { projectId: input.projectId });
+			}
+			return record;
 		},
 		createAnonymousSession,
 		updateSessionRecord: async (sessionId, patch) => {
@@ -2003,10 +2016,14 @@ app.whenReady().then(async () => {
 					await sessionScanner.rename(entry.filePath, title);
 				}
 			}
-			return sessionCatalog.update(sessionId, {
+			const record = await sessionCatalog.update(sessionId, {
 				...patch,
 				title: title || undefined,
 			});
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send(ipcChannels.sessionsCatalogRefreshed, { projectId: record.projectId });
+			}
+			return record;
 		},
 		deleteSessionRecord: async (sessionId) => {
 			const entry = sessionCatalog.get(sessionId);
@@ -2017,8 +2034,12 @@ app.whenReady().then(async () => {
 			) {
 				throw new Error(mainCopy("session.stopBeforeDelete"));
 			}
+			const projectId = entry.projectId;
 			if (entry.filePath) await sessionScanner.delete(entry.filePath);
 			await sessionCatalog.remove(sessionId);
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send(ipcChannels.sessionsCatalogRefreshed, { projectId });
+			}
 			return true;
 		},
 		copySessionRecord: (sessionId) => copyCatalogSession(sessionId),

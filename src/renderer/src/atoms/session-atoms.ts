@@ -190,6 +190,7 @@ export const sessionMessageCacheBySessionIdAtomFamily = atomFamily(
     selectAtom(sessionMessagesCacheAtom, (cache) => cache[sessionId], Object.is),
 );
 
+
 /**
  * 会话切换时的滚动位置锚点（per-session，切走保存、切回恢复）。
  * 只保存「非跟底」状态：用户正在查看历史时切走，回来时停留在原位置；
@@ -364,6 +365,12 @@ export const newTurnCollapseTickBySessionIdAtomFamily = atomFamily((sessionId: s
 
 export const sessionMessageLruAtom = atom<string[]>([]);
 export const sessionMessageLoadStateAtom = atom<Record<string, SessionLoadState>>({});
+
+/** 只订本会话 loadState，避免其它会话 loading/error 拖着重渲染时间线。 */
+export const sessionMessageLoadStateBySessionIdAtomFamily = atomFamily(
+  (sessionId: string) =>
+    selectAtom(sessionMessageLoadStateAtom, (all) => all[sessionId], Object.is),
+);
 export const sessionCatalogLoadStateAtom = atom<Record<string, SessionLoadState>>({});
 
 export const currentSessionAtom = atom((get) => {
@@ -1585,6 +1592,7 @@ export const removeSessionStateAtom = atom(null, (get, set, sessionId: string) =
   newTurnCollapseTickBySessionIdAtomFamily.remove(sessionId);
   streamingTextBySessionIdAtomFamily.remove(sessionId);
   sessionMessageCacheBySessionIdAtomFamily.remove(sessionId);
+  sessionMessageLoadStateBySessionIdAtomFamily.remove(sessionId);
   set(streamingTextByIdAtom, (prevMap) => {
     if (!(sessionId in prevMap)) return prevMap;
     const nextMap = { ...prevMap };

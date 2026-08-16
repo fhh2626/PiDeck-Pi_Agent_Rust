@@ -205,6 +205,15 @@ export function WebChatApp() {
 				setState(next);
 				syncRuntimeMessages(next, activeSessionIdRef.current);
 				setConnected(true);
+				// 清理已被外部删除的会话缓存
+				const validSessionIds = new Set(next.sessions.map((s) => s.id));
+				for (const id of Object.keys(messagesBySessionRef.current)) {
+					if (!validSessionIds.has(id)) {
+						delete messagesBySessionRef.current[id];
+						delete historyMetaRef.current[id];
+						loadedSessionsRef.current.delete(id);
+					}
+				}
 				// 初始页面保持空会话，让用户明确选择项目/会话；外部删除当前会话时也回到空状态。
 				if (activeSessionIdRef.current && !next.sessions.some((session) => session.id === activeSessionIdRef.current)) {
 					setActiveSessionId("");
