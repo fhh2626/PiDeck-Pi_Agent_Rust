@@ -51,6 +51,22 @@ export function parseSwitchStateFromWidgetLines(lines?: readonly string[]): Cont
 }
 
 /**
+ * 从 CTX widget 文本行解析当前估算的节省量。
+ * 行契约：
+ *   "Saved ~10k (83%)"
+ */
+export function parseSavedEstimateFromWidgetLines(lines?: readonly string[]): string | null {
+	if (!lines || lines.length === 0) return null;
+	for (const line of lines) {
+		const match = line.trim().match(/^Saved\s+(.+)$/i);
+		if (match && match[1]) {
+			return match[1].trim();
+		}
+	}
+	return null;
+}
+
+/**
  * 会话头部右上角的上下文控制器开关组。
  * 挂载在官方上下文统计（SessionStatus）的左侧。
  *
@@ -88,6 +104,7 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 
 	const widgetLines = runtimeUi?.widgets?.["pi-deck-context-controller"];
 	const widgetState = useMemo(() => parseSwitchStateFromWidgetLines(widgetLines), [widgetLines]);
+	const savedEstimate = useMemo(() => parseSavedEstimateFromWidgetLines(widgetLines), [widgetLines]);
 
 	// 本地乐观状态（未收到 widget 事件时回退历史 IPC 查询结果或默认值）
 	const [persistedState, setPersistedState] = useState<ContextSwitchState>(DEFAULT_SWITCH_STATE);
@@ -196,53 +213,98 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 			? t("ctx.switches.busyDisabled")
 			: undefined;
 
+	const rowClass = `flex items-center gap-1 text-xs text-muted-foreground select-none ${
+		disabled ? "cursor-not-allowed" : "cursor-pointer"
+	}`;
+	const labelClass = `flex items-center gap-1 ${disabled ? "opacity-50" : ""}`;
+
 	return (
 		<div className="flex shrink-0 items-center gap-2 pr-1">
-			{/* 开关 1：全部工具 */}
+			{/* 开关 1：全部工具。整行可点，但不做嵌套 button，避免 Space 冒泡连发两次命令。 */}
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<label
-						className={`flex items-center gap-1 text-xs text-muted-foreground select-none ${
-							disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-						}`}
+					<div
+						onClick={() => {
+							if (!disabled) void handleToggleHistory(!currentState.toolHistory);
+						}}
+						className={rowClass}
 					>
-						<Wrench size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />
-						<span className="text-caption font-medium">{t("ctx.switches.allTools")}</span>
+						<span className={labelClass}>
+							<Wrench size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+							<span className="text-caption font-medium">{t("ctx.switches.allTools")}</span>
+						</span>
 						<Switch
 							size="sm"
 							disabled={disabled}
 							checked={currentState.toolHistory}
 							onCheckedChange={handleToggleHistory}
+							onClick={(e) => e.stopPropagation()}
 							aria-label={t("ctx.switches.allToolsTooltip")}
 						/>
-					</label>
+					</div>
 				</TooltipTrigger>
-				<TooltipContent side="bottom" align="end">
-					{disabledReason ?? t("ctx.switches.allToolsTooltip")}
+				<TooltipContent side="bottom" align="end" className="max-w-72">
+					{disabledReason ? (
+						disabledReason
+					) : (
+						<div className="grid gap-1">
+							<div>{t("ctx.switches.allToolsTooltip")}</div>
+							{!currentState.toolHistory && (
+								<div className="border-t border-border/60 pt-1 text-muted-foreground text-micro">
+									{savedEstimate ? (
+										<div className="font-semibold text-primary">
+											{t("ctx.switches.savedEstimate", { saved: savedEstimate })}
+										</div>
+									) : null}
+									<div>{t("ctx.switches.nextTurnNote")}</div>
+								</div>
+							)}
+						</div>
+					)}
 				</TooltipContent>
 			</Tooltip>
 
 			{/* 开关 2：工具输出 */}
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<label
-						className={`flex items-center gap-1 text-xs text-muted-foreground select-none ${
-							disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-						}`}
+					<div
+						onClick={() => {
+							if (!disabled) void handleToggleContent(!currentState.toolContent);
+						}}
+						className={rowClass}
 					>
-						<Terminal size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />
-						<span className="text-caption font-medium">{t("ctx.switches.toolOutput")}</span>
+						<span className={labelClass}>
+							<Terminal size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+							<span className="text-caption font-medium">{t("ctx.switches.toolOutput")}</span>
+						</span>
 						<Switch
 							size="sm"
 							disabled={disabled}
 							checked={currentState.toolContent}
 							onCheckedChange={handleToggleContent}
+							onClick={(e) => e.stopPropagation()}
 							aria-label={t("ctx.switches.toolOutputTooltip")}
 						/>
-					</label>
+					</div>
 				</TooltipTrigger>
-				<TooltipContent side="bottom" align="end">
-					{disabledReason ?? t("ctx.switches.toolOutputTooltip")}
+				<TooltipContent side="bottom" align="end" className="max-w-72">
+					{disabledReason ? (
+						disabledReason
+					) : (
+						<div className="grid gap-1">
+							<div>{t("ctx.switches.toolOutputTooltip")}</div>
+							{!currentState.toolContent && (
+								<div className="border-t border-border/60 pt-1 text-muted-foreground text-micro">
+									{savedEstimate ? (
+										<div className="font-semibold text-primary">
+											{t("ctx.switches.savedEstimate", { saved: savedEstimate })}
+										</div>
+									) : null}
+									<div>{t("ctx.switches.nextTurnNote")}</div>
+								</div>
+							)}
+						</div>
+					)}
 				</TooltipContent>
 			</Tooltip>
 		</div>

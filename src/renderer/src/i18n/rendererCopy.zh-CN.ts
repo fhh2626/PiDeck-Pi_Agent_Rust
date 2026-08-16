@@ -191,6 +191,8 @@ export const zhCN = {
   "ctx.switches.toolOutputTooltip": "上下文包括工具执行内容（关闭时省略输出正文，保留调用记录）",
   "ctx.switches.busyDisabled": "生成中不可改上下文",
   "ctx.switches.pluginDisabled": "上下文控制器未启用（可在设置中开启）",
+  "ctx.switches.nextTurnNote": "设置在下一轮对话生效；官方上下文数字在下一次回复后更新。",
+  "ctx.switches.savedEstimate": "预计下次发送节省 {saved}",
   "app.cycleModel": "切换模型",
   "app.compact": "压缩",
   "app.compactUsage": "压缩 {percent}%",

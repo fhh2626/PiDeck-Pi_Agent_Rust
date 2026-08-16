@@ -191,6 +191,8 @@ export const enUS: Record<TranslationKey, string> = {
   "ctx.switches.toolOutputTooltip": "Include tool execution outputs in context (omits large output text when off)",
   "ctx.switches.busyDisabled": "Can't change context while generating",
   "ctx.switches.pluginDisabled": "Context controller is disabled (enable in Settings)",
+  "ctx.switches.nextTurnNote": "Applies to the next prompt; context usage numbers update after the next reply.",
+  "ctx.switches.savedEstimate": "Estimated savings on next turn: {saved}",
   "app.cycleModel": "Cycle Model",
   "app.compact": "Compact",
   "app.compactUsage": "Compact {percent}%",

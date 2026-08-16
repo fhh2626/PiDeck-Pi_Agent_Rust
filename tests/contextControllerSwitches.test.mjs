@@ -35,7 +35,7 @@ function sameJson(actual, expected) {
 }
 
 test("parseSwitchStateFromWidgetLines extracts toolContent and toolHistory correctly", () => {
-	const { parseSwitchStateFromWidgetLines } = compile(
+	const { parseSwitchStateFromWidgetLines, parseSavedEstimateFromWidgetLines } = compile(
 		"src/renderer/src/components/session/ContextControllerSwitches.tsx",
 		{
 			jotai: {},
@@ -54,6 +54,8 @@ test("parseSwitchStateFromWidgetLines extracts toolContent and toolHistory corre
 
 	assert.equal(parseSwitchStateFromWidgetLines(undefined), null);
 	assert.equal(parseSwitchStateFromWidgetLines([]), null);
+	assert.equal(parseSavedEstimateFromWidgetLines(undefined), null);
+	assert.equal(parseSavedEstimateFromWidgetLines([]), null);
 
 	sameJson(
 		parseSwitchStateFromWidgetLines([
@@ -62,6 +64,14 @@ test("parseSwitchStateFromWidgetLines extracts toolContent and toolHistory corre
 			"Tool history ON",
 		]),
 		{ toolContent: true, toolHistory: true },
+	);
+	assert.equal(
+		parseSavedEstimateFromWidgetLines([
+			"~12k/256k 4.7%",
+			"Tool content ON",
+			"Tool history ON",
+		]),
+		null,
 	);
 
 	sameJson(
@@ -73,6 +83,15 @@ test("parseSwitchStateFromWidgetLines extracts toolContent and toolHistory corre
 		]),
 		{ toolContent: false, toolHistory: true },
 	);
+	assert.equal(
+		parseSavedEstimateFromWidgetLines([
+			"~8k/256k 3.1%",
+			"Tool content OFF",
+			"Tool history ON",
+			"Saved ~4k (33%)",
+		]),
+		"~4k (33%)",
+	);
 
 	sameJson(
 		parseSwitchStateFromWidgetLines([
@@ -82,6 +101,15 @@ test("parseSwitchStateFromWidgetLines extracts toolContent and toolHistory corre
 			"Saved ~10k (83%)",
 		]),
 		{ toolContent: false, toolHistory: false },
+	);
+	assert.equal(
+		parseSavedEstimateFromWidgetLines([
+			"~2k/256k 0.8%",
+			"Tool content OFF",
+			"Tool history OFF",
+			"Saved ~10k (83%)",
+		]),
+		"~10k (83%)",
 	);
 });
 
@@ -163,10 +191,19 @@ test("i18n dictionaries contain matching context switch keys in both locales", (
 		"ctx.switches.toolOutputTooltip",
 		"ctx.switches.busyDisabled",
 		"ctx.switches.pluginDisabled",
+		"ctx.switches.nextTurnNote",
+		"ctx.switches.savedEstimate",
 	];
 
 	for (const key of keys) {
 		assert.ok(zh.includes(`"${key}"`), `zh-CN missing ${key}`);
 		assert.ok(en.includes(`"${key}"`), `en-US missing ${key}`);
 	}
+});
+
+test("switch component has compact sm size and symmetric translate-x-2", () => {
+	const source = readFileSync("src/renderer/src/components/ui-shadcn/switch.tsx", "utf8");
+	assert.match(source, /data-\[size=sm\]:h-3\s+data-\[size=sm\]:w-5\s+data-\[size=sm\]:p-0\.5/);
+	assert.match(source, /data-\[size=sm\]:size-2\s+data-\[size=sm\]:data-\[state=checked\]:translate-x-2/);
+	assert.match(source, /data-\[size=default\]:size-4/);
 });
