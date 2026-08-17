@@ -134,7 +134,7 @@ function ContextKeepSpinBox(props: {
 							}
 						}}
 						onClick={(e) => e.stopPropagation()}
-						className="h-5 w-8 rounded border border-input bg-transparent px-0.5 text-center text-caption font-medium tabular-nums shadow-2xs outline-none focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
+						className="h-5 w-9 [appearance:textfield] rounded border border-input bg-transparent px-0.5 text-center text-caption font-medium tabular-nums shadow-2xs outline-none focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 disabled:cursor-not-allowed [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
 						aria-label={t("ctx.switches.keepRecentTooltip")}
 					/>
 					<span className="text-caption font-medium whitespace-nowrap">{t("ctx.switches.keepRecentUnit")}</span>
