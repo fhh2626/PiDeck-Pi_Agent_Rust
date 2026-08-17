@@ -71,6 +71,18 @@ test("buildTurnDisplay keeps strict order and splits interim/final answers", () 
   assert.match(buildSource, /respectShowThinking && !showThinking/);
 });
 
+test("ask lead-in stays pinned via hasPendingAsk or a following ask_question tool", () => {
+  assert.match(buildSource, /hasPendingAsk/);
+  assert.match(buildSource, /shouldPinAskLeadIn/);
+  assert.match(buildSource, /isAskQuestionToolGroup/);
+  assert.match(turnRowSource, /pickActiveAskRequest/);
+  // 会话级 pending ask 只能作用于最后一个 agent-run，避免旧轮普通 toolUse 说明被提出来。
+  assert.match(turnRowSource, /props\.isLastAgentRun && pickActiveAskRequest/);
+  assert.match(buildSource, /resolveAskLeadInPin/);
+  assert.match(turnRowSource, /resolveAskLeadInPin/);
+  assert.match(turnRowSource, /askLeadInPinnedRef/);
+});
+
 // 汇总统计：纯数字（工具/思考/中间回复），折叠态不显示内容预览。
 test("segmentSummary counts tools, thinking steps and interim replies without preview text", () => {
   assert.match(summarySource, /toolCount/);

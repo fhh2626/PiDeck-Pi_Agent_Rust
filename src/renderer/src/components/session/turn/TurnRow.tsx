@@ -2,7 +2,8 @@ import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { ChevronUp, Clock, Share, SquarePen, Trash } from "lucide-react";
 import { atom, useAtomValue } from "jotai";
 import type { ImageContent } from "../../../../../shared/types";
-import { liveTextStreamingBySessionAtom, newTurnCollapseTickBySessionIdAtomFamily } from "../../../atoms/session-atoms";
+import { liveTextStreamingBySessionAtom, newTurnCollapseTickBySessionIdAtomFamily, type SessionRuntimeUiState } from "../../../atoms/session-atoms";
+import { sessionRuntimeUiBySessionIdAtomFamily } from "../../../atoms/session-selectors";
 import { turnFlowSettingsAtom } from "../../../atoms/app-ui-atoms";
 import { t } from "../../../i18n";
 import { Button } from "../../ui-shadcn/button";
@@ -10,9 +11,10 @@ import { Collapsible, CollapsibleContent } from "../../ui-shadcn/collapsible";
 import { formatDuration, formatTime, stripAnsi, stripThinkingTags } from "../TimelineFormat";
 import { LiveDuration } from "../LiveDuration";
 import { CopyMenu, stripMarkdown } from "../SurfaceComponents";
-import { buildTurnDisplay, hasFoldableContent } from "../timeline/buildTurnDisplay";
+import { buildTurnDisplay, hasAskQuestionTool, hasFoldableContent, resolveAskLeadInPin } from "../timeline/buildTurnDisplay";
 import { resolveLiveInterimId } from "../timeline/liveMount";
 import { buildProcessSummary } from "../timeline/segmentSummary";
+import { pickActiveAskRequest } from "../../../utils/askUi";
 import type {
 	AgentRunItem,
 	MessageItem,
@@ -31,6 +33,8 @@ import type { DiffFileHandler } from "../ToolCallComponents";
 const NO_LIVE_TEXT_ATOM = atom(false);
 /** sessionId 为空时的占位 atom：恒 0（无会话不订阅新一轮信号）。 */
 const NO_TURN_TICK_ATOM = atom(0);
+/** sessionId 为空时的占位 atom：恒 undefined（无会话不订阅 UI 请求）。 */
+const NO_RUNTIME_UI_ATOM = atom<SessionRuntimeUiState | undefined>(undefined);
 
 /**
  * 一轮 AI 回答的扁平容器：左侧竖线聚合，内含思考/工具/回答。
@@ -94,6 +98,31 @@ export const TurnRow = memo(
 	const showDuration =
 		(isComplete && !isRunLive && duration > 0) || (isRunLive && run.startedAt > 0);
 
+	const runtimeUi = useAtomValue(
+		props.sessionId
+			? sessionRuntimeUiBySessionIdAtomFamily(props.sessionId)
+			: NO_RUNTIME_UI_ATOM,
+	);
+
+
+	// hasPendingAsk 是会话级状态，只能作用于当前最后一个 agent-run。
+	// 用 isLastAgentRun 而不是 isLatestRun：显示数组末尾若是用户消息，
+	// 上一轮 agent-run 仍会被标成 latest，把旧轮普通 toolUse 说明误提出来。
+	// 用户提交后 pending UI 会立刻 completed，但 ask_question 工具结果通常还没入列；
+	// 用 sticky 钉住本轮，避免说明文字先掉回折叠栏再被历史规则提回去。
+	const livePendingAsk = Boolean(
+		props.isLastAgentRun && pickActiveAskRequest(runtimeUi?.requests),
+	);
+	const askLeadInPinnedRef = useRef(false);
+	const askLeadInPin = resolveAskLeadInPin({
+		isLastAgentRun: Boolean(props.isLastAgentRun),
+		livePendingAsk,
+		wasPinned: askLeadInPinnedRef.current,
+		hasAskQuestionTool: hasAskQuestionTool(run),
+	});
+	askLeadInPinnedRef.current = askLeadInPin.nextPinned;
+	const hasPendingAsk = askLeadInPin.pin;
+
 	// 扁平展示序列：Live 与 History 共用 msg-thinking-* 身份（liveThinkingId 命中即挂步）。
 	const displayItems = useMemo(
 		() =>
@@ -101,8 +130,9 @@ export const TurnRow = memo(
 				showThinking: props.showThinking,
 				isComplete: !props.agentRunning,
 				liveThinkingId: props.liveThinkingId,
+				hasPendingAsk,
 			}),
-		[run, props.showThinking, props.agentRunning, props.liveThinkingId],
+		[run, props.showThinking, props.agentRunning, props.liveThinkingId, hasPendingAsk],
 	);
 
 	const processSummary = useMemo(() => buildProcessSummary(displayItems), [displayItems]);
