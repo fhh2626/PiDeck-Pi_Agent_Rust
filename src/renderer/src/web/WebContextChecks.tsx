@@ -118,7 +118,7 @@ export function WebContextChecks(props: {
 			: undefined;
 
 	return (
-		<div className="flex min-w-0 flex-wrap items-center gap-2">
+		<div className="chat-context-checks flex min-w-0 flex-wrap items-center gap-2">
 			<WebKeepSpinBox
 				value={state.keepRecent}
 				disabled={disabled}
@@ -174,7 +174,7 @@ function WebKeepSpinBox(props: {
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
-				<label className={`flex items-center gap-1 text-caption text-muted-foreground select-none ${props.disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
+				<label className={`flex shrink-0 items-center gap-1 text-caption text-muted-foreground select-none ${props.disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
 					<span className="whitespace-nowrap">{t("ctx.switches.keepRecent")}</span>
 					<input
 						type="number"
@@ -224,7 +224,7 @@ function ContextCheck(props: {
 		<Tooltip>
 			<TooltipTrigger asChild>
 				<div
-					className={`flex items-center gap-1 text-caption text-muted-foreground select-none ${
+					className={`flex shrink-0 items-center gap-1 whitespace-nowrap text-caption text-muted-foreground select-none ${
 						props.disabled ? "cursor-not-allowed" : "cursor-pointer"
 					}`}
 					onClick={() => {
@@ -242,7 +242,7 @@ function ContextCheck(props: {
 						className="size-3.5 min-w-3.5"
 						aria-label={props.tooltip}
 					/>
-					<span className={props.disabled ? "opacity-50" : undefined}>{props.label}</span>
+					<span className={`whitespace-nowrap ${props.disabled ? "opacity-50" : ""}`}>{props.label}</span>
 				</div>
 			</TooltipTrigger>
 			<TooltipContent side="bottom" align="end" className="max-w-72">

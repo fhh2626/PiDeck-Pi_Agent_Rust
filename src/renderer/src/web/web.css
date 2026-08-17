@@ -136,15 +136,27 @@ body {
     align-items: flex-start;
     padding-top: max(0.5rem, env(safe-area-inset-top));
   }
+  /* 手机宽度不够时改成两行：开关组在上，模型/思考/状态在下，避免文案被挤成竖排。 */
   .app.wechat-shell .chat-header-actions {
     flex: 1 1 100%;
     width: 100%;
     min-height: 32px;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    overflow: visible;
+    row-gap: 0.25rem;
+  }
+  .app.wechat-shell .chat-context-checks,
+  .app.wechat-shell .chat-header-runtime {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .app.wechat-shell .chat-header-runtime {
     justify-content: flex-start;
     overflow-x: auto;
     overflow-y: hidden;
-    padding-bottom: 1px;
   }
   .app.wechat-shell .project-row-actions .project-action {
     min-width: 32px;

@@ -42,6 +42,24 @@ test("Web model picker supports search and mobile header wrapping", () => {
 	assert.match(webHeader, /<CommandInput placeholder=\{t\("web\.modelSearch"\)\}/);
 	assert.match(webHeader, /CommandEmpty>\{t\("web\.modelEmpty"\)\}/);
 	assert.match(webHeader, /chat-header flex min-w-0 flex-wrap/);
+	assert.match(webHeader, /chat-header-runtime/);
+	assert.match(webHeader, /max-w-52 shrink/);
+});
+
+test("Mobile Web header wraps context checks above the model picker", () => {
+	const checks = readFileSync("src/renderer/src/web/WebContextChecks.tsx", "utf8");
+	assert.match(webCss, /\.chat-header-actions[\s\S]*flex-wrap:\s*wrap;/);
+	assert.doesNotMatch(
+		webCss,
+		/@media\s*\(max-width:\s*900px\)[\s\S]*\.chat-header-actions[\s\S]*flex-wrap:\s*nowrap;/,
+		"phones must not force the header controls onto one squeezed row",
+	);
+	assert.match(webCss, /chat-context-checks,[\s\S]*flex:\s*1\s+1\s+100%;/);
+	assert.match(checks, /chat-context-checks/);
+	assert.match(checks, /whitespace-nowrap/);
+	assert.match(webHeader, /chat-header-runtime/);
+	assert.match(webHeader, /max-w-52 shrink/);
+	assert.match(webCss, /overflow-x:\s*auto;/);
 });
 
 test("Web header mounts context checkboxes before the model picker", () => {

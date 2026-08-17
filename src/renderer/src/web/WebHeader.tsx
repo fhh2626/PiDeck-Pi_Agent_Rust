@@ -75,36 +75,39 @@ export function WebHeader(props: {
 			</div>
 			<div className="chat-header-actions flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5">
 				<WebContextChecks sessionId={sessionId} status={status} />
-				<ModelPicker model={model} models={models} onChange={onModelChange} />
-				<Select value={thinkingLevel ?? "off"} onValueChange={onThinkingChange}>
-					<SelectTrigger
-						size="sm"
-						className="w-24 border-transparent bg-transparent px-2 text-caption text-muted-foreground hover:bg-muted/60"
-						aria-label={t("web.thinking")}
-						title={t("web.thinking")}
-					>
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						{thinkingLevels.map((level) => (
-							<SelectItem key={level} value={level}>{thinkingLabel(level)}</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-				{/* 运行态指示：复用桌面 agent-status-indicator 视觉 */}
-				<span className="flex items-center gap-2">
-					<span
-						className={cn(
-							"agent-status-indicator",
-							status === "running" && "status-running",
-							status === "starting" && "status-starting",
-							status === "error" && "status-error",
-							status === "idle" && "status-idle",
-						)}
-					>
-						{t(statusLabelKey(status))}
+				{/* 模型/思考/状态成组：窄屏时整组换到下一行，避免把 checkbox 文案挤成竖排。 */}
+				<div className="chat-header-runtime flex min-w-0 items-center gap-1.5">
+					<ModelPicker model={model} models={models} onChange={onModelChange} />
+					<Select value={thinkingLevel ?? "off"} onValueChange={onThinkingChange}>
+						<SelectTrigger
+							size="sm"
+							className="w-24 shrink-0 border-transparent bg-transparent px-2 text-caption text-muted-foreground hover:bg-muted/60"
+							aria-label={t("web.thinking")}
+							title={t("web.thinking")}
+						>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{thinkingLevels.map((level) => (
+								<SelectItem key={level} value={level}>{thinkingLabel(level)}</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+					{/* 运行态指示：复用桌面 agent-status-indicator 视觉 */}
+					<span className="flex shrink-0 items-center gap-2">
+						<span
+							className={cn(
+								"agent-status-indicator",
+								status === "running" && "status-running",
+								status === "starting" && "status-starting",
+								status === "error" && "status-error",
+								status === "idle" && "status-idle",
+							)}
+						>
+							{t(statusLabelKey(status))}
+						</span>
 					</span>
-				</span>
+				</div>
 			</div>
 		</header>
 	);
@@ -126,7 +129,7 @@ function ModelPicker(props: {
 					type="button"
 					variant="ghost"
 					size="sm"
-					className="h-8 max-w-52 min-w-0 justify-between gap-1 px-2 text-caption text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+					className="h-8 min-w-0 max-w-52 shrink justify-between gap-1 px-2 text-caption text-muted-foreground hover:bg-muted/60 hover:text-foreground"
 					aria-label={t("web.model")}
 					title={model ? `${model.provider}/${model.modelId}` : t("web.model")}
 				>
