@@ -3342,8 +3342,7 @@ export class AgentManager {
 	}
 
 	private handlePiEvent(agentId: string, event: unknown) {
-		this.emitLocalEvent(agentId, event);
-
+		// 只经下方 gated emit 转给 Web SSE。这里再发一次会让每个 text_delta 被追加两遍。
 		if (!event || typeof event !== "object") return;
 		const typed = event as Record<string, any>;
 		const runtime = this.agents.get(agentId);

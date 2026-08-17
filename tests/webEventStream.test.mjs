@@ -250,3 +250,13 @@ test("WebServiceManager disables Node request timeouts for long SSE replies", ()
 	assert.match(webServiceSource, /server\.headersTimeout = 0/);
 	assert.doesNotMatch(webServiceSource, /server\.keepAliveTimeout = 0/);
 });
+
+test("handlePiEvent emits each local event once for Web SSE", () => {
+	const agentManager = readFileSync("src/main/pi/AgentManager.ts", "utf8");
+	const handler = agentManager.slice(
+		agentManager.indexOf("private handlePiEvent("),
+		agentManager.indexOf("private beginAssistantMessage("),
+	);
+	const emits = handler.match(/this\.emitLocalEvent\(/g) ?? [];
+	assert.equal(emits.length, 1, "duplicate local emits replay every text_delta twice on Web");
+});
