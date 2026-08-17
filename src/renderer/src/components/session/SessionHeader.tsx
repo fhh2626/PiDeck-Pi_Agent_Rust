@@ -82,7 +82,10 @@ export function SessionHeader(props: SessionHeaderProps) {
     [sessionId],
   );
   const sendState = useAtomValue(sendStateSelector);
-  const runtimeState = sessionMode ? runtime?.state : legacyProps.runtimeState;
+  // 顶栏 ctx/cost chip 必须跟 composer 同一份会话 runtime。
+  // SessionView 仍走 legacy 装配，不能只在 mode=session 时读 atom；
+  // 否则 injector 漏传 activeRuntimeState 时，底栏已有「压缩 42%」，顶栏却空白。
+  const runtimeState = runtime?.state ?? (sessionMode ? undefined : legacyProps.runtimeState);
   // session 模式也只认用户发送；预热 starting 不能给标题栏加 loading（会顶高/半透明）。
   const isStarting = sessionMode
     ? isUserFacingSessionStart(sendState?.status)
