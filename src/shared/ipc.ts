@@ -55,6 +55,8 @@ export const ipcChannels = {
 	sessionsCatalogListArchived: "sessions:catalog-list-archived",
 	sessionsCatalogReadMessages: "sessions:catalog-read-messages",
 	sessionsCatalogReadMessagePage: "sessions:catalog-read-message-page",
+	/** 会话 JSONL 过程事件（session/model/thinking/custom/compaction），供轨迹复盘，不进聊天时间线。 */
+	sessionsCatalogReadProcessEvents: "sessions:catalog-read-process-events",
 	sessionsCatalogReadReferenceMessages: "sessions:catalog-read-reference-messages",
 	/** 读取会话文件中最近保存的上下文控制器状态（开关初始化用） */
 	sessionsCatalogGetContextControllerState: "sessions:catalog-get-context-controller-state",
@@ -309,6 +311,7 @@ export const ipcChannels = {
 
 	/** 主进程 → 主窗口：系统通知等入口请求聚焦指定会话。 */
 	appFocusSessionTarget: "app:focus-session-target",
+	appGetFocusTargetPending: "app:get-focus-target-pending",
 
 	// ===== Scratch Pad（草稿本/多草稿） =====
 	scratchPadList: "scratch-pad:list",

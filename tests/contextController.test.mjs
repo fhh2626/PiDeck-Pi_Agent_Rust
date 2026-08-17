@@ -345,13 +345,11 @@ test("a session without its own snapshot does not inherit another chat's off sta
 	sameJson(restoreStateFromEntries([], DEFAULT_STATE), DEFAULT_STATE);
 });
 
-test("desktop maps the context-controller widget and excludes it from left chips", () => {
-	const chips = readFileSync("src/renderer/src/components/session/SessionWidgetChips.tsx", "utf8");
+test("desktop maps the context-controller widget", () => {
 	const titles = readFileSync("src/renderer/src/components/session/ComposerComponents.tsx", "utf8");
 	const switches = readFileSync("src/renderer/src/components/session/ContextControllerSwitches.tsx", "utf8");
 	assert.match(titles, /pi-deck-context-controller/);
 	assert.match(titles, /app\.widgetTitleContext/);
-	assert.match(chips, /widgetKey\s*!==\s*"pi-deck-context-controller"/);
 	assert.match(switches, /pi-deck-context-controller/);
 	assert.match(switches, /\/context-files/);
 	assert.match(switches, /\/context-commands/);

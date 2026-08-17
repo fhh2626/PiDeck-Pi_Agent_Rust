@@ -276,6 +276,10 @@
  * 与状态完全同步，避免旧跑马灯「思考结束还在滚」的问题。 */
 @theme {
   --animate-thinking-sweep: thinking-sweep 2.6s ease-out infinite;
+  /* 工具卡 trigger 行运行中扫光：与 thinking-sweep 同 keyframes 同参数
+     （dsh-web 的 reasoning-row-sweep / command-row-sweep 本来就是两套同参动画），
+     语义名分离便于按组件收尾，不必重复定义 keyframes。 */
+  --animate-tool-sweep: thinking-sweep 2.6s ease-out infinite;
 
   @keyframes thinking-sweep {
     0% {

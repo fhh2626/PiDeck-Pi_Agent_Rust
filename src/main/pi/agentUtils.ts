@@ -65,6 +65,18 @@ export function clampPercent(value: number | undefined): number | undefined {
 }
 
 /**
+ * 解析系统通知点击的会话跳转目标。
+ * record.id（coordinator 绑定维护）优先：renderer 的 sessionRecordByIdAtomFamily
+ * 只按 record.id 索引会话；tab.sessionId 是 pi 侧会话 id（两套体系），仅作兜底。
+ */
+export function resolveNotificationSessionId(
+	resolveRecordId: (() => string | undefined) | undefined,
+	piSessionId: string | undefined,
+): string | undefined {
+	return resolveRecordId?.() ?? piSessionId;
+}
+
+/**
  * 按对话轮次截断历史消息：找到最后 maxTurns 个 user 提问，
  * 保留对应轮次及之后的全部消息，避免大会话加载时一次性解析过多内容。
  * 返回保留段的起始下标（无 user 消息时与 slice(-50) 语义一致）。

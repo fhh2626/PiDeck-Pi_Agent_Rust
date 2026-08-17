@@ -56,3 +56,13 @@ test("layout: drawer open/switch", async ({ window }) => {
 	await tabs.nth(nextIndex).click();
 	await expect(tabs.nth(nextIndex)).toHaveAttribute("aria-selected", "true", { timeout: 3000 });
 });
+
+test("layout: project present in sidebar hides the add-directory guide", async ({ window }) => {
+	// 有真实项目（本文件 seed）时，侧边栏「项目」分组显示项目行，不再渲染空态引导
+	// （空态引导只出现在仅内置 Chat 的新用户场景，见 sidebar-empty-state.spec.ts）
+	await expect(window.locator("#boot-overlay")).toHaveCount(0, { timeout: 20_000 });
+	await expect(window.getByText("添加你的项目目录")).toHaveCount(0, { timeout: 10_000 });
+	await expect(
+		window.locator(".conversation", { hasText: "pideck-e2e-layoute2e-" }).first(),
+	).toBeVisible({ timeout: 20_000 });
+});

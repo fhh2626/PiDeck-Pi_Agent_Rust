@@ -1,10 +1,9 @@
 import { HatGlasses, Maximize2 } from "lucide-react";
 import { useAtomValue } from "jotai";
 import { selectAtom } from "jotai/utils";
-import { useMemo, type ReactNode, type RefObject } from "react";
+import { useMemo, type RefObject } from "react";
 import type { AgentRuntimeState } from "../../../../shared/types";
 import {
-  sessionCacheStatsAtom,
   sessionRecordByIdAtomFamily,
   sessionRuntimeBySessionIdAtomFamily,
   sessionSendStateByIdAtom,
@@ -15,18 +14,14 @@ import { t } from "../../i18n";
 import { displayProjectDirectoryName } from "../../rendererUtils";
 import { Button } from "../ui-shadcn/button";
 import { ContextControllerSwitches } from "./ContextControllerSwitches";
-import { SessionStatus } from "./SurfaceParts";
 
 type HeaderActions = {
   headerRef: RefObject<HTMLDivElement | null>;
-  sessionId?: string;
   compactionCount?: number;
   isAnonymous?: boolean;
   duration?: number;
   /** 将状态/操作区嵌入 Tab 栏，避免当前会话再单独占一行。 */
   embedded?: boolean;
-  /** 头部左侧槽位（Todo/Plan 等扩展 widget chips）；会话标题迁走后左侧留空，widget 入口落在这里。 */
-  widgetChips?: ReactNode;
   /**
    * 项目目录名（面包屑左段）：多 Tab/分屏时提醒当前会话属于哪个项目。
    * legacy 模式由上层传入；session 模式可从会话记录自行解析。
@@ -39,12 +34,14 @@ type HeaderActions = {
   paneTitle?: string;
   /** 退出会话分屏（扩大为单栏）；仅分屏时提供 */
   onExitSplit?: () => void;
+  /** 状态徽章绑定的会话（runtime / 缓存命中率）；与 mode=session 的身份可并存。 */
+  statusSessionId?: string;
 };
 
 type LegacySessionHeaderProps = HeaderActions & {
   mode?: "legacy";
+  sessionId?: never;
   title: string;
-  runtimeState?: AgentRuntimeState;
   isStarting: boolean;
 };
 
@@ -52,7 +49,6 @@ type ModernSessionHeaderProps = HeaderActions & {
   mode: "session";
   sessionId: string;
   title?: never;
-  runtimeState?: never;
   isStarting?: never;
   hasSession?: never;
 };
@@ -67,12 +63,9 @@ export type SessionHeaderProps = LegacySessionHeaderProps | ModernSessionHeaderP
  */
 export function SessionHeader(props: SessionHeaderProps) {
   const sessionMode = props.mode === "session";
-  const sessionId = props.sessionId ?? "";
+  const sessionId = props.sessionId ?? props.statusSessionId ?? "";
   const legacyProps = props as LegacySessionHeaderProps;
   const session = useAtomValue(sessionRecordByIdAtomFamily(sessionId));
-  const runtime = useAtomValue(sessionRuntimeBySessionIdAtomFamily(sessionId));
-  // 会话级缓存命中率历史（统计快照由 runtime 事件写入 atom），供状态入口展示。
-  const cacheStats = useAtomValue(sessionCacheStatsAtom);
   const sendStateSelector = useMemo(
     () => selectAtom(
       sessionSendStateByIdAtom,
@@ -82,7 +75,6 @@ export function SessionHeader(props: SessionHeaderProps) {
     [sessionId],
   );
   const sendState = useAtomValue(sendStateSelector);
-  const runtimeState = sessionMode ? runtime?.state : legacyProps.runtimeState;
   // session 模式也只认用户发送；预热 starting 不能给标题栏加 loading（会顶高/半透明）。
   const isStarting = sessionMode
     ? isUserFacingSessionStart(sendState?.status)
@@ -100,14 +92,12 @@ export function SessionHeader(props: SessionHeaderProps) {
       ref={props.embedded ? props.headerRef : undefined}
       className={`chat-header-actions flex min-w-0 items-center justify-end gap-1.5${props.embedded ? " h-7 w-auto shrink-0" : ""}${isStarting ? " loading" : ""}`}
     >
-      {props.widgetChips}
+      {sessionId ? <ContextControllerSwitches sessionId={sessionId} /> : null}
       {isAnonymous && (
         <span className="anonymous-badge" title={t("app.anonymousChat")} aria-label={t("app.anonymousChat")}>
           <HatGlasses size={14} aria-hidden="true" />
         </span>
       )}
-      {sessionId ? <ContextControllerSwitches sessionId={sessionId} /> : null}
-      <SessionStatus state={runtimeState} duration={props.duration} cacheHitHistory={cacheStats[sessionId]?.cacheHitHistory} />
     </div>
   );
 

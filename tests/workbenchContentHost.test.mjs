@@ -10,6 +10,7 @@ const drawer = readFileSync("src/renderer/src/components/workspace/DrawerSurface
 const settings = readFileSync("src/shared/types/settings.ts", "utf8");
 const store = readFileSync("src/main/settings/SettingsStore.ts", "utf8");
 const settingsModal = readFileSync("src/renderer/src/components/app/SettingsModal.tsx", "utf8");
+const commonTab = readFileSync("src/renderer/src/components/app/settings/CommonTab.tsx", "utf8");
 const zh = readFileSync("src/renderer/src/i18n/rendererCopy.zh-CN.ts", "utf8");
 const en = readFileSync("src/renderer/src/i18n/rendererCopy.en-US.ts", "utf8");
 const surfaces = readFileSync("src/renderer/src/styles/surfaces.css", "utf8");
@@ -18,7 +19,8 @@ test("settings expose workspace content open mode; split orientation removed", (
   assert.match(settings, /WorkspaceContentOpenMode = "split" \| "maximize"/);
   assert.match(settings, /workspaceContentOpenMode: WorkspaceContentOpenMode/);
   assert.match(store, /workspaceContentOpenMode: "split"/);
-  assert.match(settingsModal, /workspaceContentOpenMode/);
+  // workspaceContentOpenMode 设置项位于常用设置 tab（CommonTab，自 SettingsModal 拆分）
+  assert.match(commonTab, /workspaceContentOpenMode/);
   assert.match(zh, /"settings\.workspaceContentOpenMode"/);
   assert.match(en, /"settings\.workspaceContentOpenMode"/);
   // 分屏方向设置已移除：中间栏固定左右分屏，不允许上下分屏

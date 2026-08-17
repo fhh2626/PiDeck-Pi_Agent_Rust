@@ -8,7 +8,7 @@
  *   扩展通过 PIDECK_SECURITY_CONFIG 环境变量拿到快照路径，PIDECK_SESSION_ID 拿到会话身份。
  *
  * 设计原则：
- * 1. 默认不改变行为：enabled=false 时扩展完全放行，老用户零感知；
+ * 1. 默认启用安全门（enabled=true），默认等级 off（完全放行）：老用户零感知，开箱即用；
  * 2. 等级（Level）是一等公民：内置 off/standard/strict 三档 + 用户自定义；
  * 3. 每个等级独立声明「工具动作」「bash 危险命令」「文件目录边界」「兜底动作」；
  * 4. 会话级覆盖：sessionId → levelId，输入框切换即时生效（快照重读）。
@@ -173,11 +173,11 @@ export const DEFAULT_SENSITIVE_PATH_PATTERNS: string[] = [
 	"(\\.pem|\\.key|\\.p12)$",
 ];
 
-/** 默认配置工厂：enabled=false 保持零干预 */
+/** 默认配置工厂：enabled=true（安全门默认启用）+ 默认等级 off（完全放行，行为零干预） */
 export function createDefaultSecurityConfig(): SecurityConfig {
 	return {
-		enabled: false,
-		defaultLevelId: "standard",
+		enabled: true,
+		defaultLevelId: "off",
 		levels: createDefaultSecurityLevels(),
 		sessionOverrides: {},
 	};

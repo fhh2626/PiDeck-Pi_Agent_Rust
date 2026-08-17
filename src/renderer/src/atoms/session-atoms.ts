@@ -1143,6 +1143,13 @@ export const applySessionRuntimeEventAtom = atom(
     const bindingChanged =
       event.runtimeGeneration > currentRuntime.runtimeGeneration ||
       currentRuntime.agentId !== event.agentId;
+
+    // 2026-08 治理：agents:event 是 pi 原始事件流（每 token 100+/s），桌面 UI
+    // 无任何消费者（web SSE 走主进程内部订阅）。此前它落入下方兜底路径无条件
+    // 写 sessionRuntimeByIdAtom，导致 timeline 等订阅者 100/s 全量重渲染——
+    // 主进程侧已停止转发，这里双保险拦截（防其他生产者误发）。
+    if (event.sourceChannel === "agents:event") return;
+
     let nextRuntime: SessionRuntimeViewState = {
       ...(bindingChanged
         ? {
@@ -1228,12 +1235,13 @@ export const applySessionRuntimeEventAtom = atom(
       // Live 思考：只更新 streamingThinkingByIdAtom / liveThinkingIdBySessionAtom。
       // 绑定未变时不写 sessionRuntimeByIdAtom，避免每帧戳醒 timeline。
       const id = typeof payload.id === "string" ? payload.id : "";
-      const text =
+      const fullText =
         typeof payload.text === "string"
           ? payload.text
           : typeof payload.thinking === "string"
             ? payload.thinking
             : "";
+      const delta = typeof payload.delta === "string" ? payload.delta : "";
       const done = payload.done === true;
       const startedAt = typeof payload.startedAt === "number" ? payload.startedAt : Date.now();
       const endedAt = typeof payload.endedAt === "number" ? payload.endedAt : 0;
@@ -1241,9 +1249,11 @@ export const applySessionRuntimeEventAtom = atom(
         if (done) {
           // 只标终态，保留 id/文本；等 History 同段 thinking 可见后再卸身份（防跨通道乱序 remount）。
           const prev = get(streamingThinkingByIdAtom)[id];
+          // 终态事件携带全量 text（见 finishThinkingChannel）；缺省时用本地累积
+          const text = fullText || (delta && prev ? prev.text + delta : "") || prev?.text || "";
           const nextEntry: StreamingThinkingEntry = {
             sessionId: event.sessionId,
-            text: text || prev?.text || "",
+            text,
             startedAt: prev?.startedAt ?? startedAt,
             endedAt: endedAt > 0 ? endedAt : (prev?.endedAt && prev.endedAt > 0 ? prev.endedAt : Date.now()),
             streaming: false,
@@ -1271,6 +1281,8 @@ export const applySessionRuntimeEventAtom = atom(
         } else {
           const streaming = endedAt <= 0;
           const prev = get(streamingThinkingByIdAtom)[id];
+          // 增量协议（2026-08 治理）：delta 追加到本地累积；text 全量替换
+          const text = delta ? (prev?.text ?? "") + delta : fullText;
           if (
             !prev ||
             prev.text !== text ||
@@ -1308,9 +1320,15 @@ export const applySessionRuntimeEventAtom = atom(
     } else if (event.sourceChannel === "agents:text-stream" && payload) {
       // Live 正文：只更新 streamingTextByIdAtom。
       // 绑定未变时不写 sessionRuntimeByIdAtom，避免每帧戳醒 timeline/composer 订阅者。
-      const text = typeof payload.text === "string" ? payload.text : "";
-      const done = payload.done === true;
       const prev = get(streamingTextByIdAtom)[event.sessionId];
+      // 增量协议（2026-08 治理）：主进程正常 append 只推 delta，渲染层追加到
+      // 本地累积；text 全量快照（非 append 重置 / 2.5s 自愈）整体替换。
+      const text = typeof payload.delta === "string"
+        ? (prev?.content ?? "") + payload.delta
+        : typeof payload.text === "string"
+          ? payload.text
+          : prev?.content ?? "";
+      const done = payload.done === true;
       const streaming = !done && text.length > 0;
       if (!prev || prev.content !== text || prev.streaming !== streaming) {
         set(streamingTextByIdAtom, {
@@ -1448,10 +1466,31 @@ export const applySessionRuntimeEventAtom = atom(
         [event.sessionId]: nextUi,
       });
     }
-    set(sessionRuntimeByIdAtom, {
-      ...get(sessionRuntimeByIdAtom),
-      [event.sessionId]: nextRuntime,
-    });
+    // 2026-08 治理：无实质变化的推送跳过 atom 写入（emitStreamingStatePatch 在
+    // 流式期间每 50ms 一推且状态相同）。sessionRuntimeByIdAtom 的订阅者含整个
+    // timeline，新对象写入 = 100/s 级全量重渲染（O(消息数) + 分配压力），
+    // 是渲染进程 CPU 满载与 V8 committed 只涨不缩的根源。updatedAt 不参与比较
+    // （始终变化），跳过更新时也不刷新它——真正的状态变化必然伴随上述字段变化。
+    const runtimeUnchanged =
+      !bindingChanged &&
+      currentRuntime.agentId === nextRuntime.agentId &&
+      currentRuntime.runtimeGeneration === nextRuntime.runtimeGeneration &&
+      currentRuntime.status === nextRuntime.status &&
+      currentRuntime.state === nextRuntime.state &&
+      currentRuntime.projectId === nextRuntime.projectId &&
+      currentRuntime.cwd === nextRuntime.cwd &&
+      currentRuntime.title === nextRuntime.title &&
+      currentRuntime.piSessionId === nextRuntime.piSessionId &&
+      currentRuntime.sessionPath === nextRuntime.sessionPath &&
+      currentRuntime.createdAt === nextRuntime.createdAt &&
+      currentRuntime.compactionCount === nextRuntime.compactionCount &&
+      currentRuntime.noSession === nextRuntime.noSession;
+    if (!runtimeUnchanged) {
+      set(sessionRuntimeByIdAtom, {
+        ...get(sessionRuntimeByIdAtom),
+        [event.sessionId]: nextRuntime,
+      });
+    }
   },
 );
 

@@ -10,6 +10,7 @@ import {
 	queryLogLines,
 	toAppLogPage,
 } from "./logQuery";
+import { LogLineCache } from "./logLineCache";
 
 const MAX_LOG_FILES = 14;
 
@@ -35,6 +36,12 @@ function normalizeDetail(detail: unknown) {
 export class AppLogger {
 	private readonly dir = join(app.getPath("userData"), "logs");
 	private writeQueue: Promise<void> = Promise.resolve();
+	/** 历史日志文件行缓存：查询只重读指纹变化的文件（当天 append 文件），避免每次进设置日志 tab 全量读盘 */
+	private readonly lineCache = new LogLineCache(
+		{ readFile: (p) => readFile(p, "utf8"), stat },
+		32,
+		MAX_FILE_LINES,
+	);
 
 	log(level: AppLogLevel, scope: string, message: string, detail?: unknown) {
 		const entry: AppLogEntry = {
@@ -86,8 +93,7 @@ export class AppLogger {
 		);
 		const lines: string[] = [];
 		for (const file of files) {
-			const raw = await readFile(join(this.dir, file), "utf8").catch(() => "");
-			lines.push(...raw.split(/\r?\n/).filter(Boolean).slice(-MAX_FILE_LINES));
+			lines.push(...(await this.lineCache.linesOf(join(this.dir, file))));
 		}
 		const pageSize = Math.max(1, Math.min(query.pageSize ?? DEFAULT_PAGE_SIZE, 200));
 		const page = Math.max(0, query.page ?? 0);
@@ -107,6 +113,8 @@ export class AppLogger {
 		await Promise.all(
 			before.map((file) => unlink(join(this.dir, file)).catch(() => undefined)),
 		);
+		// 清日志后行缓存必须清空：旧行来自已删除文件，残留会导致重查时读到旧内容
+		this.lineCache.clear();
 		// 清日志属敏感操作，留痕记录清除前的文件数/大小，便于事后审计
 		await this.info("logs", "Logs cleared", { files: before.length });
 	}

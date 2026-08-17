@@ -196,6 +196,14 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
     Boolean(surfaceCachedEntry),
   );
   const isConversationLoading = modernSurfaceState.isLoading;
+  // 空态（起始页 / 旧 Editorial 空态）时 [role=log] 不套聊天列宽度约束：
+  // chatContentWidthStyle 把内容列限制为 min(80%, 100%-48px)，会让「新建 Agent」
+  // 等真实会话页的 SessionStartSurface 输入框比引导页（直接挂 ProjectEmptyState、
+  // 不受此约束）窄且位置偏移，同一组件两副长相；起始页组件自身有 max-w-[980px]
+  // 居中控制，去掉约束后与引导页完全一致。有消息时保持原约束（消息列与输入框对齐契约）。
+  const showSurfaceEmptyState =
+    !hasActiveConversation ||
+    (!isConversationLoading && activeMessages.length === 0);
   const canLoadMoreMessages = canLoadSessionTimelineMore(
     modernSurfaceState.isStarting,
     activeMessages.length,
@@ -534,7 +542,7 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
       viewportClassName="message-timeline"
       // 宽度约束落在内层 [role=log] 而非 scroller 宿主：视口撑满整个面板，
       // 原生滚动条贴面板最右侧；内容列仍与 composer 同宽居中（见 chatContentWidth）。
-      contentProps={{ style: chatContentWidthStyle }}
+      contentProps={showSurfaceEmptyState ? undefined : { style: chatContentWidthStyle }}
       viewportRef={timelineRef}
       scrollApiRef={controller.scrollerScrollApiRef}
       followOutput={controller.autoScroll}
@@ -644,7 +652,7 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
       {hasActiveConversation &&
         !isConversationLoading &&
         activeMessages.length === 0 && (
-          <SessionStartSurface onQuickPrompt={props.onQuickPrompt} />
+          <SessionStartSurface sessionId={sessionId} />
         )}
 
       {/* 长会话渲染治理：

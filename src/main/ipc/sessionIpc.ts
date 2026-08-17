@@ -22,7 +22,9 @@ import type {
 	SendPromptInput,
 	SendPromptResult,
 	SessionRecord,
+	SessionProcessEvent,
 } from "../../shared/types";
+import { parseSessionProcessEvents } from "../sessions/sessionProcessEvents";
 import { BackgroundScanCoordinator } from "../sessions/BackgroundScanCoordinator";
 import {
 	DEFAULT_CONTEXT_CONTROLLER_STATE,
@@ -430,6 +432,16 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
 				return agentManager.readSessionDisplayTurnPage(entry.filePath, sessionId, before, pageSize, options.beforeEntryId);
 			}
 			return agentManager.readSessionDisplayMessagePage(entry.filePath, sessionId, before, pageSize);
+		},
+	);
+	ipcMain.handle(
+		ipcChannels.sessionsCatalogReadProcessEvents,
+		async (_event, sessionId: string): Promise<SessionProcessEvent[]> => {
+			if (typeof sessionId !== "string" || !sessionId.trim()) return [];
+			const entry = sessionCatalog.get(sessionId);
+			if (!entry?.filePath) return [];
+			const content = await sessionScanner.readSessionRawText(entry.filePath);
+			return parseSessionProcessEvents(content);
 		},
 	);
 	ipcMain.handle(

@@ -115,8 +115,10 @@ describe("Seti file icon integration", () => {
     assert.match(workspaceSurface, /树行用原生 button/);
     assert.doesNotMatch(workspaceSurface, /\[&_svg\]:!size-/);
     assert.match(workspaceSurface, /FolderOpen size=\{18\}/);
-    // utilities 层的 overflow-hidden 会压掉 legacy overflow-y:auto，文件树就滚不动
-    assert.match(workspaceSurface, /files-panel[^"]*overflow-x-hidden overflow-y-auto/);
+    // 滚动层上移到 DrawerSurface 的 LazyWrapper（overflow-y-auto）；files-panel 自身
+    // 只保留 overflow-x-hidden，避免滚动条占位导致的宽度摆动（见 DrawerSurface 注释）
+    assert.match(workspaceSurface, /files-panel[^"]*overflow-x-hidden/);
+    assert.doesNotMatch(workspaceSurface, /files-panel[^"]*overflow-y-auto/);
     assert.doesNotMatch(workspaceSurface, /files-panel[^"]*overflow-hidden"/);
   });
 });

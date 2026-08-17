@@ -1,8 +1,20 @@
 import type { ReactNode } from "react";
 import { cn } from "../../../lib/utils";
+import { t } from "../../../i18n";
 import { Switch } from "../../ui-shadcn/switch";
 import { Textarea } from "../../ui-shadcn/textarea";
-import { t } from "../../../i18n";
+
+/** 已修改但未保存的字段标记：在标签右侧显示一个黄色圆点 */
+export function DirtyMarker(props: { dirty: boolean; label: string }) {
+	if (!props.dirty) return null;
+	return (
+		<span
+			className="setting-dirty-marker"
+			title={t("settings.dirtyTooltip")}
+			aria-label={props.label}
+		/>
+	);
+}
 
 /**
  * 设置内容淡色框：包住一级标题下的二级内容行。
@@ -111,17 +123,5 @@ export function SettingTextarea(props: {
 				className="min-h-24 w-full resize-y border-border-subtle bg-bg-input px-3 py-2 font-mono text-sm leading-relaxed text-foreground"
 			/>
 		</SettingRow>
-	);
-}
-
-/** 已修改但未保存的字段标记：在标签右侧显示一个黄色圆点。 */
-export function DirtyMarker(props: { dirty: boolean; label: string }) {
-	if (!props.dirty) return null;
-	return (
-		<span
-			className="setting-dirty-marker"
-			title={t("settings.dirtyTooltip")}
-			aria-label={props.label}
-		/>
 	);
 }

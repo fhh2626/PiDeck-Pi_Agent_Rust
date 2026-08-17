@@ -6,8 +6,12 @@
  * - 结束后：取第一行（indexOf('\n') 之前），摘要从头部读起，配合 ellipsis
  */
 export function firstLine(text: string): string {
-	const newline = text.indexOf("\n");
-	return newline === -1 ? text : text.slice(0, newline);
+	// 思考 delta 裸拼接可能以换行/空白开头（deepseek 模型思考常以 "\n" 起笔，
+	// 主进程仅 stripAnsi 不裁剪）：先裁首部空白，保证结束态摘要显示第一个非空行，
+	// 而不是空行（对齐 deepseek-harness ReasoningRow 的 block.text 规范化语义）。
+	const visible = text.trimStart();
+	const newline = visible.indexOf("\n");
+	return newline === -1 ? visible : visible.slice(0, newline);
 }
 
 export function latestLine(text: string): string {

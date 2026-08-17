@@ -149,11 +149,6 @@ function fixture(overrides = {}) {
 				runtimeGeneration: runtime.runtimeGeneration,
 			};
 		},
-		getContextControllerState: async () => ({
-			clearToolHistory: false,
-			clearReadContent: false,
-			clearCommandContent: false,
-		}),
 		listSessionRuntimes: () => [runtime],
 		listSessionRuntimeModels: async (target) => {
 			calls.modelTargets.push(target);
@@ -175,6 +170,8 @@ function fixture(overrides = {}) {
 		setSessionRuntimeModel: async (target) => targeted(target, { isStreaming: false }),
 		setSessionRuntimeThinking: async (target) => targeted(target, { isStreaming: false }),
 		cloneSessionRuntime: async () => ({ ok: true, value: { targetSessionId: "session-2" } }),
+		listPendingUiRequests: () => [],
+		respondToUi: async () => undefined,
 		createAgent: async () => {
 			calls.createAgent += 1;
 			return agent;
@@ -248,251 +245,6 @@ test("native Session HTTP routes create drafts and send by stable Session identi
 	});
 });
 
-test("context-controller routes share silent sendSessionPrompt and do not lock prompts", async () => {
-	await withServer(async ({ baseUrl, calls }) => {
-		const snapshot = await fetch(`${baseUrl}/api/sessions/session-1/context-controller-state`);
-		assert.equal(snapshot.status, 200);
-		assert.deepEqual(await snapshot.json(), {
-			clearToolHistory: false,
-			clearReadContent: false,
-			clearCommandContent: true,
-			keepRecentCount: 10,
-		});
-
-		const posted = await fetch(`${baseUrl}/api/sessions/session-1/context-controller`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ command: "/context-commands off" }),
-		});
-		assert.equal(posted.status, 200);
-		const body = await posted.json();
-		assert.equal(body.result.accepted, true);
-		assert.equal(calls.send.length, 1);
-		assert.equal(calls.send[0].silent, true);
-		assert.equal(calls.send[0].agentMessage, "/context-commands off");
-		assert.equal(calls.send[0].message, "");
-
-		const postedKeep = await fetch(`${baseUrl}/api/sessions/session-1/context-controller`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ command: "/context-keep 15" }),
-		});
-		assert.equal(postedKeep.status, 200);
-		assert.equal((await postedKeep.json()).result.accepted, true);
-		assert.equal(calls.send.length, 2);
-		assert.equal(calls.send[1].agentMessage, "/context-keep 15");
-
-		const rejectedKeep = await fetch(`${baseUrl}/api/sessions/session-1/context-controller`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ command: "/context-keep 100" }),
-		});
-		assert.equal(rejectedKeep.status, 400);
-
-		const rejected = await fetch(`${baseUrl}/api/sessions/session-1/context-controller`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ command: "/context-tools flip" }),
-		});
-		assert.equal(rejected.status, 400);
-		assert.equal(calls.send.length, 2);
-
-		const promptResponse = await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ requestId: "after-ctx", message: "hello" }),
-		});
-		assert.equal(promptResponse.status, 200);
-		assert.equal((await promptResponse.json()).result.accepted, true);
-		assert.equal(calls.send.length, 3);
-	}, {
-		getContextControllerState: async () => ({
-			clearToolHistory: false,
-			clearReadContent: false,
-			clearCommandContent: true,
-			keepRecentCount: 10,
-		}),
-	});
-});
-
-test("AI SDK chat requests use messageId rather than reusing the Session id", async () => {
-	let emitPiEvent = null;
-	await withServer(async ({ baseUrl, calls }) => {
-		const sendChat = async (messageId, text) => {
-			const response = await fetch(`${baseUrl}/api/chat`, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({
-					id: "session-1",
-					messageId,
-					messages: [{ role: "user", parts: [{ type: "text", text }] }],
-				}),
-			});
-			assert.equal(response.status, 200);
-			const reader = response.body.getReader();
-			emitPiEvent("agent-1", { type: "agent_settled" });
-			let body = "";
-			const decoder = new TextDecoder();
-			for (;;) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				body += decoder.decode(value, { stream: true });
-				if (body.includes("data: [DONE]")) break;
-			}
-			assert.match(body, /data: \[DONE\]/);
-		};
-
-		await sendChat("message-1", "first");
-		await sendChat("message-2", "second");
-		assert.deepEqual(calls.send.map((input) => input.requestId), ["message-1", "message-2"]);
-	}, {
-		subscribePiEvents: (handler) => {
-			emitPiEvent = handler;
-			return () => { emitPiEvent = null; };
-		},
-	});
-});
-
-test("AI SDK rejects a concurrent Web prompt for the same Session", async () => {
-	await withServer(async ({ baseUrl }) => {
-		const controller = new AbortController();
-		const first = await fetch(`${baseUrl}/api/chat`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				id: "session-1",
-				messageId: "message-active",
-				messages: [{ role: "user", parts: [{ type: "text", text: "first" }] }],
-			}),
-			signal: controller.signal,
-		});
-		assert.equal(first.status, 200);
-
-		const second = await fetch(`${baseUrl}/api/chat`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				id: "session-1",
-				messageId: "message-second",
-				messages: [{ role: "user", parts: [{ type: "text", text: "second" }] }],
-			}),
-		});
-		assert.equal(second.status, 409);
-		assert.equal((await second.json()).code, "webError.sessionBusy");
-
-		const sseStream = await fetch(`${baseUrl}/api/sessions/session-1/stream`);
-		assert.equal(sseStream.status, 409);
-		assert.equal((await sseStream.json()).code, "webError.sessionBusy");
-
-		controller.abort();
-	}, {
-		subscribePiEvents: () => () => undefined,
-	});
-});
-
-test("Closing an idle /stream does not clear a subsequent /api/chat prompt lock", async () => {
-	await withServer(async ({ baseUrl }) => {
-		const streamController = new AbortController();
-		const idleStream = await fetch(`${baseUrl}/api/sessions/session-1/stream`, {
-			signal: streamController.signal,
-		});
-		assert.equal(idleStream.status, 200);
-		// 客户端断开只读流
-		streamController.abort();
-		await new Promise((resolve) => setImmediate(resolve));
-
-		const chatController = new AbortController();
-		const chat = await fetch(`${baseUrl}/api/chat`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				id: "session-1",
-				messageId: "message-after-stream",
-				messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
-			}),
-			signal: chatController.signal,
-		});
-		assert.equal(chat.status, 200);
-
-		const secondChat = await fetch(`${baseUrl}/api/chat`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				id: "session-1",
-				messageId: "message-concurrent",
-				messages: [{ role: "user", parts: [{ type: "text", text: "hello again" }] }],
-			}),
-		});
-		assert.equal(secondChat.status, 409, "chat lock must still be intact");
-		chatController.abort();
-	}, {
-		subscribePiEvents: () => () => undefined,
-	});
-});
-
-test("AI SDK chat forwards validated image parts to the Session prompt", async () => {
-	let emitPiEvent = null;
-	await withServer(async ({ baseUrl, calls }) => {
-		const response = await fetch(`${baseUrl}/api/chat`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				id: "session-1",
-				messageId: "image-message",
-				messages: [{
-					role: "user",
-					parts: [{ type: "file", mediaType: "image/png", url: "data:image/png;base64,aGVsbG8=" }],
-				}],
-			}),
-		});
-		assert.equal(response.status, 200);
-		emitPiEvent("agent-1", { type: "agent_settled" });
-		await response.text();
-		assert.equal(
-			JSON.stringify(calls.send[0].images),
-			JSON.stringify([{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }]),
-		);
-	}, {
-		subscribePiEvents: (handler) => {
-			emitPiEvent = handler;
-			return () => { emitPiEvent = null; };
-		},
-	});
-});
-
-test("indeterminate AI SDK dispatch keeps the stream open for the authoritative runtime event", async () => {
-	let emitPiEvent = null;
-	await withServer(async ({ baseUrl }) => {
-		const response = await fetch(`${baseUrl}/api/chat`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				id: "session-1",
-				messageId: "message-unknown",
-				messages: [{ role: "user", parts: [{ type: "text", text: "continue" }] }],
-			}),
-		});
-		assert.equal(response.status, 200);
-		await new Promise((resolve) => setImmediate(resolve));
-		emitPiEvent("agent-1", { type: "agent_settled" });
-		const body = await response.text();
-		assert.doesNotMatch(body, /errorText/);
-		assert.match(body, /data: \[DONE\]/);
-	}, {
-		subscribePiEvents: (handler) => {
-			emitPiEvent = handler;
-			return () => { emitPiEvent = null; };
-		},
-		sendSessionPrompt: async (input) => ({
-			accepted: false,
-			delivery: "unknown",
-			error: "dispatch response timed out",
-			sessionId: input.sessionId,
-			requestId: input.requestId,
-		}),
-	});
-});
-
 test("web core routes create a project and expose the configured model list", async () => {
 	await withServer(async ({ baseUrl, calls }) => {
 		const projectResponse = await fetch(`${baseUrl}/api/projects`, {
@@ -507,6 +259,43 @@ test("web core routes create a project and expose the configured model list", as
 		const modelsResponse = await fetch(`${baseUrl}/api/models`);
 		const modelsBody = await modelsResponse.json();
 		assert.equal(modelsBody.models[0].id, "gpt-test");
+	});
+});
+
+test("web state exposes pending UI requests and ui-response writes them back", async () => {
+	const pending = [{
+		sessionId: "session-1",
+		agentId: "agent-1",
+		runtimeGeneration: 3,
+		requestId: "ask-1",
+		method: "confirm",
+		title: "Continue?",
+	}];
+	const responses = [];
+	await withServer(async ({ baseUrl }) => {
+		const stateResponse = await fetch(`${baseUrl}/api/state`);
+		const state = await stateResponse.json();
+		assert.equal(state.pendingUiRequests[0].requestId, "ask-1");
+
+		const write = await fetch(`${baseUrl}/api/ui-response`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				sessionId: "session-1",
+				agentId: "agent-1",
+				runtimeGeneration: 3,
+				requestId: "ask-1",
+				response: { confirmed: true },
+			}),
+		});
+		assert.equal(write.status, 200);
+		assert.equal(responses[0].requestId, "ask-1");
+		assert.equal(responses[0].response.confirmed, true);
+	}, {
+		listPendingUiRequests: () => pending,
+		respondToUi: async (input) => {
+			responses.push(input);
+		},
 	});
 });
 
@@ -815,7 +604,7 @@ test("SSE /stream endpoint forwards pi agent events as AI SDK UI message frames"
 			}
 		};
 
-		// 派发：消息开始 → 文本增量 → agent_end → agent_settled（最终带 [DONE]）
+		// 派发：消息开始 → 文本增量 → agent_settled（中间 agent_end 不再关流）
 		emitPiEvent("agent-1", { type: "message_start", message: { role: "assistant", id: "m1" } });
 		emitPiEvent("agent-1", {
 			type: "message_update",
@@ -931,6 +720,6 @@ test("web service dev mode falls back to the legacy page when dev server is down
 	await withServer(async ({ baseUrl }) => {
 		const page = await fetch(baseUrl + "/");
 		assert.equal(page.status, 200);
-		assert.match(await page.text(), /PiDeck-Q Web Service/);
+		assert.match(await page.text(), /PiDeck(-Q)? Web Service/);
 	}, { devRendererUrl: "http://127.0.0.1:1" });
 });

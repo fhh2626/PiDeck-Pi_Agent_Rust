@@ -21,13 +21,13 @@ test("startup Pi update check is guarded against double invocation", () => {
 
 test("opening dev settings does not auto-detect pi; cached result is shown directly", () => {
   const hook = readFileSync("src/renderer/src/hooks/usePiUpdate.ts", "utf8");
-  const modal = readFileSync("src/renderer/src/components/app/SettingsModal.tsx", "utf8");
+  const devTab = readFileSync("src/renderer/src/components/app/settings/DevTab.tsx", "utf8");
   const settings = readFileSync("src/shared/types/settings.ts", "utf8");
 
   // 回归：打开开发设置 tab 曾自动触发一次 pi 路径检测（spawn 探测），
   // 现在只有手动点「检测环境」才检测；已检测成功的结果从 settings 缓存直接恢复显示。
-  assert.doesNotMatch(modal, /activeTab === "dev" && props\.piStatus === null/);
-  assert.match(modal, /不自动检测 pi/);
+  assert.doesNotMatch(devTab, /activeTab === "dev" && props\.piStatus === null/);
+  assert.match(devTab, /不自动检测 pi/);
   // settings 持久化字段 + 恢复逻辑（piStatus 为 null 时从缓存回填）
   assert.match(settings, /piInstall\?: \{ command: string; version: string; runtimeKind\?:/);
   assert.match(hook, /settings\.piInstall && piStatus === null/);

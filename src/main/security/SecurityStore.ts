@@ -51,7 +51,7 @@ export class SecurityStore {
 	 * 读取配置并做向后兼容归一化：
 	 * - 字段缺失时并入默认值（旧版本设置文件没有 securityConfig 字段）；
 	 * - 保证内置等级存在（id 固定，用户编辑过的内置等级保留其内容）；
-	 * - defaultLevelId 指向不存在的等级时回退 standard。
+	 * - defaultLevelId 指向不存在的等级时回退默认等级（off）。
 	 */
 	getConfig(): SecurityConfig {
 		const raw = this.settingsStore.get().securityConfig;

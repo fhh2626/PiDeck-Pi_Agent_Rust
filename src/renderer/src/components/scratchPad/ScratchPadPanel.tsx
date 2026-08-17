@@ -1,3 +1,4 @@
+import remarkBreaks from "remark-breaks";
 import { memo, useCallback, useRef, useState, type ReactNode } from "react";
 import { Download, Eye, FilePlus, PanelRightOpen, Pencil, Trash2 } from "lucide-react";
 import { MarkdownStream } from "../session/MarkdownStream";
@@ -259,8 +260,8 @@ export const ScratchPadPanel = memo(function ScratchPadPanel(props: ScratchPadPa
 										key={`scratch-pad-${content}`}
 										text={prepareTaskListPreview(content)}
 										onOpenExternal={() => undefined}
-										breaks
-										rehypePlugins={[rehypeHighlightMark]}
+										remarkPlugins={[remarkBreaks]}
+									rehypePlugins={[rehypeHighlightMark]}
 										components={{
 											/* GFM task list：用 AST 节点行号直接定位源码行，避免 render-order 计数器漂移 */
 											li: ({ node, className, children, ...liProps }) => {

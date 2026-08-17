@@ -160,6 +160,10 @@ assert.doesNotMatch(twistie, /ChevronDown|ChevronRight|GitBranch|GitCommit|GitCo
     assert.match(panel, /request === statusRequestRef\.current\s*&&\s*projectId === projectIdRef\.current/);
     assert.match(panel, /requestSequence/);
     assert.match(panel, /const PANE_MIN_BODY_HEIGHT = 24/);
+    // 头部实际 h-8=32px；26px 旧预算会让折叠按钮被 overflow 裁切、视觉偏下
+    assert.match(panel, /const PANE_HEADER_HEIGHT = 32/);
+    assert.match(panel, /h-\[calc\(var\(--git-pane-height\)\+32px\)\]/);
+    assert.match(panel, /h-\[32px\]/);
     assert.match(panel, /availableHeight - PANE_IDS\.length \* PANE_HEADER_HEIGHT/);
     assert.match(panel, /Math\.min\(\s*requestedBefore,\s*startBeforeHeight \+ startAfterHeight - PANE_MIN_BODY_HEIGHT,\s*\)/);
     assert.match(panel, /flushPendingHeights\(\)/);

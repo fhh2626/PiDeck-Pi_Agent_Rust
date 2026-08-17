@@ -261,6 +261,7 @@ export function createBrowserApi(): PiDesktopApi {
 					`/api/sessions/${encodeURIComponent(sessionId)}/messages/page${suffix}`,
 				);
 			},
+			readProcessEvents: async () => [],
 			readReferenceMessages: async (sessionId) => {
 				const result = await request<{
 					messages: Awaited<ReturnType<PiDesktopApi["sessions"]["readReferenceMessages"]>>;

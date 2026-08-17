@@ -3,6 +3,14 @@ export type ChatSessionBootstrapAction =
   | { kind: "load" }
   | { kind: "wait" };
 
+/**
+ * 引导页空白输入框的 renderer-only 虚拟会话 ID：无会话打开时（启动 / 清空 Tab /
+ * 空项目）引导页直接挂居中 ComposerArea，此 ID 只存在于渲染层 atoms，不落
+ * Catalog；用户首次发送时由 App.ensureSessionForSend 创建真实会话（Chat 匿名 /
+ * 非 Chat draft）并把 composer 状态整体提升过去。
+ */
+export const GUIDE_BOOTSTRAP_SESSION_ID = "renderer:guide-bootstrap";
+
 /** 欢迎页（未启动 Agent）选择的模型偏好存储 key。 */
 export const WELCOME_MODEL_KEY = "pideck:welcome-model";
 /** 欢迎页（未启动 Agent）选择的思考级别偏好存储 key。 */

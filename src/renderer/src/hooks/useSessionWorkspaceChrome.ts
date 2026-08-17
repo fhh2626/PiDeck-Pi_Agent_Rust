@@ -119,15 +119,6 @@ export function useSessionWorkspaceChrome(options: {
     currentSessionId,
     activeProjectId,
   };
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(PINNED_TABS_STORAGE_KEY, JSON.stringify(pinnedSessionTabIds));
-    } catch {
-      // 持久化失败不影响功能
-    }
-  }, [pinnedSessionTabIds]);
-
   // 会话记录消失时清理 Tab / pin / preview / 分屏，并自动切换焦点
   useEffect(() => {
     let nextTabIds: string[] | undefined;
@@ -168,22 +159,29 @@ export function useSessionWorkspaceChrome(options: {
     }
   }, [sessionRecords, setSessionTabIds]);
 
-  // 主进程「跳转到某会话」推送（例如系统通知点击）：解析 record 后交给
-  // App 注入的 focus handler 切换焦点。冷启动点击通知时 catalog 可能尚未加载完，
-  // 小间隔重试（最长约 3 秒）直到能解析到会话记录，避免首帧竞态丢目标。
   useEffect(() => {
     let disposed = false;
-    const unsubscribe = window.piDesktop.app.onFocusSessionTarget(({ sessionId }) => {
+    const focusBySessionId = (sessionId: string) => {
       const tryFocus = (attempt: number) => {
         if (disposed) return;
         const record = store.get(sessionRecordByIdAtomFamily(sessionId));
         if (record) {
-          focusHandlersRef.current.focusSession(record.projectId, sessionId);
+          focusHandlersRef.current.focusSession(record.projectId, record.id);
           return;
         }
-        if (attempt < 6) window.setTimeout(() => tryFocus(attempt + 1), 500);
+        if (attempt < 15) {
+          setTimeout(() => tryFocus(attempt + 1), 200);
+        }
       };
       tryFocus(0);
+    };
+
+    const unsubscribe = window.piDesktop.app.onFocusSessionTarget(({ sessionId }) => {
+      focusBySessionId(sessionId);
+    });
+    void window.piDesktop.app.getPendingFocusTarget?.().then((target) => {
+      if (disposed || !target) return;
+      focusBySessionId(target.sessionId);
     });
     return () => {
       disposed = true;

@@ -499,3 +499,19 @@ export function mergeAuthoritativeUiMessages(
 
 	return changed ? merged : current;
 }
+
+/** 手机/Web 端回答 ask_question / confirm / input。 */
+export async function respondToUi(input: {
+	sessionId: string;
+	requestId: string;
+	agentId: string;
+	runtimeGeneration: number;
+	response: import("../../../shared/types").AgentUiResponse;
+}): Promise<void> {
+	const res = await fetch("/api/ui-response", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(input),
+	});
+	if (!res.ok) throw new Error(`ui-response ${res.status}`);
+}

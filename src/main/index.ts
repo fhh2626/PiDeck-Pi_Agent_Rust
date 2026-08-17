@@ -1,3 +1,4 @@
+import { isDevToolsShortcut, toggleMainWindowDevTools } from "./devTools";
 import {
 	app,
 	BrowserWindow,
@@ -1020,6 +1021,31 @@ function focusMainWindow() {
  * 切换到对应会话；agentId 为兼容旧 toast 的兜底格式，运行时经 coordinator 解析成会话。
  * 挂到顶层 focusExistingWindow，供版本单实例锁的 .focus 信号调用。
  */
+
+/**
+ * 页面加载期间（冷启动/窗口重建）点击通知的跳转目标：直接 send 会在 preload/React
+ * 监听注册前丢失，先存入 pending，由两条路径兜底送达：
+ * 1. did-finish-load 后 flush 一次（窗口重建/旧 renderer 兼容的尽力而为）；
+ * 2. renderer 挂载后经 app:get-focus-target-pending 主动拉取（取走即清空，保证送达）。
+ */
+let pendingFocusTarget: { sessionId: string } | null = null;
+
+/** 窗口就绪（存在且未在加载）直接推送；否则入 pending 队列。 */
+function queueFocusTarget(sessionId: string) {
+	if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
+		mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, { sessionId });
+		return;
+	}
+	pendingFocusTarget = { sessionId };
+}
+
+/** did-finish-load 兜底：仍在加载期排队的目标补发一次（不清空，renderer 拉取幂等）。 */
+function flushPendingFocusTargetOnLoad() {
+	if (pendingFocusTarget && mainWindow && !mainWindow.isDestroyed()) {
+		mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, pendingFocusTarget);
+	}
+}
+
 function handleVersionFocusRequest(payload?: FocusPayload) {
 	const target = extractFocusTargetFromArgv(payload?.argv);
 	const activateSession = () => {
@@ -1028,9 +1054,7 @@ function handleVersionFocusRequest(payload?: FocusPayload) {
 		if (!sessionId && target.agentId && sessionRuntimeCoordinator) {
 			sessionId = sessionRuntimeCoordinator.getSessionId(target.agentId);
 		}
-		if (sessionId) {
-			mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, { sessionId });
-		}
+		if (sessionId) queueFocusTarget(sessionId);
 	};
 	if (mainWindow && !mainWindow.isDestroyed()) {
 		focusMainWindow();
@@ -1251,6 +1275,12 @@ function configureBrowserPanelWebviewHost(window: BrowserWindow): void {
 			}
 			return { action: "deny" };
 		});
+
+		guest.on("before-input-event", (event, input) => {
+			if (!isDevToolsShortcut(input)) return;
+			event.preventDefault();
+			toggleMainWindowDevTools(window);
+		});
 	});
 }
 
@@ -1355,6 +1385,7 @@ async function createWindow() {
 		});
 		// 恢复用户设置的窗口缩放；在 did-finish-load 后应用，避免早期设置被覆盖。
 		mainWindow?.webContents.setZoomFactor(settingsStore.get().zoomFactor);
+		flushPendingFocusTargetOnLoad();
 	});
 	mainWindow.webContents.on(
 		"did-fail-load",
@@ -1464,52 +1495,13 @@ async function createWindow() {
 		}
 	});
 
-	// 监听浏览器标准快捷键打开开发者工具
+	// 监听浏览器标准快捷键打开开发者工具（F12 / Ctrl+Shift+I / Ctrl+Shift+J，
+	// macOS 变体与开关逻辑集中在 devTools.ts，主窗口/webview/设置 IPC 共用）
 	mainWindow.webContents.on("before-input-event", (event, input) => {
 		if (!mainWindow || mainWindow.isDestroyed()) return;
-
-		// F12
-		if (input.key === "F12" && input.type === "keyDown") {
+		if (isDevToolsShortcut(input)) {
 			event.preventDefault();
-			if (mainWindow.webContents.isDevToolsOpened()) {
-				mainWindow.webContents.closeDevTools();
-			} else {
-				mainWindow.webContents.openDevTools({ mode: "detach" });
-			}
-		}
-
-		// Ctrl+Shift+I (Windows/Linux) 或 Cmd+Option+I (macOS)
-		const isMac = process.platform === "darwin";
-		const ctrlOrCmd = isMac ? input.meta : input.control;
-		const shiftOrOption = input.shift || (isMac && input.alt);
-
-		if (
-			ctrlOrCmd &&
-			shiftOrOption &&
-			input.key.toLowerCase() === "i" &&
-			input.type === "keyDown"
-		) {
-			event.preventDefault();
-			if (mainWindow.webContents.isDevToolsOpened()) {
-				mainWindow.webContents.closeDevTools();
-			} else {
-				mainWindow.webContents.openDevTools({ mode: "detach" });
-			}
-		}
-
-		// Ctrl+Shift+J (Windows/Linux) 或 Cmd+Option+J (macOS) - 直接打开 Console
-		if (
-			ctrlOrCmd &&
-			shiftOrOption &&
-			input.key.toLowerCase() === "j" &&
-			input.type === "keyDown"
-		) {
-			event.preventDefault();
-			if (mainWindow.webContents.isDevToolsOpened()) {
-				mainWindow.webContents.closeDevTools();
-			} else {
-				mainWindow.webContents.openDevTools({ mode: "detach", activate: true });
-			}
+			toggleMainWindowDevTools(mainWindow);
 		}
 	});
 
@@ -1934,7 +1926,7 @@ app.whenReady().then(async () => {
 			: undefined,
 		// 订阅 pi agent 事件流，供 Web SSE 端点转发给浏览器。
 		subscribePiEvents: (handler) => agentManager.addLocalEventListener(
-			(agentId, event, streamGeneration) => handler(agentId, event as never, streamGeneration),
+			(agentId, event) => handler(agentId, event as never),
 		),
 		// agentId → sessionId 路由：pi 事件只有 agentId，SSE 连接按 session 订阅。
 		getSessionIdForAgent: (agentId) => sessionRuntimeCoordinator.getSessionId(agentId),
@@ -2083,6 +2075,8 @@ app.whenReady().then(async () => {
 			}
 		},
 		listSessionRuntimes: () => sessionRuntimeCoordinator.listRuntimes(),
+		listPendingUiRequests: () => sessionRuntimeCoordinator.listPendingUiRequests(),
+		respondToUi: (input) => sessionRuntimeCoordinator.respondToUi(input),
 		listSessionRuntimeModels: (target) => sessionRuntimeCoordinator.listRuntimeModels(target),
 		stopSessionRuntime: stopSessionRuntime,
 		abortSessionRuntime: (target) => sessionRuntimeCoordinator.abortRuntime(target),
@@ -2249,11 +2243,15 @@ app.whenReady().then(async () => {
 	// argv 携带 pideck:// URL，窗口就绪后直接向 renderer 发送跳转目标。
 	// catalog 可能尚未加载完，renderer 侧监听会小间隔重试直到能解析到会话记录。
 	const coldStartTarget = extractFocusTargetFromArgv(process.argv);
-	if (coldStartTarget?.sessionId && mainWindow && !mainWindow.isDestroyed()) {
-		mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, {
-			sessionId: coldStartTarget.sessionId,
-		});
+	if (coldStartTarget?.sessionId) {
+		queueFocusTarget(coldStartTarget.sessionId);
 	}
+	// renderer 挂载后拉取 pending 跳转目标（一次性，取走即清空）
+	ipcMain.handle(ipcChannels.appGetFocusTargetPending, () => {
+		const target = pendingFocusTarget;
+		pendingFocusTarget = null;
+		return target;
+	});
 	void detectExternalEditorsOnFirstLaunch().catch((error) => {
 		void appLogger.warn("editor", "External editor first launch detection failed", error);
 	});

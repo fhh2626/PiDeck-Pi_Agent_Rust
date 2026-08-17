@@ -39,8 +39,10 @@ test("composer measures variable content above the input and reports the extra h
     composerArea,
     /requestAnimationFrame\(\(\) => \{[\s\S]*mountedRef\.current = true;[\s\S]*reportExtra\(\);/,
   );
-  // 非受控模式本地增长
-  assert.match(composerArea, /extra \+ COMPOSER_DEFAULT_HEIGHT/);
+  // 非受控模式本地增长：起步高度可被宿主覆盖（起始页传更高的 defaultHeight），
+  // 内容增高时仍按各自起点自适应，保证小输入框不会被额外内容高度顶破。
+  assert.match(composerArea, /extra \+ \(props\.defaultHeight \?\? COMPOSER_DEFAULT_HEIGHT\)/);
+  assert.match(composerArea, /useState\(props\.defaultHeight \?\? COMPOSER_DEFAULT_HEIGHT\)/);
 });
 
 test("extras height sync lives in a child that rerenders when variable content changes", () => {
@@ -48,15 +50,16 @@ test("extras height sync lives in a child that rerenders when variable content c
   // its render-prop subtree, not the outer ComposerArea, so the layout effect must live in a
   // child receiving the extras as props; otherwise the panel only shrinks after the user types
   // and rerenders ComposerArea for an unrelated reason.
-  // 注：扩展 widget（Todo/Plan）已迁至 chat-header SessionWidgetChips，composer 内 widgets
-  // 槽位固定传 null，测量的可变内容为附件栏/队列/投递通知。
+  // 注：扩展 widget（Todo/Plan）默认在 chat-header SessionWidgetChips，composer 内
+  // widgets 槽位默认 null（宿主 SessionView 可传常驻 todo 条 SessionTodoStrip），
+  // 测量的可变内容为 todo 条/附件栏/队列/投递通知。
   assert.match(
     composerArea,
     /function ComposerMeasuredExtras[\s\S]*useLayoutEffect/,
   );
   assert.match(
     composerArea,
-    /<ComposerMeasuredExtras[\s\S]*widgets=\{null\}/,
+    /<ComposerMeasuredExtras[\s\S]*widgets=\{props\.widgets \?\? null\}/,
   );
 });
 

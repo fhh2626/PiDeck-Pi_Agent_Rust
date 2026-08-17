@@ -1,5 +1,4 @@
-import type { ChatMessage } from "../../../shared/types";
-
+import type { ChatMessage } from '../../../shared/types';
 /**
  * Web 端（A2 React）状态类型。
  *
@@ -38,10 +37,24 @@ export type WebRuntime = {
 	runtimeGeneration?: number;
 };
 
+export type WebPendingUiRequest = {
+	sessionId: string;
+	agentId: string;
+	runtimeGeneration: number;
+	requestId: string;
+	method: string;
+	title: string;
+	options?: string[];
+	placeholder?: string;
+	prefill?: string;
+	allowOther?: boolean;
+};
+
 export type WebState = {
 	projects: WebProject[];
 	sessions: WebSession[];
 	runtimes: WebRuntime[];
+	pendingUiRequests?: WebPendingUiRequest[];
 	/** 运行中 Session 的主进程消息尾部快照，用于补偿 Web SSE/本地缓存。 */
 	messagesBySession: Record<string, ChatMessage[]>;
 };

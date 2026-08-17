@@ -1,3 +1,4 @@
+export { detectPiRuntimeKind } from "../../shared/piCompatibility";
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { delimiter, dirname, extname, join } from "node:path";
@@ -63,7 +64,13 @@ export class PiLocator {
     const normalizedCustomPath = this.normalizeCustomPath(customPath);
     // 用户手动指定路径优先，适用于 npm/pnpm/yarn 全局安装、nvm/volta/asdf/mise 等极端情况。
     // 旧版本可能已保存 pi.ps1；Windows 现在不再调用 PowerShell shim，遇到时忽略并回退自动检测。
-    if (runtimePreference === "auto" && normalizedCustomPath && !this.isUnsupportedPowerShellShim(normalizedCustomPath)) {
+    if (
+      runtimePreference === "auto" &&
+      normalizedCustomPath &&
+      !this.isUnsupportedPowerShellShim(normalizedCustomPath) &&
+      !normalizedCustomPath.startsWith("wsl://") &&
+      existsSync(normalizedCustomPath)
+    ) {
       return normalizedCustomPath;
     }
     // 用户显式开启 WSL 时优先使用 WSL 中的 pi，不轮询本地 PATH 中的 Windows 版本
@@ -96,7 +103,7 @@ export class PiLocator {
         ? join(localAppData, "mise")
         : join(home, ".local", "share", "mise")
     );
-    const miseInstallsDir = process.env.MISE_INSTALLS_DIR || join(miseDataDir, "installs");
+    const miseInstallsDir = process.env.MISE_INSTALL_PATH || process.env.MISE_INSTALLS_DIR || join(miseDataDir, "installs");
     const dirs = [
       ...this.pathDirs(),
       join(appData, "npm"),

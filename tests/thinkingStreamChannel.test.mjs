@@ -34,7 +34,9 @@ const appUtils = readFileSync(
 test("ThinkingUpdate payload carries stable id + lifecycle fields", () => {
   assert.match(agentTypes, /export type ThinkingUpdate = \{/);
   assert.match(agentTypes, /id: string;/);
-  assert.match(agentTypes, /text: string;/);
+  // 2026-08 增量协议：text 变可选（全量快照时携带），delta 为增量推送
+  assert.match(agentTypes, /text\??: string;/);
+  assert.match(agentTypes, /delta\??: string;/);
   assert.match(agentTypes, /startedAt: number;/);
   assert.match(agentTypes, /endedAt: number;/);
   assert.match(agentTypes, /done: boolean;/);
@@ -42,6 +44,35 @@ test("ThinkingUpdate payload carries stable id + lifecycle fields", () => {
     agentTypes.slice(agentTypes.indexOf("export type ThinkingUpdate"), agentTypes.indexOf("export type ComposerAgentMode")),
     /^\s*thinking:\s*string;/m,
   );
+});
+
+test("main process: emitThinkingNow sends delta for appends, full text for resets/snapshots", () => {
+  const idx = agentManager.indexOf("private emitThinkingNow");
+  const block = agentManager.slice(idx, idx + 900);
+  // 增量协议：正常 append 只发 delta；非 append 或超过快照间隔补全量（自愈）
+  assert.match(block, /delta: text\.slice\(lastSent\.length\)/);
+  assert.match(block, /lastSentThinkingByAgent/);
+  assert.match(block, /pushCount >= 50/);
+  assert.match(block, /text\.startsWith\(lastSent\)/);
+});
+
+test("main process: emitTextStreamNow sends delta for appends, full text for resets/snapshots", () => {
+  const idx = agentManager.indexOf("private emitTextStreamNow");
+  const block = agentManager.slice(idx, idx + 1000);
+  assert.match(block, /delta: text\.slice\(lastSent\.length\)/);
+  assert.match(block, /lastSentTextByAgent/);
+  assert.match(block, /pushCount >= 50/);
+  assert.match(block, /text\.startsWith\(lastSent\)/);
+  // done 后清空 delta 基准
+  assert.match(block, /lastSentTextByAgent\.delete\(agentId\)/);
+});
+
+test("renderer: streaming atoms merge delta and accept full-text snapshots", () => {
+  assert.match(atoms, /typeof payload\.delta === "string"/);
+  // text-stream：delta 追加本地累积；text 全量替换
+  assert.match(atoms, /\(prev\?\.content \?\? ""\) \+ payload\.delta/);
+  // thinking：delta 追加本地累积
+  assert.match(atoms, /\(prev\?\.text \?\? ""\) \+ delta/);
 });
 
 test("main process: live thinking id equals History msg-thinking-* id", () => {

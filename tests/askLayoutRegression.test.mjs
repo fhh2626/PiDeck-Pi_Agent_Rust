@@ -38,13 +38,14 @@ const tailwind = readFileSync(
  */
 test("ask stays out of composer sizing and uses the session timeline as its scroll owner", () => {
   assert.doesNotMatch(composerArea, /runtimeUi/);
-  assert.match(sessionView, /<SessionMessageTimeline[\s\S]*runtimeUi=\{runtimeUi\}/);
+  assert.match(sessionView, /<SessionSurfaceStage[\s\S]*runtimeUi,/);
   assert.match(timeline, /className="session-runtime-ui mx-auto w-full/);
   assert.doesNotMatch(timeline, /session-runtime-ui sticky bottom-0/);
   // 内容宽度：消息区/输入框 inline width，Ask 随时间线同宽。
   // 时间线侧挂在 MessageScroller 的 contentProps（内层 [role=log]）上，
   // 视口铺满面板、滚动条贴面板最右，内容列仍与 composer 同宽居中。
-  assert.match(timeline, /contentProps=\{\{ style: chatContentWidthStyle \}\}/);
+  // 空态例外：showSurfaceEmptyState 时去掉约束（起始页自控宽度，与引导页一致）。
+  assert.match(timeline, /contentProps=\{showSurfaceEmptyState \? undefined : \{ style: chatContentWidthStyle \}\}/);
   assert.doesNotMatch(timeline, /style=\{chatContentWidthStyle\}/);
   assert.doesNotMatch(timeline, /--chat-inline-pad/);
   assert.doesNotMatch(foundation, /--chat-inline-pad|--chat-side-gap/);
@@ -78,7 +79,8 @@ test("composer minimum still fits the editor after ask moves to timeline", () =>
 test("composer panel reserves the same scrollbar gutter as the timeline", () => {
   assert.match(sessionView, /session-v-composer overflow-hidden \[scrollbar-gutter:stable\]/);
   assert.doesNotMatch(sessionView, /paddingRight/);
-  // 时间线侧：宽度约束挂在滚动内容上（视口自带 scrollbar-gutter:stable 预留槽位）
-  assert.match(timeline, /contentProps=\{\{ style: chatContentWidthStyle \}\}/);
+  // 时间线侧：宽度约束挂在滚动内容上（视口自带 scrollbar-gutter:stable 预留槽位）；
+  // 空态例外：showSurfaceEmptyState 时去掉约束（起始页自控宽度，与引导页一致）。
+  assert.match(timeline, /contentProps=\{showSurfaceEmptyState \? undefined : \{ style: chatContentWidthStyle \}\}/);
   assert.match(chatContentWidth, /scrollbar-gutter:stable/);
 });

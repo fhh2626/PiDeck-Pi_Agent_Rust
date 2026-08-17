@@ -30,14 +30,14 @@ export const sidebarExpandedProjectIdsAtom = atom<ReadonlySet<string>>(
  * 默认值与 main SettingsStore.defaultSettings 保持一致。
  */
 export type TurnFlowSettings = {
-	/** 流式对话时展开中间过程（默认关：对话过程中不自动撑开，手动展开不受影响）。 */
+	/** 流式对话时展开中间过程（默认开：最新轮流式输出时自动展开思考/工具详情）。 */
 	expandInterimDuringStream: boolean;
 	/** 新一轮开始时收起上一轮（默认开：发送新消息后收起所有非最新轮，含手动展开的）。 */
 	collapsePrevRunsOnNewTurn: boolean;
 };
 
 export const turnFlowSettingsAtom = atom<TurnFlowSettings>({
-	expandInterimDuringStream: false,
+	expandInterimDuringStream: true,
 	collapsePrevRunsOnNewTurn: true,
 });
 

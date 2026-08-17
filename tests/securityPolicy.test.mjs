@@ -149,8 +149,8 @@ test("buildSnapshot: exposes exactly the fields the extension reads", () => {
 	config.sessionOverrides["/s.md"] = "strict";
 	const snapshot = buildSnapshot(config);
 	assert.equal(snapshot.schemaVersion, 1);
-	assert.equal(snapshot.enabled, false);
-	assert.equal(snapshot.defaultLevelId, "standard");
+	assert.equal(snapshot.enabled, true);
+	assert.equal(snapshot.defaultLevelId, "off");
 	assert.equal(snapshot.sessionLevels["/s.md"], "strict");
 	// 扩展读取的字段必须齐全
 	for (const level of snapshot.levels) {

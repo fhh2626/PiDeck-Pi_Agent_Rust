@@ -1,3 +1,4 @@
+import { resolveNotificationSessionId } from "./agentUtils";
 import { app, type BrowserWindow, Notification } from "electron";
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
@@ -29,6 +30,7 @@ import type { MainProcessTranslationKey } from "../../shared/i18n/mainProcessCop
 import {
 	buildCompactionSlideOut,
 	mergeHistoryWithPreservedMessages,
+	stabilizeReloadedMessageIds,
 } from "./historyMessages";
 import {
 	buildAgentSessionKey,
@@ -199,6 +201,10 @@ export class AgentManager {
 	);
 	/** 流式正文累积缓冲：text_delta 时累加，message_end/agent_end/settled/abort 清除。 */
 	private readonly streamingText = new Map<string, string>();
+	private readonly lastSentTextByAgent = new Map<string, string>();
+	private readonly textPushCountByAgent = new Map<string, number>();
+	private readonly lastSentThinkingByAgent = new Map<string, string>();
+	private readonly thinkingPushCountByAgent = new Map<string, number>();
 	/** 流式 emit 合并窗口（毫秒）。50ms 兼顾流畅度与传输量，肉眼几乎无延迟。 */
 	private static readonly MESSAGE_FLUSH_INTERVAL_MS = 50;
 	/** 激活显示窗口轮数（2026-08 激活分页）：loadMessages 后只下发尾部 N 轮，更早历史走 disk 轮次分页。 */
@@ -360,6 +366,12 @@ export class AgentManager {
 		 * 该行会让 pi 拒绝加载会话并 exit 1，见 #114）。由 main/index.ts 装配 SessionScanner 实现。
 		 */
 		private readonly repairSessionFile?: (sessionPath: string) => Promise<boolean>,
+		/**
+		 * agentId → SessionRecord.id 解析（由 main/index.ts 注入 coordinator.getSessionId）。
+		 * 通知 toast 的 launch 必须携带 record.id：renderer 的 sessionRecordByIdAtomFamily
+		 * 只索引 record.id，而 tab.sessionId 是 pi 侧会话 id。
+		 */
+		private readonly resolveSessionId?: (agentId: string) => string | undefined,
 	) {
 		this.messageProjector = new AgentMessageProjector({
 			translate: this.translate,
@@ -927,10 +939,13 @@ export class AgentManager {
 		// abort 时 ask_question 的 answer 已被覆写为 null，不再需要跟踪
 		this.abortedDuringAsk.delete(agentId);
 		const currentMessages = this.messages.get(agentId) ?? [];
-		const nextMessages = mergeHistoryWithPreservedMessages(
-			messages,
+		const nextMessages = stabilizeReloadedMessageIds(
 			currentMessages,
-			options?.preserveMessagesAfter,
+			mergeHistoryWithPreservedMessages(
+				messages,
+				currentMessages,
+				options?.preserveMessagesAfter,
+			),
 		);
 		if (options?.preserveRuntimeMessages && currentMessages.length > 0) {
 			// 只把新投影没有覆盖的旧消息送入 slideOut；同一条保留消息即使
@@ -1785,6 +1800,12 @@ export class AgentManager {
 			prompt: trimmedPrompt,
 			hasSessionPath: !!runtime.tab.sessionPath,
 		});
+
+		// 已有压缩在进行：拒绝重复请求。
+		if (this.compactingAgents.has(agentId) || this.rpcCompactingAgents.has(agentId)) {
+			void this.appLogger?.info("agent", "Compact skipped: already compacting", { agentId });
+			return this.getRuntimeState(agentId);
+		}
 
 		// 标记压缩中，退出处理器据此区分压缩重启与异常崩溃
 		this.consumeManualCompactionReloadClaim(agentId);
@@ -3313,7 +3334,7 @@ export class AgentManager {
 	}
 
 	private handlePiEvent(agentId: string, event: unknown) {
-		this.emit(ipcChannels.agentsEvent, { agentId, event });
+		this.emitLocalEvent(agentId, event);
 
 		if (!event || typeof event !== "object") return;
 		const typed = event as Record<string, any>;
@@ -3459,6 +3480,9 @@ export class AgentManager {
 				}
 				this.emitState();
 				void this.emitRuntimeState(agentId);
+				setTimeout(() => {
+					void this.markIdleIfPiReportsNoWork(agentId);
+				}, 300);
 			}
 			void this.appLogger?.info("agent", "Compaction ended", {
 				agentId,
@@ -5019,8 +5043,11 @@ export class AgentManager {
 			// 使用应用名称作为通知标题，在 Windows/macOS 通知中心中显示为应用标识
 			const appName = app.getName();
 			const body = this.translate("mainNotification.sessionDone", { title: sessionTitle });
-			// 会话结束时 runtime 一定已绑定会话，取 sessionId 作为点击跳转目标（跨重启稳定）
-			const sessionId = this.agents.get(agentId)?.tab.sessionId;
+			const resolveSessionId = this.resolveSessionId;
+			const sessionId = resolveNotificationSessionId(
+				resolveSessionId ? () => resolveSessionId(agentId) : undefined,
+				this.agents.get(agentId)?.tab.sessionId,
+			);
 			const notification = new Notification({
 				title: appName,
 				body,
@@ -5400,14 +5427,21 @@ export class AgentManager {
 	private emitThinkingNow(agentId: string, text: string) {
 		const segment = this.thinkingSegmentByAgent.get(agentId);
 		if (!segment) return;
+		const lastSent = this.lastSentThinkingByAgent.get(agentId) ?? "";
+		const pushCount = (this.thinkingPushCountByAgent.get(agentId) ?? 0) + 1;
+		const sendFull = !text.startsWith(lastSent) || pushCount >= 50;
 		const update: ThinkingUpdate = {
 			agentId,
 			id: segment.id,
-			text,
+			...(!sendFull
+				? { delta: text.slice(lastSent.length) }
+				: { text }),
 			startedAt: segment.startedAt,
 			endedAt: segment.endedAt,
 			done: false,
 		};
+		this.lastSentThinkingByAgent.set(agentId, text);
+		this.thinkingPushCountByAgent.set(agentId, sendFull ? 0 : pushCount);
 		this.emit(ipcChannels.agentsThinking, update);
 	}
 
@@ -5427,7 +5461,26 @@ export class AgentManager {
 	 *  done=true 表示本轮回答结束（message_end），渲染层据此把 streaming 置 false。
 	 *  热路径不再附带 runtime patch：isStreaming 只在 setStreamingAgent 边沿推送。 */
 	private emitTextStreamNow(agentId: string, text: string, done = false) {
-		this.emit(ipcChannels.agentsTextStream, { agentId, text, done });
+		const lastSent = this.lastSentTextByAgent.get(agentId) ?? "";
+		const pushCount = (this.textPushCountByAgent.get(agentId) ?? 0) + 1;
+		const sendFull = !text.startsWith(lastSent) || pushCount >= 50;
+		const payload: {
+			agentId: string;
+			text?: string;
+			delta?: string;
+			done: boolean;
+		} = {
+			agentId,
+			...(!sendFull ? { delta: text.slice(lastSent.length) } : { text }),
+			done,
+		};
+		this.lastSentTextByAgent.set(agentId, text);
+		this.textPushCountByAgent.set(agentId, sendFull ? 0 : pushCount);
+		if (done) {
+			this.lastSentTextByAgent.delete(agentId);
+			this.textPushCountByAgent.delete(agentId);
+		}
+		this.emit(ipcChannels.agentsTextStream, payload);
 	}
 
 	private emitState() {

@@ -4,6 +4,8 @@ import { t } from "../i18n";
 
 type Props = {
   useNativeTitleBar: boolean;
+  /** mac 用系统红绿灯，不再渲染右侧 Win 风格 min/max/close。 */
+  platform: NodeJS.Platform;
   toggleAlwaysOnTop: () => Promise<boolean>;
   minimizeWindow: () => void;
   /** 切换最大化并返回切换后是否最大化 */
@@ -25,6 +27,7 @@ function RestoreIcon() {
 
 export function AppHeader({
   useNativeTitleBar,
+  platform,
   toggleAlwaysOnTop,
   minimizeWindow,
   toggleMaximizeWindow,
@@ -52,42 +55,47 @@ export function AppHeader({
 
   if (useNativeTitleBar) return null;
 
+  // hiddenInset 已经画了系统红绿灯；再画一套 Win 控件就是「左右都有关闭键」。
+  const showWinWindowControls = platform !== "darwin";
+
   return (
     <>
       <div className="window-drag-layer" aria-hidden="true" />
-      <div className="window-controls" aria-label={t("app.windowControls")}>
-        <button
-          type="button"
-          className={`window-control pin${windowAlwaysOnTop ? " active" : ""}`}
-          aria-label={windowAlwaysOnTop ? t("app.windowUnpin") : t("app.windowPin")}
-          title={windowAlwaysOnTop ? t("app.windowUnpin") : t("app.windowPin")}
-          onClick={async () => {
-            const next = await toggleAlwaysOnTop();
-            setWindowAlwaysOnTop(next);
-          }}
-        >
-          <Pin size={12} strokeWidth={2.2} aria-hidden="true" />
-        </button>
-        <button type="button" className="window-control" aria-label={t("app.windowMinimize")} title={t("app.windowMinimize")} onClick={() => minimizeWindow()}>
-          <Minus size={12} strokeWidth={2.2} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="window-control"
-          aria-label={maximized ? t("app.windowRestore") : t("app.windowMaximize")}
-          title={maximized ? t("app.windowRestore") : t("app.windowMaximize")}
-          onClick={() => {
-            // 只采信主进程返回的意图态；maximize/unmaximize 事件用事件名推送，
-            // 不再乐观翻转（否则会与迟到/过期的 isMaximized 读数互踩成「要点两次」）。
-            void toggleMaximizeWindow().then((next) => setMaximized(next));
-          }}
-        >
-          {maximized ? <RestoreIcon /> : <Square size={11} strokeWidth={2} aria-hidden="true" />}
-        </button>
-        <button type="button" className="window-control close" aria-label={t("app.windowClose")} title={t("app.windowClose")} onClick={() => closeWindow()}>
-          <X size={13} strokeWidth={2.2} aria-hidden="true" />
-        </button>
-      </div>
+      {showWinWindowControls ? (
+        <div className="window-controls" aria-label={t("app.windowControls")}>
+          <button
+            type="button"
+            className={`window-control pin${windowAlwaysOnTop ? " active" : ""}`}
+            aria-label={windowAlwaysOnTop ? t("app.windowUnpin") : t("app.windowPin")}
+            title={windowAlwaysOnTop ? t("app.windowUnpin") : t("app.windowPin")}
+            onClick={async () => {
+              const next = await toggleAlwaysOnTop();
+              setWindowAlwaysOnTop(next);
+            }}
+          >
+            <Pin size={12} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+          <button type="button" className="window-control" aria-label={t("app.windowMinimize")} title={t("app.windowMinimize")} onClick={() => minimizeWindow()}>
+            <Minus size={12} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="window-control"
+            aria-label={maximized ? t("app.windowRestore") : t("app.windowMaximize")}
+            title={maximized ? t("app.windowRestore") : t("app.windowMaximize")}
+            onClick={() => {
+              // 只采信主进程返回的意图态；maximize/unmaximize 事件用事件名推送，
+              // 不再乐观翻转（否则会与迟到/过期的 isMaximized 读数互踩成「要点两次」）。
+              void toggleMaximizeWindow().then((next) => setMaximized(next));
+            }}
+          >
+            {maximized ? <RestoreIcon /> : <Square size={11} strokeWidth={2} aria-hidden="true" />}
+          </button>
+          <button type="button" className="window-control close" aria-label={t("app.windowClose")} title={t("app.windowClose")} onClick={() => closeWindow()}>
+            <X size={13} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }

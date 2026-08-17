@@ -9,6 +9,7 @@ const surfaces = readFileSync("src/renderer/src/styles/surfaces.css", "utf8");
 const foundation = readFileSync("src/renderer/src/styles/foundation.css", "utf8");
 const rendererStyles = readFileSync("src/renderer/src/styles.css", "utf8");
 const settingsModal = readFileSync("src/renderer/src/components/app/SettingsModal.tsx", "utf8");
+const commonTab = readFileSync("src/renderer/src/components/app/settings/CommonTab.tsx", "utf8");
 const projectResources = readFileSync("src/renderer/src/components/app/ProjectResourcesModal.tsx", "utf8");
 const workspaceStyles = readFileSync("src/renderer/src/styles/workspace.css", "utf8");
 const zhCopy = readFileSync("src/renderer/src/i18n/rendererCopy.zh-CN.ts", "utf8");
@@ -30,7 +31,8 @@ test("config shell defines compact density and crisp system typography", () => {
   assert.match(foundation, /Segoe UI Variable Text/);
   assert.match(foundation, /Microsoft YaHei UI/);
   assert.doesNotMatch(foundation, /MiSans/);
-  assert.match(settingsModal, /value: "system"/);
+  // 语言下拉的 "system" 选项位于常用设置 tab（CommonTab，自 SettingsModal 拆分）
+  assert.match(commonTab, /value: "system"/);
   assert.doesNotMatch(rendererStyles, /styles\/lxgw-wenkai\.css/);
   assert.doesNotMatch(rendererStyles, /misans/i);
   assert.equal(existsSync("src/renderer/assets/fonts/misans"), false);

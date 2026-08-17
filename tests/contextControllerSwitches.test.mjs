@@ -181,10 +181,6 @@ test("ContextControllerSwitches is mounted in SessionHeader", () => {
 	assert.match(viewSource, /<SessionHeader[\s\S]*sessionId={sessionId}/);
 });
 
-test("SessionWidgetChips excludes pi-deck-context-controller from chip rendering", () => {
-	const chipsSource = readFileSync("src/renderer/src/components/session/SessionWidgetChips.tsx", "utf8");
-	assert.match(chipsSource, /widgetKey\s*!==\s*"pi-deck-context-controller"/);
-});
 
 test("silent context-controller prompts may send an empty message when agentMessage is present", () => {
 	const coordinator = readFileSync("src/main/sessions/SessionRuntimeCoordinator.ts", "utf8");

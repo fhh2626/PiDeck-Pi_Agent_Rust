@@ -6,7 +6,8 @@
  * 支持/不支持视觉由用户自行判断，不做能力过滤）；保存时经 vision:save-config
  * 白名单校验后写回 ~/.pi/agent/pi-deck-vision.json（pi-deck-vision 扩展运行时读取同一文件）。
  *
- * 保存逻辑统一归设置弹框头部「保存」按钮（useVisionBridgeDraft 上提草稿/脏标记/保存），
+ * 保存逻辑统一归设置弹框头部「保存」按钮（useVisionBridgeDraft 上提草稿/脏标记/保存，
+ * hook 见 visionDraft.ts，独立成文件以便本组件 lazy 加载），
  * 本组件只负责表单呈现与模型选择；保存成功提示走全局 toast（底部绿字太隐蔽，用户
  * 要求改 toast），失败提示就近展示（与头部保存按钮对照），底部保留运行日志诊断区。
  */
@@ -29,100 +30,19 @@ import { ModelPicker } from "../../session/ComposerComponents";
 import type {
 	AvailableModel,
 	VisionBridgeConfig,
-	VisionBridgeState,
 	VisionLogInfo,
 } from "../../../../../shared/types";
 import { SettingsSection } from "./SettingsStorageTab";
 import { SettingRow, SettingSwitchRow } from "./SettingRows";
+import {
+	DEFAULT_PROMPT,
+	DEFAULT_TIMEOUT_MS,
+	configFilePath,
+	emptyDraft,
+} from "./visionDraft.ts";
 
-/** 与扩展 DEFAULT_PROMPT 保持一致（恢复默认按钮用）。 */
-const DEFAULT_PROMPT =
-	"请详细描述这张图片的内容。如果图片中有文字（代码、报错、UI 文案、文档等），请完整准确地转录所有可见文字；如果是图表，请说明类型、坐标轴含义和关键数值；如果涉及界面，请描述布局与元素。输出使用中文。";
-
-/** 超时默认值（ms），与主进程/扩展 DEFAULT_CONFIG 保持一致；UI 以秒为单位展示。 */
-const DEFAULT_TIMEOUT_MS = 120_000;
-
-/** 配置文件路径（来自主进程返回的 configDir，与扩展读取路径一致）。 */
-function configFilePath(configDir: string): string {
-	return `${configDir}/pi-deck-vision.json`;
-}
-
-/** 未配置时的新建草稿（provider/model 留空，保存按钮不可点，引导先选模型）。 */
-function emptyDraft(): VisionBridgeConfig {
-	return { enabled: true, provider: "", model: "" };
-}
-
-/**
- * 视觉桥草稿状态 hook（设置弹框持有）：与全局设置草稿平行但独立存储
- * （视觉桥写入 pi-deck-vision.json，走独立 IPC，不是 AppSettings 字段），
- * 因此脏标记单独维护，由弹框头部统一保存/取消/关闭确认一并处理。
- */
-export function useVisionBridgeDraft() {
-	const [state, setState] = useState<VisionBridgeState | null>(null);
-	const [draft, setDraft] = useState<VisionBridgeConfig | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [saving, setSaving] = useState(false);
-	const [dirty, setDirty] = useState(false);
-	// 保存失败提示（成功走全局 toast，不在此占位）
-	const [notice, setNotice] = useState<string | null>(null);
-
-	// 挂载时拉取当前配置（弹框每次打开都重建 state，无需清理外部资源）
-	useEffect(() => {
-		let mounted = true;
-		desktopApi.config
-			.visionGetConfig()
-			.then((loaded) => {
-				if (!mounted) return;
-				setState(loaded);
-				setDraft(loaded.config ?? emptyDraft());
-				setLoading(false);
-			})
-			.catch(() => {
-				if (mounted) setLoading(false);
-			});
-		return () => {
-			mounted = false;
-		};
-	}, []);
-
-	/** 表单改动：更新草稿并标记未保存（幂等）。 */
-	const updateDraft = useCallback((patch: Partial<VisionBridgeConfig>) => {
-		setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
-		setDirty(true);
-		setNotice(null);
-	}, []);
-
-	/** 保存草稿到 pi-deck-vision.json；成功清脏标记并弹 toast，失败保留脏标记（头部按钮可重试）。 */
-	const save = useCallback(async (): Promise<boolean> => {
-		if (!draft) return false;
-		setSaving(true);
-		setNotice(null);
-		try {
-			const result = await desktopApi.config.visionSaveConfig(draft);
-			if (result.ok) {
-				setDirty(false);
-				showNotice(t("settings.vision.saved"), 3000);
-				return true;
-			}
-			setNotice(`${t("settings.vision.saveFailed")}：${result.error ?? ""}`);
-			return false;
-		} catch (error) {
-			setNotice(`${t("settings.vision.saveFailed")}：${String(error)}`);
-			return false;
-		} finally {
-			setSaving(false);
-		}
-	}, [draft]);
-
-	/** 放弃修改：回退到打开弹框时的磁盘配置快照。 */
-	const reset = useCallback(() => {
-		setDraft(state?.config ?? emptyDraft());
-		setDirty(false);
-		setNotice(null);
-	}, [state]);
-
-	return { draft, loading, saving, dirty, notice, configDir: state?.configDir ?? "", updateDraft, save, reset };
-}
+export type { VisionBridgeConfig, VisionBridgeState } from "../../../../../shared/types";
+export { useVisionBridgeDraft, DEFAULT_PROMPT, DEFAULT_TIMEOUT_MS, configFilePath, emptyDraft } from "./visionDraft.ts";
 
 export function VisionBridgeSettingsTab(props: {
 	draft: VisionBridgeConfig | null;

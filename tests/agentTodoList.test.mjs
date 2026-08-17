@@ -141,11 +141,8 @@ test("tailwind-merge keeps widget font sizes next to status colors", () => {
 test("widget popover follows wallpaper translucency, items use foreground text", () => {
 	// 2027-01 用户要求：todo 弹层背景跟随壁纸透明度——App.tsx 给所有浮层保留 92%+ 底色，
 	// widget 弹层单独降回面板档；条目文字用前景色（黑）而非 muted 灰。
-	const chips = readFileSync(
-		"src/renderer/src/components/session/SessionWidgetChips.tsx",
-		"utf8",
-	);
-	assert.match(chips, /widget-popover w-\[min\(28rem/);
+	// 注：chat-header 的 widget chips（SessionWidgetChips）已移除（2026-08），
+	// 壁纸规则保留给历史样式一致性；待办统一走输入框上方常驻条。
 	const css = readFileSync("src/renderer/src/styles/foundation.css", "utf8");
 	assert.match(
 		css,
@@ -281,13 +278,6 @@ test("text-widget token is one step smaller than the session status badge", () =
 	// 右侧状态徽章字号：surfaces.css .session-status span 用 caption（比 widget 大 1px）
 	const surfacesCss = readFileSync("src/renderer/src/styles/surfaces.css", "utf8");
 	assert.match(surfacesCss, /\.session-status span \{[\s\S]{0,600}font-size: var\(--font-size-caption\)/);
-	// 外面的 chip 与列表同用 text-widget（比徽章小 1px），图标 13px→11px
-	const chips = readFileSync(
-		"src/renderer/src/components/session/SessionWidgetChips.tsx",
-		"utf8",
-	);
-	assert.match(chips, /text-widget/);
-	assert.match(chips, /<Icon size=\{11\} strokeWidth=\{2\} aria-hidden="true" \/>/);
 });
 
 test("parser ids are stable across status toggles and line insertions", () => {

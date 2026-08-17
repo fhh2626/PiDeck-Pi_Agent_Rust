@@ -37,5 +37,7 @@ test("environment dialog nodejs link forces system browser in both dialog implem
 
 test("settings web service link forces system browser", () => {
 	const src = readFileSync("src/renderer/src/components/app/SettingsFeatureRoot.tsx", "utf8");
-	assert.match(src, /onOpenWebService=\{\(port\) => api\.app\.openExternal\(`http:\/\/127\.0\.0\.1:\$\{port\}`, true\)\}/);
+	// forceSystem=true：Web 服务页必须离开内置浏览器面板——面板在 Dialog 下层，
+	// 设置弹窗打开时会被遮挡；且外部端按桌面浏览器视口设计，系统浏览器体验更完整。
+	assert.match(src, /onOpenWebService: \(port: string\) => api\.app\.openExternal\(`http:\/\/127\.0\.0\.1:\$\{port\}`, true\)/);
 });

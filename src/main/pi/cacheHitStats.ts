@@ -14,6 +14,9 @@ export type CacheHitStats = {
 	average: number | undefined;
 	/** 参与统计的 assistant 消息条数 */
 	sampleCount: number;
+	/** 全部消息文本累计字符数（含 user/assistant 的 text），
+	 *  渲染层据此估算「对话占上下文比例」（见 SessionContextMeter）。 */
+	messageChars?: number;
 };
 
 type UsageLike = {
@@ -33,13 +36,39 @@ export function hitRateFromUsage(usage: UsageLike | undefined): number | undefin
 	return (cacheRead / promptTokens) * 100;
 }
 
+/** 从消息对象提取文本字符数：兼容 content 数组（[{type:"text",text}]）与裸 text 字段。
+ *  估算用途，无需精确 token 级解析。 */
+function messageTextChars(message: {
+	role?: unknown;
+	usage?: unknown;
+	text?: unknown;
+	content?: unknown;
+}): number {
+	let chars = 0;
+	if (typeof message.text === "string") chars += message.text.length;
+	if (Array.isArray(message.content)) {
+		for (const part of message.content) {
+			if (
+				part &&
+				typeof part === "object" &&
+				(part as { type?: unknown }).type === "text" &&
+				typeof (part as { text?: unknown }).text === "string"
+			) {
+				chars += (part as { text: string }).text.length;
+			}
+		}
+	}
+	return chars;
+}
+
 /**
- * 从 session JSONL 原始文本统计缓存命中率。
- * 逐行解析容忍坏行；只统计带 usage 的 assistant 消息，其余角色/缺 usage 的跳过。
+ * 从 session JSONL 原始文本统计缓存命中率与消息字符数。
+ * 逐行解析容忍坏行；命中率只统计带 usage 的 assistant 消息，字符数统计全部消息。
  */
 export function computeCacheHitStats(raw: string): CacheHitStats {
 	const rates: number[] = [];
 	let latest: number | undefined;
+	let messageChars = 0;
 
 	const lines = raw.split(/\r?\n/);
 	for (let i = lines.length - 1; i >= 0; i--) {
@@ -48,9 +77,11 @@ export function computeCacheHitStats(raw: string): CacheHitStats {
 		try {
 			const entry = JSON.parse(line) as Record<string, unknown>;
 			const message = entry?.message as
-				| { role?: unknown; usage?: unknown }
+				| { role?: unknown; usage?: unknown; text?: unknown; content?: unknown }
 				| undefined;
-			if (message?.role !== "assistant" || !message.usage) continue;
+			if (!message) continue;
+			messageChars += messageTextChars(message);
+			if (message.role !== "assistant" || !message.usage) continue;
 			const rate = hitRateFromUsage(message.usage as UsageLike);
 			if (rate === undefined) continue;
 			if (latest === undefined) latest = rate; // 逆序遍历，首个命中即最后一条
@@ -60,9 +91,16 @@ export function computeCacheHitStats(raw: string): CacheHitStats {
 		}
 	}
 
-	if (rates.length === 0) return { latest, average: undefined, sampleCount: 0 };
+	const base: CacheHitStats = {
+		latest,
+		average: undefined,
+		sampleCount: 0,
+		/** 全部消息文本字符数：始终返回（可能为 0），渲染层据此估算对话占比 */
+		messageChars,
+	};
+	if (rates.length === 0) return base;
 	const average = rates.reduce((sum, rate) => sum + rate, 0) / rates.length;
-	return { latest, average, sampleCount: rates.length };
+	return { ...base, average, sampleCount: rates.length };
 }
 
 export type CacheHitStatsReader = (sessionPath: string) => Promise<CacheHitStats>;

@@ -25,10 +25,16 @@ export const SingleLinePreview = memo(function SingleLinePreview(props: {
 	const summary = props.running ? latestLine(props.text) : firstLine(props.text);
 
 	// 流式中跟随尾部：思考增量追加在末尾，容器滚动到最右让最新内容可见；
-	// 结束后不滚动（scrollLeft 保持 0，从头部显示第一行）
+	// 结束后 scrollLeft 显式归零，从头部显示第一行——不归零会残留流式期的尾部
+	// scrollLeft，长首行时结束态仍从第一行中段/尾部显示（对齐 ReasoningRow 的
+	// `running ? scrollWidth - clientWidth : 0` 写法）。
 	useEffect(() => {
 		const el = scrollRef.current;
-		if (!el || !props.running) return;
+		if (!el) return;
+		if (!props.running) {
+			el.scrollLeft = 0;
+			return;
+		}
 		const follow = () => {
 			el.scrollLeft = el.scrollWidth - el.clientWidth;
 		};

@@ -31,6 +31,7 @@ import type {
 	CreateAnonymousSessionResult,
 	UpdateSessionRecordInput,
 	SessionRecord,
+	SessionProcessEvent,
 	VisionBridgeConfig,
 	CreatePiSkillInput,
 	CreateProjectSkillInput,
@@ -406,6 +407,11 @@ const api = {
 				pageSize,
 				options,
 			) as Promise<import("../shared/types").SessionMessagePage>,
+		/** 会话 JSONL 过程事件（session/model/thinking/custom），轨迹复盘用。 */
+		readProcessEvents: (sessionId: string) =>
+			ipcRenderer.invoke(ipcChannels.sessionsCatalogReadProcessEvents, sessionId) as Promise<
+				SessionProcessEvent[]
+			>,
 		/** 按需读取单条消息完整文本（工具结果截断后的「查看完整输出」）。
 		 *  sessionId 用于运行期绑定不可用时的历史会话文件回退（_viewer 投影）。 */
 		readMessageFullText: (
@@ -896,6 +902,8 @@ const api = {
 			subscribe(ipcChannels.appOpenInBrowser, callback),
 		onFocusSessionTarget: (callback: (target: { sessionId: string }) => void) =>
 			subscribe(ipcChannels.appFocusSessionTarget, callback),
+		getPendingFocusTarget: () =>
+			ipcRenderer.invoke(ipcChannels.appGetFocusTargetPending) as Promise<{ sessionId: string } | null>,
 		restart: () => ipcRenderer.invoke(ipcChannels.appRestart) as Promise<void>,
 		rendererLog: (
 			level: AppLogLevel,
@@ -1187,6 +1195,7 @@ const api = {
 				suggestedBaseUrl?: string;
 			}>,
 	},
+	
 	terminal: {
 		list: (target: TerminalTarget) =>
 			ipcRenderer.invoke(ipcChannels.terminalList, target) as Promise<

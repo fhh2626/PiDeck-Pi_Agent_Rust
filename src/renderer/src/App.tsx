@@ -15,10 +15,10 @@ import { resolveChatTypographyVars } from "./lib/chatTypography";
 let injectedWallpaperTokens = new Set<string>();
 import {
   Code,
+  Activity,
   FolderOpen,
   Globe,
   Pencil,
-  SquarePen,
   Terminal,
   GitBranch,
 } from "lucide-react";
@@ -28,7 +28,7 @@ import {
   isLanWeb,
   missingElectronPreload,
 } from "./desktopApi";
-import { contextControllerSettingsAtom, turnFlowSettingsAtom } from "./atoms/app-ui-atoms";
+import { turnFlowSettingsAtom } from "./atoms/app-ui-atoms";
 // 文件链接路由：图片类型走弹窗预览
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico"]);
 const ConfigModal = lazy(() => import("./ConfigModal").then((m) => ({ default: m.ConfigModal })));
@@ -55,7 +55,13 @@ import {
   requireSessionCommand,
   toSessionRuntimeTarget,
 } from "./utils/sessionCommands";
-import { resolveChatSessionBootstrap } from "./utils/chatSessionBootstrap";
+import {
+  GUIDE_BOOTSTRAP_SESSION_ID,
+  readWelcomeModelPreference,
+  readWelcomeThinkingPreference,
+  resolveChatSessionBootstrap,
+} from "./utils/chatSessionBootstrap";
+import { detectRendererPlatform } from "./lib/detectRendererPlatform";
 
 import { usePiUpdate } from "./hooks/usePiUpdate";
 import { useAppUpdateController } from "./hooks/useAppUpdateController";
@@ -78,11 +84,14 @@ import {
   sessionRuntimeBySessionIdAtomFamily,
   sidebarExpandedProjectIdsAtom,
   sessionCatalogLoadStateAtom,
+  sessionMessagesCacheAtom,
   sessionSummariesByProjectIdAtomFamily,
   sessionDraftByIdAtom,
+  promoteSessionComposerStateAtom,
   setSessionAttachmentsAtom,
   setSessionCatalogLoadStateAtom,
   setSessionDraftAtom,
+  cacheSessionMessagesAtom,
   upsertSessionAtom,
 } from "./atoms";
 import {
@@ -210,8 +219,10 @@ export function App() {
   const setProjects = useSetAtom(replaceProjectInventoryAtom);
   const applyRuntimeEvent = useSetAtom(applySessionRuntimeEventAtom);
   const upsertSession = useSetAtom(upsertSessionAtom);
+  const setCacheMessages = useSetAtom(cacheSessionMessagesAtom);
   const setSessionDraft = useSetAtom(setSessionDraftAtom);
   const setSessionAttachments = useSetAtom(setSessionAttachmentsAtom);
+  const promoteSessionComposerState = useSetAtom(promoteSessionComposerStateAtom);
   const setSessionCatalogLoadState = useSetAtom(setSessionCatalogLoadStateAtom);
   const removeSessionState = useSetAtom(removeSessionStateAtom);
   const removeSessionComposerState = useSetAtom(removeSessionComposerStateAtom);
@@ -219,6 +230,9 @@ export function App() {
   currentSessionIdRef.current = currentSessionId;
   const openSessionRequestRef = useRef(0);
   const creatingSessionDraftRef = useRef<Set<string>>(new Set());
+  // 引导页虚拟会话提升并发闸：首次发送触发创建真实会话时登记 promise，同一帧内
+  // 的并发发送（如快速双击）复用同一次提升，避免建出两个会话。
+  const guideBootstrapPromotionRef = useRef<Promise<string> | undefined>(undefined);
 
   // 项目的 git worktree 列表：{ parentId -> WorktreeEntry[] }
   const [pendingAgents, setPendingAgents] = useState<PendingAgentTab[]>([]);
@@ -516,8 +530,8 @@ export function App() {
     agentCountReminderEnabled: true,
     // showThinking 由 pi agent 的 hideThinkingBlock 控制，启动后从主进程加载的真实值会覆盖此处
     showThinking: true,
-    // 流式对话行为：默认不自动展开中间过程；新一轮默认收起非最新轮（与 SettingsStore 一致）
-    expandInterimDuringStream: false,
+    // 流式对话行为：默认自动展开中间过程；新一轮默认收起非最新轮（与 SettingsStore 一致）
+    expandInterimDuringStream: true,
     collapsePrevRunsOnNewTurn: true,
     showDevTools: false,
     // Electron Chromium 沙箱默认关，与主进程历史兼容策略一致
@@ -542,7 +556,6 @@ export function App() {
     chatContentWidthPct: 80,
     maxEditorFileSizeMB: 5,
     externalEditors: createDefaultExternalEditorSettings(),
-
     favoriteModels: [],
 
     // 字体配置：与 main SettingsStore 默认值保持一致，避免启动时闪烁
@@ -581,18 +594,6 @@ export function App() {
     setTurnFlowSettings,
   ]);
 
-  const setContextControllerSettings = useSetAtom(contextControllerSettingsAtom);
-  useEffect(() => {
-    setContextControllerSettings({
-      piRpcNoExtensions: Boolean(settings.piRpcNoExtensions),
-      removedBuiltInExtensions: settings.removedBuiltInExtensions ?? [],
-    });
-  }, [
-    settings.piRpcNoExtensions,
-    settings.removedBuiltInExtensions,
-    setContextControllerSettings,
-  ]);
-
   // Guard: hide git drawer when git management is disabled.
   // Equivalent to: if (panel === "git" && !settings.enableGitManagement) return
   // Pinned cleanup (filter(([, panel]) => panel !== "git")) is handled inside useWorkspacePanels.
@@ -607,7 +608,8 @@ export function App() {
   const [appInfo, setAppInfo] = useState<AppInfo>({
     version: "-",
     releasesUrl: "https://github.com/ayuayue/pi-desktop/releases",
-    platform: "win32",
+    // 同步判定，避免 Mac 首帧在 appInfo IPC 返回前误画 Win 窗口按钮
+    platform: detectRendererPlatform(),
     homeDir: "",
   });
   const [systemLanguage, setSystemLanguage] = useState<string | null>(null);
@@ -1014,8 +1016,6 @@ export function App() {
     root.dataset.uiFontSize = uiFontSize;
     root.dataset.chatFontSize = chatFontSize;
     root.dataset.inputFontSize = inputFontSize;
-    // 会话排版（行距/块间距/列表/代码密度）：档位 → token 由纯函数解析后写入。
-    // CSS 只消费 token；data-* 仅用于测试与调试定位。
     root.dataset.chatBodyLineHeight = settings.chatBodyLineHeight;
     root.dataset.chatBlockGap = settings.chatBlockGap;
     root.dataset.chatListDensity = settings.chatListDensity;
@@ -1057,7 +1057,7 @@ export function App() {
   ]);
 
   /** 当前会话中 agent 修改过的文件(从 tool 消息 meta 中提取) */
-  // 依赖当前会话和消息数组引用：消息数量不变的 tool 状态/参数更新也必须重算。
+  // 优化:只在消息数量变化时才重新计算,减少不必要的遍历
   const modifiedFiles = useMemo(() => {
     const byPath = new Map<string, SessionModifiedFile>();
     for (const msg of activeMessages) {
@@ -1088,11 +1088,11 @@ export function App() {
       });
     }
     return Array.from(byPath.values());
-  }, [activeAgentId, activeMessages, currentSessionId]);
-  // 会话切换或消息内容引用变化时重算，避免同长度历史会话复用旧大纲。
+  }, [activeMessages.length, activeAgentId]);
+  // 优化:轮廓项计算仅在消息数量变化时触发,减少不必要的重计算
   const outlineItems = useMemo(
     () => buildOutline(activeMessages),
-    [activeAgentId, activeMessages, currentSessionId],
+    [activeMessages.length, activeAgentId],
   );
   const flatFiles = useMemo(() => flattenFiles(files), [files]);
   // === file editor hook ===
@@ -1119,8 +1119,6 @@ export function App() {
     gitDiffDisplayMode,
     gitDrawerDiff,
     toggleGitDiffDisplayMode,
-    prevDrawerPanelRef,
-    clearEditorBack,
     closeEditor,
   } = useFileEditor({
     activeProjectId,
@@ -1283,13 +1281,73 @@ export function App() {
     store,
   ]);
 
-  // 聊天项目点开后与普通项目一致，先进统一引导页；用户从引导页选择
-  // 「新建 Agent / 匿名聊天」时通过 createSessionDraft / createAnonymousSession
-  // 创建真实 Catalog 会话，因此发送钩子不再需要把 renderer-only 虚拟会话提升为真实会话，
-  // 直接透传传入的 sessionId（保持签名以兼容 composer 链路）。
+  // 引导页空白输入框（虚拟会话 GUIDE_BOOTSTRAP_SESSION_ID）的发送钩子：首次
+  // 发送时创建真实 Catalog 会话（Chat 匿名 / 非 Chat draft），把 composer 状态
+  // 整体提升到新会话（promoteSessionComposerStateAtom），随后选中并登记 Tab，
+  // 返回真实 sessionId 让发送链路继续；非虚拟会话直接透传（保持签名兼容）。
+  // 并发发送（快速双击）复用 guideBootstrapPromotionRef 里的同一个提升 promise，
+  // 避免建出两个会话。创建即用户意图（已输入消息），Chat 拉起 pi 是预期行为。
   const ensureSessionForSend = useCallback(
-    async (sessionId: string) => sessionId,
-    [],
+    async (sessionId: string) => {
+      if (sessionId !== GUIDE_BOOTSTRAP_SESSION_ID) return sessionId;
+      if (guideBootstrapPromotionRef.current) return guideBootstrapPromotionRef.current;
+      const project = projects.find((candidate) => candidate.id === activeProjectId);
+      if (!project) {
+        throw new Error(t("app.guideBootstrapUnavailable"));
+      }
+      const promotion = (async () => {
+        // 引导页 picker 无 record 分支把选择存进 localStorage；创建时作为启动
+        // 偏好带入，使新会话 record/runtime 直接带上用户选的模型与思考级别。
+        const welcomeModel = readWelcomeModelPreference()?.model;
+        const welcomeThinking = readWelcomeThinkingPreference()?.thinkingLevel;
+        const launchPreferences: SessionLaunchPreferences = {
+          ...(welcomeModel ? { model: welcomeModel } : {}),
+          ...(welcomeThinking ? { thinkingLevel: welcomeThinking } : {}),
+        };
+        // 统一创建 draft 会话（Chat 项目也走普通会话、可保存）：创建不拉 pi，
+        // selectSessionCommand 同步切页、立即进入会话页；匿名会话仅保留给侧栏
+        // 「新建临时对话」入口（createAnonymousSessionWithTab）。
+        const session = await api.sessions.createDraft({
+          projectId: project.id,
+          title: `${project.name} agent`,
+          ...launchPreferences,
+        });
+        upsertSession(session);
+        // 引导页发送时 useSessionSend 已把 user 消息乐观写入虚拟会话 cache；
+        // 提升时搬到真实会话——否则切页后新会话空态与引导页视觉相同，
+        // 要等 agent 启动、回复流入后页面才「动」，用户误以为发送没生效。
+        const bootstrapMessages =
+          store.get(sessionMessagesCacheAtom)[GUIDE_BOOTSTRAP_SESSION_ID]?.messages;
+        if (bootstrapMessages?.length) {
+          setCacheMessages({
+            sessionId: session.id,
+            messages: bootstrapMessages,
+            source: "runtime",
+          });
+        }
+        promoteSessionComposerState({
+          fromSessionId: GUIDE_BOOTSTRAP_SESSION_ID,
+          toSessionId: session.id,
+        });
+        selectSessionCommand(project.id, session.id, false);
+        workspaceChrome.registerOpenSession(session.id, "permanent");
+        return session.id;
+      })();
+      guideBootstrapPromotionRef.current = promotion;
+      try {
+        return await promotion;
+      } finally {
+        guideBootstrapPromotionRef.current = undefined;
+      }
+    },
+    [
+      activeProjectId,
+      projects,
+      promoteSessionComposerState,
+      selectSessionCommand,
+      upsertSession,
+      workspaceChrome,
+    ],
   );
 
   /** 有效命令名白名单：仅已知命令渲染为 chip */
@@ -1402,9 +1460,6 @@ export function App() {
       if (!next.piEnvironmentChecked) {
         // 首次检测延后一帧启动,先让主界面完成绘制,避免 packaged app 打开时出现几秒白屏。
         window.setTimeout(() => void piUpdate.checkPiInstall("startup"), 300);
-      } else {
-        // 后续启动静默重检，自动发现 PATH/版本变化，同时不打扰用户。
-        window.setTimeout(() => void piUpdate.refreshPiStatus(), 300);
       }
       if (!next.disableUpdateCheck) {
         window.setTimeout(() => void piUpdate.checkPiCliUpdateOnStartup(), 1200);
@@ -1485,17 +1540,6 @@ export function App() {
       void refreshProjectSessions(project.id).catch(() => undefined);
     }
   }, [expandedProjects, expandedProjectsReady, projectIdsKey, refreshProjectSessions, store]);
-
-  useEffect(() => {
-    // When update check is disabled, skip periodic and deferred auto-check.
-    if (settings.disableUpdateCheck) return;
-    const timer = window.setInterval(
-      () => void appUpdate.check("auto"),
-      1000 * 60 * 60 * 6,
-    );
-    window.setTimeout(() => void appUpdate.check("auto"), 5000);
-    return () => window.clearInterval(timer);
-  }, [settings.disableUpdateCheck]);
 
   useEffect(() => {
     if (activeAgentId && !isPendingAgentId(activeAgentId))
@@ -2305,13 +2349,6 @@ export function App() {
           void refreshProjectSessions(activeProjectId, true).catch(() => undefined);
         }
       }
-      if (
-        "piRuntimePreference" in patch ||
-        "piTypescriptPath" in patch ||
-        "piRustPath" in patch
-      ) {
-        void api.pi.check().then((next) => setPiStatus(next)).catch(() => undefined);
-      }
       showToast(notice);
     } catch (error) {
       setSettings(await api.settings.get());
@@ -2472,9 +2509,21 @@ export function App() {
   async function changeChatPath(project: Project) {
     const picked = await api.projects.chooseChatPath();
     if (!picked || picked === project.path) return;
-    await api.projects.setChatPath(picked);
-    await refreshProjectSessions(project.id);
-    showToast(t("app.chatProjectPathUpdated"), 1800);
+    try {
+      await api.projects.setChatPath(picked);
+      await refreshProjectSessions(project.id);
+      showToast(t("app.chatProjectPathUpdated"), 1800);
+    } catch (error) {
+      // 主进程拒绝把聊天目录指向已注册的项目目录（CHAT_PATH_OVERLAPS_PROJECT，issue #149）：
+      // 同路径会吞掉项目区的新项目，这里给出明确提示而不是静默失败。
+      const message = String(error instanceof Error ? error.message : error);
+      showToast(
+        message.includes("CHAT_PATH_OVERLAPS_PROJECT")
+          ? t("app.chatPathOverlapsProject")
+          : message,
+        5000,
+      );
+    }
   }
 
   const sidebarActions: SidebarActions = {
@@ -2482,6 +2531,9 @@ export function App() {
       add: addProject,
       select: (projectId) => {
         selectProjectCommand(projectId);
+        // 点开目录只选中项目并显示引导页：不自动创建会话，避免每点一个目录都
+        // 悄悄新建一个 agent 会话 tab。创建由用户手动点「启动 Agent / 临时对话」
+        // 触发；启动时首项目自动选中除外（见 bootstrapProps.onProjectsChanged）。
         // 空项目也可能已经成功加载；用 catalog 状态区分“空结果”和“尚未扫描”。
         const loadState = store.get(sessionCatalogLoadStateAtom)[projectId];
         if (loadState?.status !== "loading" && loadState?.status !== "ready") {
@@ -2860,11 +2912,13 @@ export function App() {
         // 引导页同样可以打开项目级终端（owner=project），在空态下方渲染 dock。
         <>
           <div className="min-h-0 flex-1">
+            {/* 无会话空态：引导页 = 新建页面形态（居中 ComposerArea + 虚拟会话），
+                不登记 Tab；首次发送才由 ensureSessionForSend 创建真实会话并落 Tab */}
             <ProjectEmptyState
               activeProject={activeProject}
-              onCreateAgent={(preferences) => void createSessionDraftWithTab(undefined, preferences)}
-              onCreateAnonymous={(preferences) => void createAnonymousSessionWithTab(undefined, preferences)}
+              projects={projects}
               onAddProject={() => void addProject()}
+              onSelectProject={selectProjectCommand}
             />
           </div>
           {!isLanWeb && terminalDockVisible && terminalTarget && (
@@ -2979,11 +3033,6 @@ export function App() {
 
   // ── DrawerSurface port objects (stable via useMemo) ──
   const drawerPorts = useDrawerPorts({
-    editorMode, activeTab, activeTabId, editorTabs,
-    toggleEditorMode, selectEditorTab, closeEditorTab, closeEditor,
-    readEditorFileContent, readEditorOriginalContent, saveEditorFileContent,
-    prevDrawerPanelRef, clearEditorBack,
-    maxEditorFileSizeMB: settings.maxEditorFileSizeMB,
     enableGitManagement: settings.enableGitManagement, activeProjectId,
     gitDrawerDiff, gitDiffDisplayMode,
     openCommitFileDiff, openWorkspaceFileDiff,
@@ -3079,6 +3128,7 @@ export function App() {
       drawerCollapsed={drawerCollapsed}
       drawerWidth={drawerWidth}
       useNativeTitleBar={settings.useNativeTitleBar}
+      platform={appInfo.platform}
       chatPaneRef={chatPaneRef}
       terminalRowHeight={terminalRowHeight}
       chatContentWidthPct={settings.chatContentWidthPct}
@@ -3094,14 +3144,7 @@ export function App() {
               active: drawer === "files",
               onClick: () => handleToolDrawerAction("files"),
             },
-            // 编辑器与文件互为独立面板：文件树负责浏览，编辑器承载所有已打开文件
-            {
-              id: "editor",
-              label: t("editor.fileEditor"),
-              icon: <SquarePen size={16} />,
-              active: drawer === "editor",
-              onClick: () => handleToolDrawerAction("editor"),
-            },
+            // 编辑器入口已迁到分屏（SessionTabsBar），右侧抽屉不再提供 editor 面板
             // Git 面板受设置开关与项目上下文双重门控，与 outline 入口保持一致
             ...(settings.enableGitManagement && activeProjectId ? [{
               id: "git",
@@ -3117,6 +3160,13 @@ export function App() {
               active: drawer === "browser",
               onClick: () => handleToolDrawerAction("browser"),
             },
+            {
+              id: "trajectory",
+              label: t("session.view.trajectory"),
+              icon: <Activity size={16} />,
+              active: drawer === "trajectory",
+              onClick: () => handleToolDrawerAction("trajectory"),
+            },
           ]}
         />
       }
@@ -3124,7 +3174,6 @@ export function App() {
         <DrawerSurface
           drawer={visibleDrawerPanel}
           drawerCollapsed={drawerCollapsed}
-          editor={drawerPorts.editor}
           git={drawerPorts.git}
           chrome={drawerPorts.chrome}
           browser={drawerPorts.browser}

@@ -384,7 +384,8 @@ export function createPreviewApi(): PiDesktopApi {
 			}),
 			exportRecordHtml: async () => ({ path: "preview-session.html" }),
 			readRecordMessages: async () => [],
-			readRecordMessagePage: async () => ({ messages: [], total: 0, nextBefore: null }),
+			readProcessEvents: async () => [],
+						readRecordMessagePage: async () => ({ messages: [], total: 0, nextBefore: null }),
 			readMessageFullText: async () => ({ text: "" }),
 			readReferenceMessages: async () => [
 				{ role: "user", content: "Preview user message", timestamp: Date.now() - 60000 },
@@ -651,6 +652,7 @@ export function createPreviewApi(): PiDesktopApi {
 			onUpdateProgress: () => () => undefined,
 			onOpenInBrowser: () => () => undefined,
 			onFocusSessionTarget: () => () => undefined,
+			getPendingFocusTarget: async () => null,
 			openExternal: async () => undefined,
 			restart: async () => undefined,
 			rendererLog: async (level, scope, message, detail) => {

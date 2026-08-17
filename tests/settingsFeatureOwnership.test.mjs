@@ -26,6 +26,7 @@ test("Settings overlay visibility belongs to feature consumers", () => {
 // AppSettings remains canonical in App; the modal root only consumes it.
 test("Settings feature does not create an AppSettings mirror", () => {
   assert.doesNotMatch(root, /useState\s*<\s*AppSettings/);
-  assert.match(root, /settings=\{settings\}/);
-  assert.match(root, /onChange=\{props\.onChange\}/);
+  // 稳定 props 走字段级 useMemo：settings 仍来自 App 传入的 props.settings，不镜像
+  assert.match(root, /settings: props\.settings/);
+  assert.match(root, /onChange: props\.onChange/);
 });

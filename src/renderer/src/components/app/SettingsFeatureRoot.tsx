@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useMemo } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import type { AppInfo, AppSettings } from "../../../../shared/types";
 import { settingsOpenAtom } from "../../atoms";
@@ -28,64 +28,102 @@ export function SettingsFeatureRoot(props: SettingsFeatureRootProps) {
   const open = useAtomValue(settingsOpenAtom);
   const setOpen = useSetAtom(settingsOpenAtom);
 
+  // 按字段级 useMemo 稳定弹窗 props：App 根组件重渲染（低频）不会连带
+  // 重渲染 SettingsModal（memo）。piUpdate 内部函数均为 useCallback，
+  // 原语字段不变则引用不变。
+  const modalProps = useMemo(
+    () => ({
+      settings: props.settings,
+      piStatus: props.piUpdate.piStatus,
+      piChecking: props.piUpdate.piChecking,
+      piProxyChecking: props.piUpdate.piProxyChecking,
+      piProxyNotice: props.piUpdate.piProxyNotice,
+      piProxyNoticeTone: props.piUpdate.piProxyNoticeTone,
+      webServiceChanging: props.webServiceChanging,
+      appInfo: props.appInfo,
+      customPiPath: props.piUpdate.customPiPath,
+      customPathValidating: props.piUpdate.customPathValidating,
+      customPathResult: props.piUpdate.customPathResult,
+      updateChecking: props.appUpdate.checking,
+      piUpdating: props.piUpdate.piUpdating,
+      piUpdateChecking: props.piUpdate.piUpdateChecking,
+      piUpdateCheck: props.piUpdate.piUpdateCheck,
+      piUpdateResult: props.piUpdate.piUpdateResult,
+      onCustomPathChange: (path: string) => {
+        props.piUpdate.setCustomPiPath(path);
+        props.piUpdate.setCustomPathResult(null);
+      },
+      onValidateCustomPath: props.piUpdate.validateCustomPiPath,
+      onClearCustomPath: props.piUpdate.clearCustomPiPath,
+      onCheckPi: props.piUpdate.checkPiInstallInline,
+      onTestPiProxy: props.piUpdate.testPiProxy,
+      onCheckUpdate: () => {
+        void props.appUpdate.check("manual").then((info) => {
+          if (info && !info.hasUpdate) {
+            props.onCurrentVersion(info.currentVersion);
+            showNotice(t("app.latestVersionNotice", { version: info.currentVersion }));
+          } else if (!info && props.appUpdate.error) {
+            showNotice(t("app.updateFailedNotice", { error: props.appUpdate.error }));
+          }
+        });
+      },
+      onCheckPiUpdate: props.piUpdate.checkPiCliUpdate,
+      onUpdatePi: props.piUpdate.updatePiCli,
+      onToggleDevTools: () => {
+        void api.app.toggleDevTools().then((opened) => {
+          showNotice(opened ? t("app.devToolsOpened") : t("app.devToolsClosed"));
+        });
+      },
+      onRestartApp: () => api.app.restart(),
+      onRestartWebService: props.onRestartWebService,
+      onClearCheckFlag: async () => {
+        await api.settings.update({ piEnvironmentChecked: false });
+        showNotice(t("environment.checkFlagCleared"));
+      },
+      // forceSystem=true：Web 服务页必须离开内置浏览器面板——面板在 Dialog 下层，
+      // 设置弹窗打开时会被遮挡；且外部端按桌面浏览器视口设计，系统浏览器体验更完整。
+      onOpenWebService: (port: string) => api.app.openExternal(`http://127.0.0.1:${port}`, true),
+      onClose: () => setOpen(false),
+      onChange: props.onChange,
+    }),
+    [
+      props.settings,
+      props.piUpdate.piStatus,
+      props.piUpdate.piChecking,
+      props.piUpdate.piProxyChecking,
+      props.piUpdate.piProxyNotice,
+      props.piUpdate.piProxyNoticeTone,
+      props.webServiceChanging,
+      props.appInfo,
+      props.piUpdate.customPiPath,
+      props.piUpdate.customPathValidating,
+      props.piUpdate.customPathResult,
+      props.appUpdate.checking,
+      props.piUpdate.piUpdating,
+      props.piUpdate.piUpdateChecking,
+      props.piUpdate.piUpdateCheck,
+      props.piUpdate.piUpdateResult,
+      props.piUpdate.setCustomPiPath,
+      props.piUpdate.setCustomPathResult,
+      props.piUpdate.validateCustomPiPath,
+      props.piUpdate.clearCustomPiPath,
+      props.piUpdate.checkPiInstallInline,
+      props.piUpdate.testPiProxy,
+      props.appUpdate.check,
+      props.appUpdate.error,
+      props.onCurrentVersion,
+      props.piUpdate.checkPiCliUpdate,
+      props.piUpdate.updatePiCli,
+      props.onRestartWebService,
+      props.onChange,
+    ],
+  );
+
   if (!open) return null;
 
-  const { appInfo, appUpdate, piUpdate, settings, webServiceChanging } = props;
   return (
     <Suspense fallback={null}>
-      <SettingsModal
-        settings={settings}
-        piStatus={piUpdate.piStatus}
-        piChecking={piUpdate.piChecking}
-        piProxyChecking={piUpdate.piProxyChecking}
-        piProxyNotice={piUpdate.piProxyNotice}
-        piProxyNoticeTone={piUpdate.piProxyNoticeTone}
-        webServiceChanging={webServiceChanging}
-        appInfo={appInfo}
-        customPiPath={piUpdate.customPiPath}
-        customPathValidating={piUpdate.customPathValidating}
-        customPathResult={piUpdate.customPathResult}
-        updateChecking={appUpdate.checking}
-        piUpdating={piUpdate.piUpdating}
-        piUpdateChecking={piUpdate.piUpdateChecking}
-        piUpdateCheck={piUpdate.piUpdateCheck}
-        piUpdateResult={piUpdate.piUpdateResult}
-        onCustomPathChange={(path) => {
-          piUpdate.setCustomPiPath(path);
-          piUpdate.setCustomPathResult(null);
-        }}
-        onValidateCustomPath={() => piUpdate.validateCustomPiPath()}
-        onClearCustomPath={piUpdate.clearCustomPiPath}
-        onCheckPi={piUpdate.checkPiInstallInline}
-        onTestPiProxy={() => piUpdate.testPiProxy()}
-        onCheckUpdate={() => {
-          void appUpdate.check("manual").then((info) => {
-            if (info && !info.hasUpdate) {
-              props.onCurrentVersion(info.currentVersion);
-              showNotice(t("app.latestVersionNotice", { version: info.currentVersion }));
-            } else if (!info && appUpdate.error) {
-              showNotice(t("app.updateFailedNotice", { error: appUpdate.error }));
-            }
-          });
-        }}
-        onCheckPiUpdate={piUpdate.checkPiCliUpdate}
-        onUpdatePi={piUpdate.updatePiCli}
-        onToggleDevTools={async () => {
-          const opened = await api.app.toggleDevTools();
-          showNotice(opened ? t("app.devToolsOpened") : t("app.devToolsClosed"));
-        }}
-        onRestartApp={() => api.app.restart()}
-        onRestartWebService={props.onRestartWebService}
-        onClearCheckFlag={async () => {
-          await api.settings.update({ piEnvironmentChecked: false });
-          showNotice(t("environment.checkFlagCleared"));
-        }}
-        // forceSystem=true：Web 服务页必须离开内置浏览器面板——面板在 Dialog 下层，
-        // 设置弹窗打开时会被遮挡；且外部端按桌面浏览器视口设计，系统浏览器体验更完整。
-        onOpenWebService={(port) => api.app.openExternal(`http://127.0.0.1:${port}`, true)}
-        onClose={() => setOpen(false)}
-        onChange={props.onChange}
-      />
+      <SettingsModal {...modalProps} />
     </Suspense>
   );
 }

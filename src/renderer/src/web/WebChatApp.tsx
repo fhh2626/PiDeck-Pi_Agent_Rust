@@ -1,3 +1,4 @@
+import type { AgentUiResponse } from '../../../shared/types';
 /**
  * WebChatApp — PiDeck Web 服务 React 前端（A2）重构后的组合根。
  *
@@ -22,6 +23,7 @@ import { WebHeader, type WebHeaderStatus } from "./WebHeader";
 import { WebTimeline } from "./WebTimeline";
 import { WebComposer } from "./WebComposer";
 import {
+	respondToUi,
 	chatMessagesToUiMessages,
 	createProject,
 	createSession,
@@ -270,6 +272,29 @@ export function WebChatApp() {
 		// activeSessionId 变化后下一轮轮询会补齐最新状态，不必重启轮询
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [syncRuntimeMessages]);
+
+	const [uiResponding, setUiResponding] = useState(false);
+
+	const handleRespondUi = async (response: AgentUiResponse) => {
+		const request = (state.pendingUiRequests ?? []).find((item) => item.sessionId === activeSessionId);
+		if (!request || uiResponding) return;
+		setUiResponding(true);
+		setCommandError(null);
+		try {
+			await respondToUi({
+				sessionId: request.sessionId,
+				requestId: request.requestId,
+				agentId: request.agentId,
+				runtimeGeneration: request.runtimeGeneration,
+				response,
+			});
+			await refreshNow();
+		} catch (error) {
+			setCommandError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setUiResponding(false);
+		}
+	};
 
 	const handleSend = (text: string) => {
 		if (!text.trim()) return;

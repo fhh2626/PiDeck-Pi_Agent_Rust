@@ -746,6 +746,10 @@ test("Session UI response requires the current binding, generation, and pending 
       title: "Continue?",
     },
   });
+  const pending = coordinator.listPendingUiRequests("session-1");
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].title, "Continue?");
+  assert.equal(pending[0].method, "confirm");
 
   await assert.rejects(
     coordinator.respondToUi({

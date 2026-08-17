@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import type { WorkspaceDrawerPanel } from "./useWorkspacePanels";
 import type {
-  DrawerEditorPort,
   DrawerGitPort,
   DrawerChromePort,
   DrawerBrowserPort,
@@ -9,22 +8,6 @@ import type {
 } from "../components/workspace/DrawerSurface";
 
 interface UseDrawerPortsInput {
-  // Editor
-  editorMode: string;
-  activeTab: any;
-  activeTabId: string | null;
-  editorTabs: any[];
-  toggleEditorMode: () => void;
-  selectEditorTab: (id: string) => void;
-  closeEditorTab: (id: string) => void;
-  closeEditor: () => void;
-  readEditorFileContent: (path: string) => Promise<string>;
-  readEditorOriginalContent: any;
-  saveEditorFileContent: ((path: string, content: string) => Promise<void>) | undefined;
-  prevDrawerPanelRef: React.MutableRefObject<WorkspaceDrawerPanel | null>;
-  clearEditorBack: () => WorkspaceDrawerPanel | null;
-  maxEditorFileSizeMB: number;
-
   // Git
   enableGitManagement: boolean;
   activeProjectId: string | undefined;
@@ -87,23 +70,6 @@ interface UseDrawerPortsInput {
 
 export function useDrawerPorts(input: UseDrawerPortsInput) {
   return useMemo(() => {
-    const editor: DrawerEditorPort = {
-      editorMode: input.editorMode,
-      activeTab: input.activeTab,
-      activeTabId: input.activeTabId,
-      editorTabs: input.editorTabs,
-      toggleEditorMode: input.toggleEditorMode,
-      selectEditorTab: input.selectEditorTab,
-      closeEditorTab: input.closeEditorTab,
-      closeEditor: input.closeEditor,
-      readEditorFileContent: input.readEditorFileContent,
-      readEditorOriginalContent: input.readEditorOriginalContent,
-      saveEditorFileContent: input.saveEditorFileContent,
-      prevDrawerPanelRef: input.prevDrawerPanelRef,
-      clearEditorBack: input.clearEditorBack,
-      maxEditorFileSizeMB: input.maxEditorFileSizeMB,
-    };
-
     const git: DrawerGitPort = {
       enableGitManagement: input.enableGitManagement,
       activeProjectId: input.activeProjectId,
@@ -165,13 +131,8 @@ export function useDrawerPorts(input: UseDrawerPortsInput) {
       onMoveFiles: input.onMoveFiles,
     };
 
-    return { editor, git, chrome, browser, files };
+    return { git, chrome, browser, files };
   }, [
-    input.editorMode, input.activeTab, input.activeTabId,
-    input.editorTabs, input.toggleEditorMode, input.selectEditorTab,
-    input.closeEditorTab, input.closeEditor, input.readEditorFileContent,
-    input.readEditorOriginalContent, input.saveEditorFileContent,
-    input.prevDrawerPanelRef, input.clearEditorBack, input.maxEditorFileSizeMB,
     input.enableGitManagement, input.activeProjectId,
     input.gitDrawerDiff, input.gitDiffDisplayMode,
     input.openCommitFileDiff, input.openWorkspaceFileDiff,

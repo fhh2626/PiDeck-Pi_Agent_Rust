@@ -271,14 +271,15 @@ export const ToolCard = memo(function ToolCard(props: {
 	const askCard = props.message.meta?._askCard as AskCardSummary | undefined;
 	const isAskCard = Boolean(askCard?.question);
 	// 状态徽章（借鉴 AI Elements Tool 的 getStatusBadge）：三态图标+文案 pill 一眼可辨。
-	// running 保留琥珀色警示位 + spinner；error 用 destructive 红；done 用 secondary
+	// running 保留琥珀色警示位；error 用 destructive 红；done 用 secondary。
 	// 低强调确认（ask_question 已回答时文案替换为「已回答」）。
 	// 随 trigger 行紧凑化（24px）同步收紧：图标 11→9px、Badge 内边距 py-0.5→py-0、px-1.5→px-1。
+	// 2026-11：移除 running 的转圈动画（用户反馈动画具干扰性），只保留「进行中」文字；
+	// 状态仍由 tool_execution_start/end 事件驱动，语义不变。
 	const statusBadge = (() => {
 		if (status === "running") {
 			return (
 				<Badge variant="outline" className="gap-1 border-warning/40 px-1 py-0 text-micro text-warning">
-					<span className="size-[9px] animate-spin rounded-full border-2 border-[color:color-mix(in_srgb,var(--color-warning)_30%,transparent)] border-t-[var(--color-warning)]" aria-hidden="true" />
 					{t("tool.statusRunning")}
 				</Badge>
 			);
@@ -325,7 +326,16 @@ export const ToolCard = memo(function ToolCard(props: {
 			data-tool-kind={isSkillRead ? "skill" : getToolKind(toolName)}
 			data-message-id={props.message.id}
 		>
-			<div className="flex min-h-6 items-center transition-colors duration-150 hover:bg-[color:color-mix(in_srgb,var(--color-bg-hover)_55%,var(--color-bg-panel))]">
+			<div className="relative flex min-h-6 items-center transition-colors duration-150 hover:bg-[color:color-mix(in_srgb,var(--color-bg-hover)_55%,var(--color-bg-panel))]">
+				{/* 工具运行中整行扫光（dsh-web command-row-sweep 同款，与思考扫光同 keyframes）。
+				    status === "running" 才挂载：stopped/error/done 立即消失（stopped 由 props.stopped 短路）；
+				    pointer-events-none 不挡 trigger 点击展开 */}
+				{status === "running" && (
+					<span
+						aria-hidden
+						className="pointer-events-none absolute inset-y-0 left-[-300px] w-[300px] animate-tool-sweep motion-reduce:animate-none bg-[linear-gradient(90deg,transparent,color-mix(in_srgb,var(--color-bg-app)_55%,transparent),transparent)]"
+					/>
+				)}
 				<button
 					type="button"
 					className="flex min-h-6 min-w-0 flex-[1_1_auto] cursor-pointer items-center gap-2 border-0 bg-transparent py-0 pr-0.5 pl-1 text-left text-control leading-5 text-text-secondary focus-visible:-outline-offset-2 focus-visible:outline-2"

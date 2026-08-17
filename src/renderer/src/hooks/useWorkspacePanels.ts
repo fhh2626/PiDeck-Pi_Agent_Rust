@@ -14,7 +14,7 @@ export const DRAWER_ANIMATION_MS = 120;
 export const EDITOR_TAB_LIMIT = 5;
 export const EDITOR_TAB_TEXT_BUDGET = 24 * 1024 * 1024;
 
-export type WorkspaceDrawerPanel = "files" | "sessions" | "browser" | "editor" | "git";
+export type WorkspaceDrawerPanel = "files" | "sessions" | "browser" | "git" | "trajectory";
 export type WorkspaceEditorMode = "view" | "diff";
 
 export type WorkspaceEditorTab = {
@@ -112,9 +112,12 @@ function readDrawerState(storage: WorkspacePanelOptions["storage"], key: string)
     const parsed: unknown = JSON.parse(storage.getItem(key) ?? "null");
     if (!parsed || typeof parsed !== "object") return null;
     const value = parsed as { panel?: unknown; pinned?: unknown };
-    const validPanel = value.panel === null || ["files", "sessions", "browser", "editor", "git"].includes(String(value.panel));
+    // 编辑器面板已从抽屉移除（阅读面迁到分屏）；旧存档里的 "editor" 降级为文件树，
+    // 避免读到旧值后面板状态无效（validPanel 校验失败会整体返回 null）。
+    const panel = value.panel === "editor" ? "files" : value.panel;
+    const validPanel = panel === null || ["files", "sessions", "browser", "git", "trajectory"].includes(String(panel));
     return validPanel && typeof value.pinned === "boolean"
-      ? { panel: value.panel as WorkspaceDrawerPanel | null, pinned: value.pinned }
+      ? { panel: panel as WorkspaceDrawerPanel | null, pinned: value.pinned }
       : null;
   } catch {
     return null;

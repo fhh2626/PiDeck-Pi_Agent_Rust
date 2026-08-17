@@ -174,3 +174,55 @@ export function mergeHistoryWithPreservedMessages(
 		? [...historyMessages, ...preservedMessages]
 		: historyMessages;
 }
+
+/**
+ * 重载后投影消息身份稳定化。事件通道（randomUUID id）与文件投影通道
+ * （agentId-history-entryId id）对同一条 pi 消息的 id 永不相同；压缩/attach
+ * 重连等场景 loadMessages 会用投影整体替换运行期缓存，若直接替换，渲染层
+ * React key 全部变化 → 已渲染消息全部 remount → 回答入场/settle 动画重放
+ * （视觉上「回复又被加载了一遍」）。
+ *
+ * 本函数按内容指纹把投影消息的 id 重写为旧缓存中同一条消息的 id（时间容差内、
+ * 一一消耗，规则与 mergeHistoryWithPreservedMessages 一致），保留投影的
+ * entryId 等 meta；无旧匹配的新消息（如压缩摘要卡）保持投影 id。
+ *
+ * 幂等：旧缓存已是投影版时，指纹匹配到的是同 id，重写无副作用。
+ */
+export function stabilizeReloadedMessageIds(
+	previousMessages: ChatMessage[],
+	projectedMessages: ChatMessage[],
+): ChatMessage[] {
+	if (previousMessages.length === 0 || projectedMessages.length === 0) {
+		return projectedMessages;
+	}
+	// 指纹 → 旧缓存下标队列（同文本高频消息如连发「继续」会共享一个指纹）
+	const fingerprintToPrevIndices = new Map<string, number[]>();
+	previousMessages.forEach((message, index) => {
+		const fingerprint = messageFingerprint(message);
+		const indices = fingerprintToPrevIndices.get(fingerprint);
+		if (indices) indices.push(index);
+		else fingerprintToPrevIndices.set(fingerprint, [index]);
+	});
+	const consumed = new Set<number>();
+	return projectedMessages.map((message) => {
+		const fingerprint = messageFingerprint(message);
+		const candidates = fingerprintToPrevIndices.get(fingerprint);
+		if (!candidates) return message;
+		// 从最旧往最新一一消耗，保持投影与旧缓存的顺序对应（同文本消息
+		// 如连发「继续」按出现顺序各匹配各的，避免交错串位）
+		for (let i = 0; i < candidates.length; i++) {
+			const prevIndex = candidates[i];
+			if (consumed.has(prevIndex)) continue;
+			const prev = previousMessages[prevIndex];
+			if (
+				Math.abs((prev.timestamp ?? 0) - (message.timestamp ?? 0)) >
+				FINGERPRINT_MATCH_TIME_TOLERANCE_MS
+			) {
+				continue;
+			}
+			consumed.add(prevIndex);
+			return { ...message, id: prev.id };
+		}
+		return message;
+	});
+}

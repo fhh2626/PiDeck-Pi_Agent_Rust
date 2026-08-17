@@ -194,7 +194,7 @@ export function SessionManagerModal(props: {
 					</div>
 				</div>
 
-				<div className="flex-1 overflow-y-auto bg-bg-muted">
+				<div className="flex-1 overflow-y-auto bg-bg-muted [scrollbar-gutter:stable]">
 					{showArchived ? (
 						<Table>
 							<TableHeader>

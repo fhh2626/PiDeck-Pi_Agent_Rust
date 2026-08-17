@@ -1762,6 +1762,8 @@ body.ask-dialog-open .ask-question-card.pending {
   outline: none;
   background: transparent;
   color: var(--color-text-primary);
+  /* 品牌色光标（dsh-web 同款）：默认主题下近黑，彩色 accent 主题下随主题色 */
+  caret-color: var(--color-accent);
   padding: 10px 12px;
   font-size: var(--font-size-body);
   line-height: var(--line-height-body);
@@ -1794,6 +1796,8 @@ body.ask-dialog-open .ask-question-card.pending {
   overflow-wrap: anywhere;
   word-break: break-word;
   cursor: text;
+  /* 与 textarea 同款品牌色光标 */
+  caret-color: var(--color-accent);
 }
 .composer .rich-input.is-disabled {
   cursor: default;
@@ -1918,7 +1922,7 @@ body.ask-dialog-open .ask-question-card.pending {
 .composer-box:focus-within {
   /* 中性 focus：ring 走 foreground，不再品牌绿 */
   border-color: var(--color-text-primary);
-  box-shadow: var(--shadow-composer), var(--focus-ring);
+  box-shadow: var(--shadow-composer-lifted), var(--focus-ring);
 }
 .composer-box.shell-mode {
   border-color: color-mix(
@@ -2351,9 +2355,11 @@ body.ask-dialog-open .ask-question-card.pending {
   /* 作为右侧抽屉的 flex 内容区时必须允许收缩，否则深层文件树会撑开容器导致滚动条失效。 */
   flex: 1;
   min-height: 0;
-  /* 仅纵向滚动：工具行/树行 min-content 撑破时不再制造横向滚动条 */
+  /* 仅纵向滚动：工具行/树行 min-content 撑破时不再制造横向滚动条。
+     纵向滚动已上移到 DrawerSurface 的 LazyWrapper 容器（overflow-y-auto +
+     scrollbar-gutter: stable）：占位与内容共用同一滚动容器，内容宽度不再随
+     滚动条出现/消失跳变（切 tab 重挂时占位 320 → 内容 310 的“呼吸式”摆动）。 */
   overflow-x: hidden;
-  overflow-y: auto;
   /* 文件树收紧外圈 padding，避免再叠一层「假缩进」感 */
   padding: var(--space-2);
 }

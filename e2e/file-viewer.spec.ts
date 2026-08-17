@@ -1,13 +1,14 @@
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, expect } from "./mock-pi-fixture";
 
 /**
- * 右侧抽屉文件查看回归（修复三个问题）：
- * 1. 点文件查看 → 抽屉模式必须有返回键（此前 modal 模式下点文件开 modal 且无返回键）；
- * 2. 展开到 modal → 最小化回抽屉必须生效（此前 updater 内嵌套 setDrawer 被丢弃）；
- * 3. Monaco 首次加载空白由 loading fallback 覆盖（视觉项，此处验证渲染链路）。
+ * 文件查看链路回归（阅读面统一走中间栏分屏后重写）：
+ * 原抽屉内查看器 + modal 展开/最小化的功能随「编辑器入口迁到分屏
+ * （SessionTabsBar + WorkbenchContent）」移除；本测试覆盖迁移后的等价链路：
+ * 项目 → 文件树 → 分屏打开查看器 → 关闭阅读面 → 抽屉保持打开。
+ * （分屏比例与最大化/恢复的回归由 workbench-split.spec.ts 覆盖。）
  */
 
 // 预置带文件的项目目录
@@ -18,7 +19,7 @@ test.use({
 	seedProjects: [{ id: "p1", name: "file-viewer", path: projectDir }],
 });
 
-test("drawer file viewer: back button + modal minimize roundtrip", async ({ window }) => {
+test("file viewer opens in workbench split and closes back to the drawer", async ({ window }) => {
 	await expect(window.locator("#boot-overlay")).toHaveCount(0, { timeout: 20_000 });
 
 	// 进入预置项目：侧栏项目显示目录名（pideck-fv-*）
@@ -26,11 +27,11 @@ test("drawer file viewer: back button + modal minimize roundtrip", async ({ wind
 	await expect(projectItem).toBeVisible({ timeout: 20_000 });
 	await projectItem.click();
 	// 项目 select 后：点项目行的「新建 Agent」进入会话视图（main 无会话时空）
+	// 注：项目行按钮已迁移为 aria-label 定位（旧 .project-action 类已随侧栏重构移除）
 	const projectRow = window.locator(".conversation", { hasText: "pideck-fv-" }).first();
 	await projectRow.hover();
-	await projectRow.locator(".project-action").nth(1).click().catch(async () => {
-		await projectRow.locator(".project-action").last().click();
-	});
+	await projectRow.getByRole("button", { name: "新建 Agent" }).first().click();
+
 	// 打开右侧抽屉（files 面板）
 	const toggle = window.locator(".header-drawer-toggle").first();
 	await expect(toggle).toBeVisible();
@@ -38,34 +39,20 @@ test("drawer file viewer: back button + modal minimize roundtrip", async ({ wind
 	const drawer = window.locator(".detail-drawer");
 	await expect(drawer).toHaveAttribute("data-open", "true");
 
-	// 刷新文件树后点击文件 → 抽屉模式打开查看器
+	// 刷新文件树后点击文件 → 中间栏分屏打开查看器
 	const refreshButton = drawer.getByRole("button", { name: /刷新/ }).first();
 	await refreshButton.click().catch(() => undefined);
 	const fileRow = drawer.locator(".file-node-row", { hasText: "hello.ts" }).first();
 	await expect(fileRow).toBeVisible({ timeout: 15_000 });
 	await fileRow.click();
 
-	// 独立 Header（文件编辑标题 + 返回键）与内容区分离渲染（修复 2/3）
-	await expect(drawer.getByText("文件编辑")).toBeVisible({ timeout: 15_000 });
-	await expect(drawer.locator(".file-diff-title")).toHaveText("hello.ts", { timeout: 15_000 });
-	const backButton = drawer.getByRole("button", { name: "返回" });
-	await expect(backButton).toBeVisible();
-	// Header 返回键在内容加载期间也始终可点（独立渲染）——点击返回文件树
-	await backButton.click();
-	await expect(drawer.locator(".file-node-row", { hasText: "hello.ts" }).first()).toBeVisible({ timeout: 10_000 });
+	await expect(window.locator(".workbench-stage-split").first()).toBeVisible({ timeout: 15_000 });
+	// 阅读面右上角关闭按钮常驻可点
+	const closeBtn = window.locator(".file-diff-header-actions").getByRole("button", { name: "关闭" }).first();
+	await expect(closeBtn).toBeVisible({ timeout: 15_000 });
 
-	// 重新打开文件，进入查看器
-	await drawer.locator(".file-node-row", { hasText: "hello.ts" }).first().click();
-	await expect(drawer.locator(".file-diff-title")).toHaveText("hello.ts", { timeout: 15_000 });
-
-	// 展开到 modal（最大化）→ 最小化回抽屉必须重新出现（修复 1）
-	await drawer.getByRole("button", { name: "弹出窗口" }).click().catch(async () => {
-		await drawer.locator(".file-diff-toggle-btn").last().click();
-	});
-	const modalMinimize = window.getByRole("button", { name: "最小化到侧栏" });
-	await expect(modalMinimize).toBeVisible({ timeout: 10_000 });
-	await modalMinimize.click();
-	// 抽屉重新显示查看器
-	await expect(drawer.locator(".file-diff-title")).toHaveText("hello.ts", { timeout: 15_000 });
+	// 关闭阅读面 → 回到无内容状态，抽屉保持打开（文件树可继续浏览）
+	await closeBtn.click();
+	await expect(window.locator(".workbench-stage-with-content")).toHaveCount(0, { timeout: 10_000 });
 	await expect(drawer).toHaveAttribute("data-open", "true");
 });

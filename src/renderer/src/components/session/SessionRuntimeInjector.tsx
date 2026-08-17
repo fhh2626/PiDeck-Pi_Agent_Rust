@@ -143,7 +143,6 @@ export const SessionRuntimeInjector = React.memo(function SessionRuntimeInjector
       onFocusPane={onFocusPane}
       activeAgentId={runtime.activeAgentId ?? undefined}
       activeAgent={activeAgent}
-      activeRuntimeState={runtime.activeRuntimeState}
       hasActiveConversation={runtime.hasActiveConversation}
       hasProject={runtime.sessionHasProject}
       chatHeaderRef={chatHeaderRef}
