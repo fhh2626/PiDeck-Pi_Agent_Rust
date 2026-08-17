@@ -75,6 +75,17 @@ test("rendered CSS consumes tokens instead of hardcoded values", () => {
   assert.ok(streamdownChrome.includes("--chat-table-cell-padding-y"));
 });
 
+test("streaming Streamdown animation keeps the user chat line-height token", () => {
+  const streamdownChrome = readFileSync("src/renderer/src/styles/streamdownChrome.css", "utf8");
+  assert.match(streamdownChrome, /\.markdown-body \[data-sd-animate\]/);
+  assert.match(streamdownChrome, /line-height:\s*var\(--chat-body-line-height\)/);
+  assert.match(streamdownChrome, /\.markdown-body \.space-y-4 > :not\(:last-child\)/);
+  assert.match(
+    streamdownChrome,
+    /\/\* 关掉逐字 slideUp[\s\S]*\.markdown-body \[data-sd-animate\] \{[\s\S]*animation:\s*none;/,
+  );
+});
+
 test("renderer/App default settings seed all four modes to default", () => {
   const settingsStore = readFileSync("src/main/settings/SettingsStore.ts", "utf8");
   const app = readFileSync("src/renderer/src/App.tsx", "utf8");

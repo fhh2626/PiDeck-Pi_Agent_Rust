@@ -301,3 +301,156 @@ test("merges streamed reasoning without creating a duplicate assistant message",
 	assert.equal(merged[0].id, "rt-u-1");
 	assert.equal(merged[1].id, "rt-a-1");
 });
+
+test("drops a trailing local thinking/tool placeholder after the authoritative timeline", () => {
+	const current = [
+		{ id: "web-u-1", role: "user", parts: [{ type: "text", text: "继续" }] },
+		{
+			id: "web-old-think",
+			role: "assistant",
+			parts: [{ type: "reasoning", text: "旧思考" }],
+		},
+		{
+			id: "web-old-tool",
+			role: "assistant",
+			parts: [{ type: "dynamic-tool", toolName: "bash", toolCallId: "old-tool", state: "output-available", input: {}, output: "done" }],
+		},
+	];
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "rt-u-1", role: "user", text: "继续", timestamp: 100 }),
+		message({ id: "rt-think", role: "assistant", text: "", thinking: "旧思考", timestamp: 110 }),
+		message({ id: "rt-tool", role: "tool", text: "done", timestamp: 120, meta: { toolCallId: "old-tool", toolName: "bash" } }),
+		message({ id: "rt-latest", role: "assistant", text: "真正最新的回复", timestamp: 130 }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.length, 4);
+	assert.equal(merged.at(-1)?.id, "rt-latest");
+	assert.equal(merged.at(-1)?.parts.find((part) => part.type === "text")?.text, "真正最新的回复");
+});
+
+test("keeps an unmatched mid-timeline SSE assistant reply that is not a trailing placeholder", () => {
+	const current = [
+		{ id: "web-u-1", role: "user", parts: [{ type: "text", text: "问" }] },
+		{
+			id: "web-live",
+			role: "assistant",
+			parts: [
+				{ type: "reasoning", text: "还在想" },
+				{ type: "text", text: "半句" },
+			],
+		},
+	];
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "rt-u-1", role: "user", text: "问", timestamp: 100 }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.length, 2);
+	assert.equal(merged[1].id, "web-live");
+});
+
+test("keeps a trailing local thinking card that the snapshot has not covered yet", () => {
+	const current = [
+		{ id: "web-u-1", role: "user", parts: [{ type: "text", text: "继续" }] },
+		{
+			id: "web-new-think",
+			role: "assistant",
+			parts: [{ type: "reasoning", text: "这一轮刚开始想" }],
+		},
+	];
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "rt-u-1", role: "user", text: "继续", timestamp: 100 }),
+		message({ id: "rt-old", role: "assistant", text: "上一轮已经说完", timestamp: 110 }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.at(-1)?.id, "web-new-think");
+	assert.equal(merged.at(-1)?.parts[0]?.text, "这一轮刚开始想");
+});
+
+test("idle merge drops unmatched trailing thinking even when the snapshot rewrote the text", () => {
+	const current = [
+		{ id: "web-u-1", role: "user", parts: [{ type: "text", text: "继续" }] },
+		{
+			id: "web-old-think",
+			role: "assistant",
+			parts: [{ type: "reasoning", text: "SSE 里的旧思考原文" }],
+		},
+	];
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "rt-u-1", role: "user", text: "继续", timestamp: 100 }),
+		message({ id: "rt-latest", role: "assistant", text: "真正最新的回复", thinking: "快照里完全改写过的思考", timestamp: 130 }),
+	]);
+
+	const keptWhileStreaming = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(keptWhileStreaming.at(-1)?.id, "web-old-think");
+
+	const idle = mergeAuthoritativeUiMessages(current, authoritative, {
+		dropUnmatchedTrailingPlaceholders: true,
+	});
+	assert.equal(idle.at(-1)?.id, "rt-latest");
+	assert.equal(idle.at(-1)?.parts.find((part) => part.type === "text")?.text, "真正最新的回复");
+});
+
+test("streaming merge does not treat a new short thought as a prefix of an older snapshot", () => {
+	const current = [
+		{ id: "web-u-1", role: "user", parts: [{ type: "text", text: "继续" }] },
+		{
+			id: "web-new-think",
+			role: "assistant",
+			parts: [{ type: "reasoning", text: "旧" }],
+		},
+	];
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "rt-u-1", role: "user", text: "继续", timestamp: 100 }),
+		message({ id: "rt-old", role: "assistant", text: "旧回复已经说完", timestamp: 110 }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.at(-1)?.id, "web-new-think");
+});
+
+test("idle merge keeps unmatched thinking when the snapshot has not settled a final answer", () => {
+	const current = [
+		{ id: "web-u-1", role: "user", parts: [{ type: "text", text: "继续" }] },
+		{
+			id: "web-live-think",
+			role: "assistant",
+			parts: [{ type: "reasoning", text: "还在想，快照还没正文" }],
+		},
+	];
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "rt-u-1", role: "user", text: "继续", timestamp: 100 }),
+	]);
+
+	const idle = mergeAuthoritativeUiMessages(current, authoritative, {
+		dropUnmatchedTrailingPlaceholders: true,
+	});
+	assert.equal(idle.at(-1)?.id, "web-live-think");
+});
+
+test("idle merge drops an unmatched thinking card stuck in the middle once the snapshot settled", () => {
+	const current = [
+		{ id: "web-u-1", role: "user", parts: [{ type: "text", text: "继续" }] },
+		{
+			id: "web-old-think",
+			role: "assistant",
+			parts: [{ type: "reasoning", text: "卡在中间的旧思考" }],
+		},
+		{ id: "web-u-2", role: "user", parts: [{ type: "text", text: "下一问" }] },
+	];
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "rt-u-1", role: "user", text: "继续", timestamp: 100 }),
+		message({ id: "rt-latest", role: "assistant", text: "真正最新的回复", timestamp: 130 }),
+		message({ id: "rt-u-2", role: "user", text: "下一问", timestamp: 140 }),
+	]);
+
+	const idle = mergeAuthoritativeUiMessages(current, authoritative, {
+		dropUnmatchedTrailingPlaceholders: true,
+	});
+	assert.deepEqual(
+		Array.from(idle, (item) => item.parts.find((part) => part.type === "text")?.text ?? item.parts[0]?.type),
+		["继续", "真正最新的回复", "下一问"],
+	);
+});
