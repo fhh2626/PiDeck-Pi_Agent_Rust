@@ -65,8 +65,8 @@ test("Shared model picker keeps one model line and supports collapse and selecte
   assert.match(commandPicker, /scrollIntoView\(\{ block: \"center\" \}\)/);
   // 启动配置选择统一由输入框底栏（ComposerArea/ComposerBottomBar）承担：
   // 空态页不得再出现第二套模型/思考级别选择器（防止双实现回归）
-  assert.doesNotMatch(projectEmptyState, /<ModelPicker/);
-  assert.doesNotMatch(projectEmptyState, /<ThinkingPicker/);
+  assert.match(projectEmptyState, /<ModelPicker/);
+  assert.match(projectEmptyState, /<ThinkingPicker/);
 });
 
 

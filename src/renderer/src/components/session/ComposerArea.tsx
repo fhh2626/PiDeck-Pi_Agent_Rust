@@ -220,9 +220,7 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
             }}
             data-session-id={props.sessionId}
           >
-            {/* 扩展 widget（Todo/Plan）统一由常驻 todo 条（SessionTodoStrip）展示，
-                composer 内默认不再有 widget，widgets 槽位默认 null；
-                宿主（SessionView）可传入常驻 todo 条，
+            {/* 扩展 widget（Todo/Plan）默认走 chat-header chips；composer widgets 槽位可空。
                 ComposerMeasuredExtras 负责测量附件/队列/通知高度并驱动 composer 自动增高。 */}
             <ComposerMeasuredExtras
               widgets={props.widgets ?? null}
@@ -258,7 +256,7 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
                       : "",
               ].filter(Boolean).join(" ")}
             >
-              {/* 扩展 widget（Todo/Plan）由常驻 todo 条（SessionTodoStrip）展示。 */}
+              {/* 扩展 widget（Todo/Plan）由头部 chips 展示。 */}
               <TipTapComposer
                 ref={composer.editor.ref}
                 value={composer.draft}
@@ -310,6 +308,7 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
               {/* 运行中仍可切换思考强度（下一轮生效）和模型（本轮结束后套上）；仅启动中禁用 */}
               <ComposerBottomBar
                 state={composer.runtime?.state}
+                compacting={Boolean(composer.runtime?.state?.isCompacting)}
                 disabled={composer.isBusy || composer.isStarting}
                 thinkingDisabled={composer.isStarting}
                 modelDisabled={composer.isStarting}

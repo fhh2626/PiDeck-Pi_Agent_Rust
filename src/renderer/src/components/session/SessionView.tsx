@@ -18,7 +18,7 @@ import { isLanWeb, desktopApi as api } from "../../desktopApi";
 import { useNotifyLayoutResized } from "../../hooks/useNotifyLayoutResized";
 import { SessionHeader } from "./SessionHeader";
 import { SessionBranchBar } from "./SessionBranchBar";
-import { SessionTodoStrip } from "./SessionTodoStrip";
+import { SessionWidgetChips } from "./SessionWidgetChips";
 import { SessionSurfaceStage } from "./SessionSurfaceStage";
 import { ComposerArea } from "./ComposerArea";
 import { SessionRuntimeDock } from "./SessionRuntimeDock";
@@ -49,6 +49,7 @@ export type SessionViewProps = {
     status?: string;
   } | null;
   hasActiveConversation: boolean;
+  activeRuntimeState?: AgentRuntimeState;
   hasProject: boolean;
 
   // ── Layout refs ──
@@ -124,6 +125,7 @@ export function SessionView({
   activeAgentId,
   activeAgent,
   hasActiveConversation,
+  activeRuntimeState,
   hasProject,
   chatHeaderRef,
   composerRef,
@@ -437,7 +439,7 @@ export function SessionView({
           本栏只保留会话状态徽章与分屏身份标题（抽屉开关在共享 Tab 栏）。 */}
       <SessionHeader
         headerRef={chatHeaderRef}
-        statusSessionId={sessionId}
+        sessionId={sessionId}
         title={sessionTitle}
         projectName={projectName}
         paneTitle={splitPane ? sessionTitle : undefined}
@@ -446,8 +448,10 @@ export function SessionView({
         }
         compactionCount={activeAgent?.compactionCount}
         isAnonymous={activeAgent?.noSession}
+        runtimeState={activeRuntimeState}
         duration={sessionDuration}
         isStarting={isAgentStarting}
+        widgetChips={<SessionWidgetChips sessionId={sessionId} />}
       />
       {/* 分支导航条：仅当当前会话存在 fork 分支关系（父/兄弟/子分支）时显示 */}
       <SessionBranchBar sessionId={sessionId} onOpenSession={onOpenBranchSession} />
@@ -492,9 +496,7 @@ export function SessionView({
           />
         </ResizablePanel>
 
-        {/* 无消息时底部 composer 不渲染：起始页（SessionStartSurface）在 timeline 内
-            居中挂同一 ComposerArea，避免同屏两个输入框；发首条消息后底部栏回归 */}
-        {hasActiveConversation && sessionTimeline.messages.length > 0 && (
+        {hasActiveConversation && (
           <>
             <ResizableHandle className="v-splitter" />
             <ResizablePanel
@@ -520,9 +522,6 @@ export function SessionView({
                 enqueue={enqueueSessionPrompt}
                 ensureSessionId={ensureSessionId}
                 queuePanel={queuePanel}
-                // 输入框上方常驻 todo 条（dsh TodoPanel 移植）：与输入框同宽同列，
-                // 折叠条形态，高度由 ComposerMeasuredExtras 测量驱动面板自适应
-                widgets={<SessionTodoStrip sessionId={sessionId} />}
               />
             </ResizablePanel>
           </>

@@ -15,7 +15,7 @@ export type CacheHitStats = {
 	/** 参与统计的 assistant 消息条数 */
 	sampleCount: number;
 	/** 全部消息文本累计字符数（含 user/assistant 的 text），
-	 *  渲染层据此估算「对话占上下文比例」（见 SessionContextMeter）。 */
+	 *  渲染层据此估算「对话占上下文比例」。 */
 	messageChars?: number;
 };
 

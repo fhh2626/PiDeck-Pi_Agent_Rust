@@ -128,6 +128,25 @@ type WebServiceDependencies = {
 	respondToUi: (input: SessionUiResponseInput) => Promise<void>;
 };
 
+const CONTEXT_CONTROLLER_COMMANDS = new Set([
+	"/context-tools on",
+	"/context-tools off",
+	"/context-files on",
+	"/context-files off",
+	"/context-commands on",
+	"/context-commands off",
+]);
+
+function isAllowedContextControllerCommand(command: string): boolean {
+	if (CONTEXT_CONTROLLER_COMMANDS.has(command)) return true;
+	const match = command.match(/^\/context-keep\s+(\d+)$/);
+	if (match) {
+		const count = Number(match[1]);
+		return Number.isFinite(count) && count >= 0 && count <= 99;
+	}
+	return false;
+}
+
 function serializePublicWebPayload(body: unknown): string {
 	return JSON.stringify(body, function (key, value) {
 		if (key === "debugDetails" || key === "stack") return undefined;
@@ -423,6 +442,41 @@ export class WebServiceManager {
 					decodeURIComponent(sessionMessagesMatch[1]),
 				);
 				this.sendJson(response, { messages });
+				return;
+			}
+			const contextStateMatch = url.pathname.match(
+				/^\/api\/sessions\/([^/]+)\/context-controller-state$/,
+			);
+			if (contextStateMatch && request.method === "GET") {
+				const sessionId = decodeURIComponent(contextStateMatch[1]);
+				if (!this.deps.getContextControllerState) {
+					this.sendError(response, 500, "webError.internal", "context-controller state is unavailable");
+					return;
+				}
+				const state = await this.deps.getContextControllerState(sessionId);
+				this.sendJson(response, state);
+				return;
+			}
+			const contextCommandMatch = url.pathname.match(
+				/^\/api\/sessions\/([^/]+)\/context-controller$/,
+			);
+			if (contextCommandMatch && request.method === "POST") {
+				const sessionId = decodeURIComponent(contextCommandMatch[1]);
+				const body = await this.readJson<{ command?: string }>(request);
+				const command = body.command?.trim() ?? "";
+				if (!isAllowedContextControllerCommand(command)) {
+					this.sendError(response, 400, "webError.invalidContextCommand", "invalid context-controller command");
+					return;
+				}
+				const requestId = `ctx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+				const result = await this.deps.sendSessionPrompt({
+					sessionId,
+					requestId,
+					message: "",
+					agentMessage: command,
+					silent: true,
+				});
+				this.sendJson(response, { result });
 				return;
 			}
 			const sessionPromptMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/prompt$/);

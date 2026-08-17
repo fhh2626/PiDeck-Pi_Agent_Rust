@@ -196,11 +196,7 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
     Boolean(surfaceCachedEntry),
   );
   const isConversationLoading = modernSurfaceState.isLoading;
-  // 空态（起始页 / 旧 Editorial 空态）时 [role=log] 不套聊天列宽度约束：
-  // chatContentWidthStyle 把内容列限制为 min(80%, 100%-48px)，会让「新建 Agent」
-  // 等真实会话页的 SessionStartSurface 输入框比引导页（直接挂 ProjectEmptyState、
-  // 不受此约束）窄且位置偏移，同一组件两副长相；起始页组件自身有 max-w-[980px]
-  // 居中控制，去掉约束后与引导页完全一致。有消息时保持原约束（消息列与输入框对齐契约）。
+  // 空态时起始页走原来的杂志式快捷入口，不再在时间线里挂第二套输入框。
   const showSurfaceEmptyState =
     !hasActiveConversation ||
     (!isConversationLoading && activeMessages.length === 0);
@@ -652,7 +648,7 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
       {hasActiveConversation &&
         !isConversationLoading &&
         activeMessages.length === 0 && (
-          <SessionStartSurface sessionId={sessionId} />
+          <SessionStartSurface onQuickPrompt={props.onQuickPrompt} />
         )}
 
       {/* 长会话渲染治理：

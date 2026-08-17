@@ -1754,6 +1754,10 @@ export class AgentManager {
 		this.setStreamingAgent(agentId, false);
 		this.textEmitter.cancel(agentId);
 		this.streamingText.delete(agentId);
+		this.lastSentTextByAgent.delete(agentId);
+		this.textPushCountByAgent.delete(agentId);
+		this.lastSentThinkingByAgent.delete(agentId);
+		this.thinkingPushCountByAgent.delete(agentId);
 		const hadActiveTool = Boolean(
 			this.toolExecutingByAgent.get(agentId) ||
 			(this.activeToolCallsByAgent.get(agentId)?.size ?? 0) > 0,
@@ -2600,6 +2604,10 @@ export class AgentManager {
 		this.toolMessageIds.delete(agentId);
 		this.retryStatusMessageIds.delete(agentId);
 		this.streamingText.delete(agentId);
+		this.lastSentTextByAgent.delete(agentId);
+		this.textPushCountByAgent.delete(agentId);
+		this.lastSentThinkingByAgent.delete(agentId);
+		this.thinkingPushCountByAgent.delete(agentId);
 		this.rpcCompactingAgents.delete(agentId);
 		this.rustRuntimeAgents.delete(agentId);
 		this.autoRestartAttempted.delete(agentId);
@@ -3503,6 +3511,8 @@ export class AgentManager {
 				this.toolMessageIds.delete(agentId);
 				this.textEmitter.cancel(agentId);
 				this.streamingText.delete(agentId);
+				this.lastSentTextByAgent.delete(agentId);
+				this.textPushCountByAgent.delete(agentId);
 			}
 			// agent 异常结束时（如 API 返回 400、模型报错等），将错误提示写入会话，避免用户看到空白。
 			// 错误信息的存放位置因 pi 版本和错误类型不同而有多种可能：
@@ -3619,6 +3629,8 @@ export class AgentManager {
 				this.toolMessageIds.delete(agentId);
 				this.textEmitter.cancel(agentId);
 				this.streamingText.delete(agentId);
+				this.lastSentTextByAgent.delete(agentId);
+				this.textPushCountByAgent.delete(agentId);
 				this.activeToolCallsByAgent.delete(agentId);
 				this.toolExecutingByAgent.set(agentId, null);
 				this.rpcCompactingAgents.delete(agentId);
@@ -3672,6 +3684,8 @@ export class AgentManager {
 			}
 			this.textEmitter.cancel(agentId);
 			this.streamingText.delete(agentId);
+			this.lastSentTextByAgent.delete(agentId);
+			this.textPushCountByAgent.delete(agentId);
 		}
 
 		if (typed.type === "tool_execution_start") {
@@ -4103,6 +4117,8 @@ export class AgentManager {
 			}
 			this.textEmitter.cancel(agentId);
 			this.streamingText.delete(agentId);
+			this.lastSentTextByAgent.delete(agentId);
+			this.textPushCountByAgent.delete(agentId);
 		}
 	}
 
@@ -4308,6 +4324,8 @@ export class AgentManager {
 		}
 		this.streamingThinking.delete(agentId);
 		this.thinkingSegmentByAgent.delete(agentId);
+		this.lastSentThinkingByAgent.delete(agentId);
+		this.thinkingPushCountByAgent.delete(agentId);
 	}
 
 	private upsertAssistantMessage(
@@ -4974,6 +4992,8 @@ export class AgentManager {
 		this.finishThinkingChannel(agentId);
 		this.textEmitter.cancel(agentId);
 		this.streamingText.delete(agentId);
+		this.lastSentTextByAgent.delete(agentId);
+		this.textPushCountByAgent.delete(agentId);
 		this.emitState();
 		void this.emitRuntimeState(agentId);
 		// Pi_Agent_Rust 不发 agent_settled；get_state 已确认真正空闲后补发

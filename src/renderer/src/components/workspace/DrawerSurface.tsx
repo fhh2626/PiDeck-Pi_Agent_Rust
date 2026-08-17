@@ -1,12 +1,30 @@
+import { SquarePen } from "lucide-react";
 import { BrowserSurface } from "./BrowserSurface";
 import { GitPanel } from "../app/GitPanel";
 import { DrawerContent } from "../app/AppParts";
-import { SessionTrajectoryPanel } from "../session/trajectory/SessionTrajectoryPanel";
 import { LazyWrapper } from "../../hooks/useLazyComponent";
 import type { WorkspaceDrawerPanel } from "../../hooks/useWorkspacePanels";
 import { t } from "../../i18n";
+import { Button } from "../ui-shadcn/button";
 
 // ── port objects (typed loosely — type tightening is a follow-up task) ──
+
+export interface DrawerEditorPort {
+  editorMode: string;
+  activeTab: any;
+  activeTabId: string | null;
+  editorTabs: any[];
+  toggleEditorMode: () => void;
+  selectEditorTab: (id: string) => void;
+  closeEditorTab: (id: string) => void;
+  closeEditor: () => void;
+  readEditorFileContent: (path: string) => Promise<string>;
+  readEditorOriginalContent: any;
+  saveEditorFileContent: ((path: string, content: string) => Promise<void>) | undefined;
+  prevDrawerPanelRef: React.MutableRefObject<WorkspaceDrawerPanel | null>;
+  clearEditorBack: () => WorkspaceDrawerPanel | null;
+  maxEditorFileSizeMB: number;
+}
 
 export interface DrawerGitPort {
   enableGitManagement: boolean;
@@ -74,6 +92,7 @@ export interface DrawerFilesPort {
 export interface DrawerSurfaceProps {
   drawer: WorkspaceDrawerPanel | null;
   drawerCollapsed: boolean;
+  editor: DrawerEditorPort;
   git: DrawerGitPort;
   chrome: DrawerChromePort;
   browser: DrawerBrowserPort;
@@ -81,14 +100,24 @@ export interface DrawerSurfaceProps {
 }
 
 export function DrawerSurface(props: DrawerSurfaceProps) {
-  const { drawer, drawerCollapsed, git, chrome, browser, files } = props;
+  const { drawer, drawerCollapsed, editor, git, chrome, browser, files } = props;
 
   return (
     <>
       {/* 各面板不再挂「标题 + ×」顶栏：关闭/切换改走会话 Tab 栏右侧活动图标。 */}
-      {drawer === "trajectory" && !drawerCollapsed ? (
-        <div className="drawer-content-frame flex min-h-0 flex-1 flex-col overflow-hidden">
-          <SessionTrajectoryPanel />
+      {drawer === "editor" && !drawerCollapsed ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+          <SquarePen size={28} className="text-muted-foreground/50" aria-hidden="true" />
+          <div className="text-body font-medium text-foreground">{t("editor.emptyTitle")}</div>
+          <p className="max-w-60 text-caption text-muted-foreground">{t("editor.emptyHint")}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => chrome.onOpenDrawer("files")}
+          >
+            {t("editor.emptyOpenFiles")}
+          </Button>
         </div>
       ) : drawer === "browser" && !drawerCollapsed ? (
         <div className="drawer-content-frame flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -136,7 +165,7 @@ export function DrawerSurface(props: DrawerSurfaceProps) {
             </div>
           </div>
         </div>
-      ) : drawer && drawer !== "browser" && drawer !== "git" && drawer !== "trajectory" ? (
+      ) : drawer && drawer !== "browser" && drawer !== "editor" && drawer !== "git" ? (
         <LazyWrapper
           // 滚动层上移到这里：files/sessions 面板自身不再滚动（见 timeline.css
           // .files-panel/.sessions-panel 注释），占位与内容共用同一滚动容器，配合

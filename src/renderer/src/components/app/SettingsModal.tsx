@@ -199,9 +199,8 @@ function SettingsModalContent(props: SettingsModalProps) {
 	const baseSnapshotRef = useRef<AppSettings>({ ...props.settings });
 	// ── 视觉桥草稿：独立于全局设置（写 pi-deck-vision.json，走独立 IPC），脏标记/保存/取消由弹框统一管理 ──
 	const visionDraft = useVisionBridgeDraft();
-	/** 各 tab 的局部编辑态（WSL 输入/Web 端口/宠物预览模式）在取消时通过递增信号重置 */
+	/** 各 tab 的局部编辑态（WSL 输入/Web 端口）在取消时通过递增信号重置 */
 	const [devTabResetKey, setDevTabResetKey] = useState(0);
-	const [petTabResetKey, setPetTabResetKey] = useState(0);
 
 	/** 更新草稿并标记对应字段为已修改。调用方传入的 patch 中的每个 key 都会追加到 dirtyFields。 */
 	const updateDraft = useCallback((patch: Partial<AppSettings>) => {
@@ -251,9 +250,8 @@ function SettingsModalContent(props: SettingsModalProps) {
 				baseSnapshotRef.current.chatFontSize !== null ||
 				baseSnapshotRef.current.inputFontSize !== null,
 		);
-		// tab 局部编辑态（WSL 输入、Web 端口、宠物预览）由各自 tab 监听信号重置
+		// tab 局部编辑态（WSL 输入、Web 端口）由各自 tab 监听信号重置
 		setDevTabResetKey((k) => k + 1);
-		setPetTabResetKey((k) => k + 1);
 	};
 
 	/** 关闭弹框：有未保存变更（全局设置或视觉桥草稿）时弹出确认对话框，无变更时直接关闭 */

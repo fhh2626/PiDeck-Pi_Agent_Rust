@@ -130,11 +130,10 @@ test("active Agent identity is derived from the selected Session runtime", () =>
 test("Session messages and composer render without an active Agent", () => {
   // 会话渲染由 currentSessionId 驱动（App 不再持有 hasActiveConversation 变量，
   // 该语义下沉到 SessionView 的 prop），无 active agent 时 composer 仍渲染；
-  // 仅无消息的空会话例外——起始页（SessionStartSurface）在 timeline 内居中挂同一
-  // ComposerArea，底部面板不重复渲染
+  // 有活动会话时底部 composer 始终渲染；空会话起始页只提供快捷 prompt。
   assert.match(
     sessionViewSource,
-    /\{hasActiveConversation && sessionTimeline\.messages\.length > 0 && \([\s\S]*<ComposerArea[\s\S]*sessionId=\{sessionId\}/,
+    /\{hasActiveConversation && \([\s\S]*<ComposerArea[\s\S]*sessionId=\{sessionId\}/,
   );
   assert.match(composerSource, /useSessionComposerController\(/);
   assert.match(composerSource, /sessionId=\{props\.sessionId\}/);

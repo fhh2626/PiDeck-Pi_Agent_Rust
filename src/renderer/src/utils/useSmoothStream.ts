@@ -67,11 +67,11 @@ export function useSmoothStream({
 	content,
 	isStreaming,
 	disabled = false,
-	minDelay = 16,
-	streamingDivisor = 5,
+	minDelay = 24,
+	streamingDivisor = 4,
 	drainDivisor = 3,
-	maxStepPerFrame = 10,
-	maxDrainStepPerFrame = 12,
+	maxStepPerFrame = 3,
+	maxDrainStepPerFrame = 8,
 }: UseSmoothStreamOptions): UseSmoothStreamReturn {
 	const [displayedContent, setDisplayedContent] = useState(content);
 

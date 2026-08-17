@@ -141,8 +141,7 @@ test("tailwind-merge keeps widget font sizes next to status colors", () => {
 test("widget popover follows wallpaper translucency, items use foreground text", () => {
 	// 2027-01 用户要求：todo 弹层背景跟随壁纸透明度——App.tsx 给所有浮层保留 92%+ 底色，
 	// widget 弹层单独降回面板档；条目文字用前景色（黑）而非 muted 灰。
-	// 注：chat-header 的 widget chips（SessionWidgetChips）已移除（2026-08），
-	// 壁纸规则保留给历史样式一致性；待办统一走输入框上方常驻条。
+	// chat-header widget chips 继续承载 Todo/Plan 入口。
 	const css = readFileSync("src/renderer/src/styles/foundation.css", "utf8");
 	assert.match(
 		css,

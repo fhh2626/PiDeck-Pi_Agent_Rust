@@ -9,19 +9,18 @@ const fileEditorHook = readFileSync("src/renderer/src/hooks/useFileEditor.ts", "
 const zhCN = readFileSync("src/renderer/src/i18n/rendererCopy.zh-CN.ts", "utf8");
 const enUS = readFileSync("src/renderer/src/i18n/rendererCopy.en-US.ts", "utf8");
 
-test("drawer rail no longer exposes the editor as a panel entry", () => {
-  // 编辑器阅读面已迁分屏（SessionTabsBar + WorkbenchContent），右侧抽屉不再有 editor 面板
-  assert.doesNotMatch(app, /id:\s*"editor"/);
-  assert.doesNotMatch(app, /active:\s*drawer === "editor"/);
-  assert.doesNotMatch(app, /handleToolDrawerAction\("editor"\)/);
+test("drawer rail keeps the editor as a second entry next to split reading", () => {
+  assert.match(app, /id:\s*"editor"/);
+  assert.match(app, /active:\s*drawer === "editor"/);
+  assert.match(app, /handleToolDrawerAction\("editor"\)/);
 });
 
-test("drawer surface and ports no longer carry the editor panel", () => {
-  assert.doesNotMatch(drawerSurface, /drawer === "editor"/);
-  assert.doesNotMatch(drawerSurface, /DrawerEditorPort/);
-  assert.doesNotMatch(drawerSurface, /t\("editor\.emptyTitle"\)/);
-  assert.doesNotMatch(drawerPorts, /DrawerEditorPort/);
-  assert.doesNotMatch(drawerPorts, /input\.editorMode/);
+test("drawer surface and ports still carry the editor panel", () => {
+  assert.match(drawerSurface, /drawer === "editor"/);
+  assert.match(drawerSurface, /DrawerEditorPort/);
+  assert.match(drawerSurface, /t\("editor\.emptyTitle"\)/);
+  assert.match(drawerPorts, /DrawerEditorPort/);
+  assert.match(drawerPorts, /input\.editorMode/);
 });
 
 test("closing the last editor tab resets workbench layout to settings default", () => {
@@ -43,9 +42,9 @@ test("closing the last editor tab resets workbench layout to settings default", 
   assert.match(closeEditorBlock, /setEditorMode\(contentOpenModeRef\.current\)/);
 });
 
-test("editor drawer empty-state copy is removed from both locales", () => {
+test("editor drawer empty-state copy stays in both locales", () => {
   for (const key of ['"editor.fileEditor"', '"editor.emptyTitle"', '"editor.emptyHint"', '"editor.emptyOpenFiles"']) {
-    assert.ok(!zhCN.includes(key), `zh-CN should not keep ${key}`);
-    assert.ok(!enUS.includes(key), `en-US should not keep ${key}`);
+    assert.ok(zhCN.includes(key), `zh-CN should keep ${key}`);
+    assert.ok(enUS.includes(key), `en-US should keep ${key}`);
   }
 });

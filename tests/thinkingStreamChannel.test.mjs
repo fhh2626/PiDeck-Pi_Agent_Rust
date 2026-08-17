@@ -75,6 +75,19 @@ test("renderer: streaming atoms merge delta and accept full-text snapshots", () 
   assert.match(atoms, /\(prev\?\.text \?\? ""\) \+ delta/);
 });
 
+test("main process: delta baselines are cleared on thinking end and agent teardown", () => {
+  const finishIdx = agentManager.indexOf("private finishThinkingChannel");
+  const finishBlock = agentManager.slice(finishIdx, finishIdx + 900);
+  assert.match(finishBlock, /lastSentThinkingByAgent\.delete\(agentId\)/);
+  assert.match(finishBlock, /thinkingPushCountByAgent\.delete\(agentId\)/);
+
+  const clearIdx = agentManager.indexOf("private clearAgentState");
+  const clearBlock = agentManager.slice(clearIdx, clearIdx + 1600);
+  assert.match(clearBlock, /lastSentTextByAgent\.delete\(agentId\)/);
+  assert.match(clearBlock, /textPushCountByAgent\.delete\(agentId\)/);
+  assert.match(clearBlock, /lastSentThinkingByAgent\.delete\(agentId\)/);
+  assert.match(clearBlock, /thinkingPushCountByAgent\.delete\(agentId\)/);
+});
 test("main process: live thinking id equals History msg-thinking-* id", () => {
   assert.match(agentManager, /thinkingSegmentByAgent/);
   assert.match(agentManager, /id: `msg-thinking-\$\{assistantMessageId\}`/);

@@ -28,8 +28,7 @@ test("ChatDirectoryButton reuses the App-level changeChatPath service", () => {
 test("SessionView keeps directory settings out of the header actions slot", () => {
 	const source = readFileSync("src/renderer/src/components/session/SessionView.tsx", "utf8");
 	assert.doesNotMatch(source, /ChatDirectoryButton/);
-	// chat-header 的 widget chips 已移除（2026-08）：待办统一走输入框上方常驻条
-	assert.doesNotMatch(source, /SessionWidgetChips/);
+	assert.match(source, /SessionWidgetChips/);
 });
 
 test("App extracts changeChatPath once and injects it into the sidebar action", () => {

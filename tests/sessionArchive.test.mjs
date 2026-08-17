@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -110,6 +110,23 @@ function loadSessionScanner(homePath) {
 	return sandbox.exports;
 }
 
+async function cleanupTempDir(dir) {
+	// Windows 上杀软/索引会短暂锁住刚写过的临时目录；清理失败不应把已通过的断言打成红。
+	const delays = [0, 20, 75, 200];
+	let lastError;
+	for (const delay of delays) {
+		if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+		try {
+			rmSync(dir, { recursive: true, force: true });
+			return;
+		} catch (error) {
+			lastError = error;
+			const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+			if (code !== "EPERM" && code !== "EBUSY") throw error;
+		}
+	}
+	throw lastError;
+}
 function writeSession(filePath, entries) {
 	mkdirSync(dirname(filePath), { recursive: true });
 	writeFileSync(filePath, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
@@ -146,7 +163,7 @@ test("archive moves the session into .pideck-archive and list no longer returns 
 		const archivedList = await scanner.listArchived();
 		assert.ok(archivedList.some((s) => s.filePath === archived), "archived session must appear in listArchived");
 	} finally {
-		rmSync(home, { recursive: true, force: true });
+		await cleanupTempDir(home);
 	}
 });
 
@@ -173,7 +190,7 @@ test("unarchive restores the session to its original path", async () => {
 		const archivedList = await scanner.listArchived();
 		assert.ok(!archivedList.some((s) => s.filePath === archived), "restored session must leave the archive list");
 	} finally {
-		rmSync(home, { recursive: true, force: true });
+		await cleanupTempDir(home);
 	}
 });
 
@@ -205,7 +222,7 @@ test("archive moves the sibling sub-session directory along with the file", asyn
 		assert.ok(existsSync(childDir), "sibling dir must be restored");
 		assert.ok(existsSync(childPath), "child session must be restored");
 	} finally {
-		rmSync(home, { recursive: true, force: true });
+		await cleanupTempDir(home);
 	}
 });
 
@@ -225,6 +242,6 @@ test("archive directory is excluded from regular scans", async () => {
 		const summaries = await scanner.list();
 		assert.ok(!summaries.some((s) => s.filePath.includes(".pideck-archive")), "archive dir must be excluded from list");
 	} finally {
-		rmSync(home, { recursive: true, force: true });
+		await cleanupTempDir(home);
 	}
 });
