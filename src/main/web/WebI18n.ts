@@ -44,7 +44,9 @@ export const webZhCN = {
 	"webError.chatProjectProtected": "内置聊天项目不能删除",
 	"webError.requestIdRequired": "requestId 不能为空",
 	"webError.messageRequired": "message 或 images 不能为空",
+	"webError.invalidContextCommand": "无效的上下文控制命令",
 	"webError.runtimeTargetRequired": "需要匹配当前会话的运行目标",
+	"webError.sessionBusy": "当前会话已有 Web 请求正在运行",
 	"webError.apiNotFound": "API 不存在",
 	"webError.internal": "Web 服务发生内部错误",
 } as const;
@@ -94,7 +96,9 @@ export const webEnUS: Record<WebTranslationKey, string> = {
 	"webError.chatProjectProtected": "The built-in chat project cannot be deleted",
 	"webError.requestIdRequired": "requestId is required",
 	"webError.messageRequired": "message or images is required",
+	"webError.invalidContextCommand": "Invalid context-controller command",
 	"webError.runtimeTargetRequired": "A matching Session runtime target is required",
+	"webError.sessionBusy": "A Web request is already running for this session",
 	"webError.apiNotFound": "API not found",
 	"webError.internal": "The web service encountered an internal error",
 };

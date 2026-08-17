@@ -130,7 +130,7 @@ test("widget chips render in the chat header left slot, not the composer", () =>
 	const area = readFileSync("src/renderer/src/components/session/ComposerArea.tsx", "utf8");
 	assert.doesNotMatch(area, /ExtensionWidgetCard/);
 	assert.doesNotMatch(area, /\{widgets\}/);
-	assert.match(area, /widgets=\{null\}/);
+	assert.match(area, /widgets=\{props\.widgets \?\? null\}/);
 });
 
 test("chip popover uses the official BeUI TodoList with mapping, not a local imitation", () => {

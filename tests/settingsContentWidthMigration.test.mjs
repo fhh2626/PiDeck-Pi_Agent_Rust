@@ -11,6 +11,10 @@ const splitStage = readFileSync(
   "utf8",
 );
 const modal = readFileSync("src/renderer/src/components/app/SettingsModal.tsx", "utf8");
+const appearanceTab = readFileSync(
+  "src/renderer/src/components/app/settings/AppearanceTab.tsx",
+  "utf8",
+);
 const tailwind = readFileSync("src/renderer/src/styles/tailwind.css", "utf8");
 const foundation = readFileSync("src/renderer/src/styles/foundation.css", "utf8");
 const timeline = readFileSync(
@@ -73,7 +77,9 @@ test("UI 2.0: messages and composer share inline width, not parent padding", () 
   assert.match(chatContentWidth, /marginInline: "auto"/);
   // 时间线侧：宽度 style 挂在 MessageScroller 的 contentProps（内层 [role=log]）上，
   // 视口铺满面板、滚动条贴面板最右；内容列仍与 composer 同宽居中。
-  assert.match(timeline, /contentProps=\{\{ style: chatContentWidthStyle \}\}/);
+  // 例外：空态（起始页/EmptyState）去掉约束——起始页自带 max-w-[980px]，
+  // 保持与引导页一致（见 SessionMessageTimeline.showSurfaceEmptyState）。
+  assert.match(timeline, /contentProps=\{showSurfaceEmptyState \? undefined : \{ style: chatContentWidthStyle \}\}/);
   assert.match(composerArea, /\.\.\.chatContentWidthStyle/);
   assert.doesNotMatch(tailwind, /100cqi|--chat-inline-pad|--chat-side-gap|@utility chat-content-width/);
   assert.doesNotMatch(foundation, /--chat-inline-pad|--chat-side-gap|--content-max-width|@container/);
@@ -88,11 +94,12 @@ test("UI 2.0: messages and composer share inline width, not parent padding", () 
   assert.match(runtimeOverlay, /ask-inline-bar ask-inline-bar--active w-full/);
 });
 
-test("SettingsModal slider is 60–100 with always-visible save button", () => {
-  assert.match(modal, /min="60"/);
-  assert.match(modal, /max="100"/);
-  assert.match(modal, /step="1"/);
-  assert.match(modal, /updateDraft\(\{ chatContentWidthPct: parseInt/);
+test("Appearance tab slider is 60–100 with always-visible save button", () => {
+  // 内容宽度滑块位于外观设置 tab（AppearanceTab，自 SettingsModal 拆分）
+  assert.match(appearanceTab, /min="60"/);
+  assert.match(appearanceTab, /max="100"/);
+  assert.match(appearanceTab, /step="1"/);
+  assert.match(appearanceTab, /updateDraft\(\{ chatContentWidthPct: parseInt/);
   // 保存按钮常驻（无 dirty 时禁用），不再只在 dirty 时出现；
   // 视觉桥草稿有改动时（hasAnyDirtyChanges）同样点亮，且保存中（visionDraft.saving）禁用防重复提交
   assert.match(modal, /disabled=\{!hasAnyDirtyChanges \|\| visionDraft\.saving\}/);

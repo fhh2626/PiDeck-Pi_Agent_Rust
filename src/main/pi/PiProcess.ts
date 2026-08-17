@@ -458,6 +458,9 @@ export class PiProcess extends EventEmitter {
   }
 
   stop() {
+    // 先关闭 RPC 输入面，再杀子进程。Windows 上 kill 到 exit 事件之间仍可能
+    // 有已排队 stdout；这些内容属于旧 runtime，不能再解析成业务事件。
+    this.rpc?.close(new Error("pi process stopped"));
     if (!this.proc) {
       // 进程已不在仍可能残留停放态（例如 start 中途失败路径）。
       this.restoreParkedExtensions();

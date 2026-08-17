@@ -44,6 +44,18 @@ test("Web model picker supports search and mobile header wrapping", () => {
 	assert.match(webHeader, /chat-header flex min-w-0 flex-wrap/);
 });
 
+test("Web header mounts context checkboxes before the model picker", () => {
+	const checksIndex = webHeader.indexOf("<WebContextChecks");
+	const pickerIndex = webHeader.indexOf("<ModelPicker");
+	assert.ok(checksIndex >= 0, "WebHeader must mount WebContextChecks");
+	assert.ok(pickerIndex > checksIndex, "context checks must sit left of the model picker");
+	const checks = readFileSync("src/renderer/src/web/WebContextChecks.tsx", "utf8");
+	assert.match(checks, /applyLocalSwitch/);
+	assert.match(checks, /WebKeepSpinBox/);
+	assert.match(checks, /\/context-keep/);
+	assert.match(checks, /pendingRef/);
+});
+
 test("Mobile Web keeps chat full-screen and opens the project tree as a drawer", () => {
 	assert.match(webChatApp, /mobileSidebarOpen/);
 	assert.match(webChatApp, /onOpenSidebar/);
@@ -100,4 +112,10 @@ test("Web shell tracks the visual viewport so mobile chrome cannot crop the head
 	assert.match(webComposer, /composer[\s\S]*shrink-0/);
 	assert.match(webCss, /\.app\.wechat-shell\s*>\s*\.chat-pane\s*>\s*\.composer[\s\S]*margin-bottom:\s*0/);
 	assert.match(webHtml, /viewport-fit=cover/);
+});
+
+test("Web entry wraps the app in TooltipProvider for context-check hints", () => {
+	const webMain = readFileSync("src/renderer/src/web-main.tsx", "utf8");
+	assert.match(webMain, /TooltipProvider/);
+	assert.match(webMain, /<WebChatApp/);
 });

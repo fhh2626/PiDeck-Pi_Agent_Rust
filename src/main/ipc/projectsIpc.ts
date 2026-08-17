@@ -21,6 +21,21 @@ export type ProjectsIpcDeps = {
 	getMainWindow: () => BrowserWindow | null;
 };
 
+/** PC 侧栏可见项目：始终包含 chat 项目，再按 WSL/Windows 环境过滤。 */
+export function listVisibleProjects(
+	projectStore: ProjectStore,
+	settingsStore: SettingsStore,
+) {
+	const settings = settingsStore.get();
+	const all = projectStore.list();
+	if (settings.wslEnabled) {
+		return all.filter((project) => project.kind === "chat" || project.environment === "wsl");
+	}
+	return all.filter((project) => (
+		project.kind === "chat" || !project.environment || project.environment === "windows"
+	));
+}
+
 export function registerProjectsIpc({
 	projectStore,
 	settingsStore,
@@ -32,14 +47,7 @@ export function registerProjectsIpc({
 	mainCopy,
 	getMainWindow,
 }: ProjectsIpcDeps): void {
-	const getVisibleProjects = () => {
-		const settings = settingsStore.get();
-		const all = projectStore.list();
-		if (settings.wslEnabled) {
-			return all.filter((p) => p.kind === "chat" || p.environment === "wsl");
-		}
-		return all.filter((p) => p.kind === "chat" || !p.environment || p.environment === "windows");
-	};
+	const getVisibleProjects = () => listVisibleProjects(projectStore, settingsStore);
 
 	ipcMain.handle(ipcChannels.projectsList, () => getVisibleProjects());
 	ipcMain.handle(ipcChannels.projectsAdd, async () => {

@@ -196,6 +196,10 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
     Boolean(surfaceCachedEntry),
   );
   const isConversationLoading = modernSurfaceState.isLoading;
+  // 空态时起始页走原来的杂志式快捷入口，不再在时间线里挂第二套输入框。
+  const showSurfaceEmptyState =
+    !hasActiveConversation ||
+    (!isConversationLoading && activeMessages.length === 0);
   const canLoadMoreMessages = canLoadSessionTimelineMore(
     modernSurfaceState.isStarting,
     activeMessages.length,
@@ -534,7 +538,7 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
       viewportClassName="message-timeline"
       // 宽度约束落在内层 [role=log] 而非 scroller 宿主：视口撑满整个面板，
       // 原生滚动条贴面板最右侧；内容列仍与 composer 同宽居中（见 chatContentWidth）。
-      contentProps={{ style: chatContentWidthStyle }}
+      contentProps={showSurfaceEmptyState ? undefined : { style: chatContentWidthStyle }}
       viewportRef={timelineRef}
       scrollApiRef={controller.scrollerScrollApiRef}
       followOutput={controller.autoScroll}

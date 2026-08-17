@@ -56,7 +56,7 @@ test("ask overlay keeps fold, cancel, batch and resume interactions", () => {
 });
 
 test("ask is rendered at the bottom of the session timeline", () => {
-  assert.match(sessionView, /<SessionMessageTimeline[\s\S]*runtimeUi=\{runtimeUi\}/);
+  assert.match(sessionView, /<SessionSurfaceStage[\s\S]*runtimeUi,/);
   assert.match(sessionTimeline, /className="session-runtime-ui mx-auto w-full/);
   assert.doesNotMatch(sessionTimeline, /session-runtime-ui sticky bottom-0/);
   // 时间线是唯一滚动 owner，Ask 不再嵌套自己的 overflow-y-auto。

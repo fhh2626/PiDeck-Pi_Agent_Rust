@@ -68,6 +68,7 @@ export function renderWidgetLine(line: string): ReactNode {
 export function widgetDisplayTitle(widgetKey: string): string {
 	if (widgetKey === "pi-deck-todo") return t("app.widgetTitleTodo");
 	if (widgetKey === "pi-deck-plan-todos") return t("app.widgetTitlePlan");
+	if (widgetKey === "pi-deck-context-controller") return t("app.widgetTitleContext");
 	return widgetKey;
 }
 
@@ -318,7 +319,6 @@ export function ComposerBottomBar(props: {
 						{thinkingText}
 					</Button>
 					{showCompact && (() => {
-						// 与 main 一致：>30% 才显示；70%/90% 用色阶提示紧迫度，不做成常驻高饱和按钮。
 						const isCompactingNow = Boolean(props.state?.isCompacting || props.compacting);
 						const urgency =
 							contextPercent >= 90 ? " critical" : contextPercent >= 70 ? " warn" : "";

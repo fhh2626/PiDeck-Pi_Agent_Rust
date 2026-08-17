@@ -51,10 +51,11 @@ const json = (value) => JSON.stringify(value);
 
 test("computeCacheHitStats: 空文件/无样本返回 undefined", () => {
 	const { computeCacheHitStats } = loadCacheHitStats();
-	assert.equal(json(computeCacheHitStats("")), json({ latest: undefined, average: undefined, sampleCount: 0 }));
-	// 只有 user 消息与无 usage 的 assistant 消息：无样本
+	assert.equal(json(computeCacheHitStats("")), json({ latest: undefined, average: undefined, sampleCount: 0, messageChars: 0 }));
+	// 只有 user 消息与无 usage 的 assistant 消息：无样本（字符数仍统计）
 	const noUsage = `${userLine()}\n${assistantLine({ usage: null })}\n`;
-	assert.equal(json(computeCacheHitStats(noUsage)), json({ latest: undefined, average: undefined, sampleCount: 0 }));
+	const stats = computeCacheHitStats(noUsage);
+	assert.equal(json(stats), json({ latest: undefined, average: undefined, sampleCount: 0, messageChars: 4 }));
 });
 
 test("computeCacheHitStats: 单条消息 latest === average", () => {
@@ -96,6 +97,22 @@ test("hitRateFromUsage: 口径为 cacheRead / (input + cacheRead + cacheWrite)",
 	assert.equal(hitRateFromUsage(undefined), undefined);
 	assert.equal(hitRateFromUsage({}), undefined);
 	assert.equal(hitRateFromUsage({ input: 100, cacheRead: 50, cacheWrite: 50 }), 25);
+});
+
+test("computeCacheHitStats: messageChars 统计全部消息文本（含裸 text 字段与坏行容忍）", () => {
+	const { computeCacheHitStats } = loadCacheHitStats();
+	// assistantLine 的 content 是 [{type:"text",text:"ok"}]（2 字符），userLine 是 "hi"（2 字符）
+	const raw = [
+		assistantLine({ id: 1, usage: { input: 100, cacheRead: 100, cacheWrite: 0 } }),
+		userLine(),
+		// 兼容裸 text 字段消息（content 数组缺失时按 text 计数）
+		JSON.stringify({ type: "message", id: "u2", parentId: null, message: { role: "user", text: "hello 世界" } }),
+		"not-json{{{",
+	].join("\n");
+	const stats = computeCacheHitStats(raw);
+	// ok(2) + hi(2) + "hello 世界"(8，含空格) = 12；坏行不计数不中断
+	assert.equal(stats.messageChars, 12);
+	assert.equal(stats.sampleCount, 1);
 });
 
 // ── 文件级缓存读取器（性能：避免高频 getRuntimeState 反复读文件+parse）──

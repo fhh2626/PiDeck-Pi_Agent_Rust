@@ -11,6 +11,9 @@ import type { UIMessage } from "ai";
 import type {
 	AvailableModel,
 	ChatMessage,
+	ContextControllerState,
+	ImageContent,
+	SendSessionPromptResult,
 	SessionCommandResult,
 	SessionLaunchPreferences,
 	SessionMessagePage,
@@ -52,6 +55,32 @@ export async function fetchModels(): Promise<AvailableModel[]> {
 	if (!res.ok) throw new Error(`models ${res.status}`);
 	const result = (await res.json()) as { models?: AvailableModel[] };
 	return result.models ?? [];
+}
+
+/** 读取会话 JSONL 中最后一条上下文控制器快照；与桌面 IPC 同源。 */
+export async function fetchContextControllerState(sessionId: string): Promise<ContextControllerState> {
+	const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/context-controller-state`);
+	if (!res.ok) throw new Error(`context-controller-state ${res.status}`);
+	return res.json() as Promise<ContextControllerState>;
+}
+
+/**
+ * 静默下发上下文开关命令。不走 /prompt，避免占用 Web 生成锁。
+ * 桌面与 Web 最终都进入同一条 sendSessionPrompt(silent) 路径，JSONL 快照共享。
+ */
+export async function sendContextControllerCommand(
+	sessionId: string,
+	command: string,
+): Promise<SendSessionPromptResult> {
+	const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/context-controller`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ command }),
+	});
+	if (!res.ok) throw new Error(`context-controller ${res.status}`);
+	const payload = (await res.json()) as { result?: SendSessionPromptResult };
+	if (!payload.result) throw new Error("context-controller: missing result");
+	return payload.result;
 }
 
 /** 按项目新建会话（对应桌面端「新建 Agent」入口）。返回新会话 id。 */
@@ -226,6 +255,26 @@ function createWebToolPart(message: ChatMessage): UIMessage["parts"][number] {
 	};
 }
 
+const WEB_IMAGE_MIME = /^image\/(?:png|jpeg|gif|webp)$/i;
+const MAX_WEB_IMAGE_BASE64_LENGTH = 8 * 1024 * 1024;
+
+/** 将持久化图片转换为受限 data URL，拒绝任意外部 URL 和过大的 payload。 */
+function createWebImagePart(image: ImageContent): UIMessage["parts"][number] | undefined {
+	const mimeType = image.mimeType.trim().toLowerCase();
+	const data = image.data.trim();
+	if (
+		!WEB_IMAGE_MIME.test(mimeType) ||
+		!data ||
+		data.length > MAX_WEB_IMAGE_BASE64_LENGTH ||
+		!/^[a-z0-9+/]+={0,2}$/i.test(data)
+	) return undefined;
+	return {
+		type: "file",
+		mediaType: mimeType,
+		url: `data:${mimeType};base64,${data}`,
+	};
+}
+
 /**
  * 历史 ChatMessage 列表 → useChat 的 UIMessage[]（text-only parts）。
  * 历史消息仅注入正文；流式思考/工具由 useChat 从 SSE 实时构建，避免与
@@ -250,6 +299,10 @@ export function chatMessagesToUiMessages(messages: ChatMessage[]): UIMessage[] {
 			}
 			if (message.text) {
 				parts.push({ type: "text", text: message.text });
+			}
+			for (const image of message.images ?? []) {
+				const part = createWebImagePart(image);
+				if (part) parts.push(part);
 			}
 		}
 		return {
@@ -319,6 +372,86 @@ function sameUiMessage(left: UIMessage, right: UIMessage): boolean {
 		&& JSON.stringify(left.parts) === JSON.stringify(right.parts);
 }
 
+function isEmptyUiMessage(message: UIMessage): boolean {
+	return uiMessageText(message).trim().length === 0
+		&& !message.parts.some((part) => part.type !== "text" && part.type !== "reasoning");
+}
+
+function isLocalOnlyAssistantPlaceholder(message: UIMessage): boolean {
+	if (uiMessageRole(message) !== "assistant") return false;
+	if (readWebMessageMetadata(message)) return false;
+	const hasVisibleText = message.parts.some((part) => part.type === "text" && part.text.trim());
+	if (hasVisibleText) return false;
+	return message.parts.some((part) =>
+		part.type === "reasoning"
+		|| part.type === "dynamic-tool"
+		|| (typeof part.type === "string" && part.type.startsWith("tool-")),
+	);
+}
+
+function leftoverPlaceholderToolIds(message: UIMessage): string[] {
+	return message.parts.flatMap((part) => {
+		if (
+			part.type !== "dynamic-tool"
+			&& !(typeof part.type === "string" && part.type.startsWith("tool-"))
+		) return [];
+		const toolCallId = Reflect.get(part, "toolCallId");
+		return typeof toolCallId === "string" && toolCallId ? [toolCallId] : [];
+	});
+}
+
+function leftoverReasoningText(message: UIMessage): string {
+	return message.parts
+		.filter((part) => part.type === "reasoning")
+		.map((part) => part.text.trim())
+		.filter(Boolean)
+		.join("\n");
+}
+
+function hasVisibleAssistantText(message: UIMessage): boolean {
+	return message.parts.some((part) => part.type === "text" && part.text.trim());
+}
+
+/** 快照已经落到最终正文后，本地思考/工具占位才是可以清掉的孤儿。 */
+function snapshotHasSettledAssistant(authoritative: UIMessage[]): boolean {
+	return authoritative.some((message) =>
+		uiMessageRole(message) === "assistant" && hasVisibleAssistantText(message),
+	);
+}
+
+/** 权威快照已经包含同一段思考/同一工具时，本地 SSE 占位才是重复的队尾锁。 */
+function isCoveredLocalPlaceholder(leftover: UIMessage, authoritative: UIMessage[]): boolean {
+	if (!isLocalOnlyAssistantPlaceholder(leftover)) return false;
+	const leftoverText = leftoverReasoningText(leftover);
+	const leftoverToolIds = leftoverPlaceholderToolIds(leftover);
+	return authoritative.some((incoming) => {
+		if (leftoverText) {
+			const incomingText = leftoverReasoningText(incoming);
+			if (
+				incomingText
+				&& (incomingText === leftoverText
+					|| incomingText.startsWith(leftoverText)
+					|| leftoverText.startsWith(incomingText))
+			) return true;
+		}
+		if (leftoverToolIds.length === 0) return false;
+		const incomingIdentity = uiMessageIdentity(incoming);
+		if (incomingIdentity && leftoverToolIds.some((id) => incomingIdentity === `tool:${id}`)) {
+			return true;
+		}
+		return leftoverPlaceholderToolIds(incoming).some((id) => leftoverToolIds.includes(id));
+	});
+}
+
+/**
+ * 只把「局部文本 → 完整文本」用在助手回复上。用户消息即便正文相同，
+ * 也必须靠稳定 id / entryId 对齐；前缀匹配会把空的本地乐观气泡、
+ * 以及「继续」「好」这类短句误判成同一条。
+ */
+function canMatchPartialText(role: ChatMessage["role"]): boolean {
+	return role === "assistant" || role === "tool" || role === "system" || role === "error";
+}
+
 /**
  * 用主进程运行时快照补偿 Web 本地 useChat 缓存。
  *
@@ -329,11 +462,15 @@ function sameUiMessage(left: UIMessage, right: UIMessage): boolean {
 export function mergeAuthoritativeUiMessages(
 	current: UIMessage[],
 	authoritative: UIMessage[],
+	options?: { dropUnmatchedTrailingPlaceholders?: boolean },
 ): UIMessage[] {
 	if (authoritative.length === 0) return current;
 	const merged = [...current];
 	const matchedCurrent = new Set<number>();
 	let changed = false;
+	// 权威快照是时间顺序。本地 useChat 消息通常没有 timestamp，
+	// 漏掉的旧回复如果按时间戳插入会落到末尾，表现为“上一条没回、下一条回了两次”。
+	let lastPlacedIndex = -1;
 
 	for (const incoming of authoritative) {
 		let matchIndex = -1;
@@ -373,13 +510,14 @@ export function mergeAuthoritativeUiMessages(
 		}
 
 		// 流式缓存可能只保留了前缀，而轮询快照已经拿到完整正文。
-		if (matchIndex < 0 && incomingText) {
+		if (matchIndex < 0 && incomingText && canMatchPartialText(incomingRole)) {
 			for (let index = merged.length - 1; index >= 0; index -= 1) {
 				const candidateText = uiMessageText(merged[index]);
 				if (
 					matchedCurrent.has(index)
 					|| uiMessageRole(merged[index]) !== incomingRole
 					|| !candidateText
+					|| isLocalOnlyAssistantPlaceholder(merged[index])
 					|| !(incomingText.startsWith(candidateText) || candidateText.startsWith(incomingText))
 				) continue;
 				matchIndex = index;
@@ -393,10 +531,13 @@ export function mergeAuthoritativeUiMessages(
 				merged[matchIndex] = incoming;
 				changed = true;
 			}
+			lastPlacedIndex = matchIndex;
 			continue;
 		}
 
-		const insertionIndex = findTimestampInsertionIndex(merged, incoming);
+		const insertionIndex = lastPlacedIndex >= 0
+			? lastPlacedIndex + 1
+			: findTimestampInsertionIndex(merged, incoming);
 		// matchedCurrent tracks indexes in the mutable merged array. Inserting before
 		// an already matched item shifts its index, so update the set before marking
 		// the newly inserted message as consumed.
@@ -411,8 +552,45 @@ export function mergeAuthoritativeUiMessages(
 		}
 		merged.splice(insertionIndex, 0, incoming);
 		matchedCurrent.add(insertionIndex);
+		lastPlacedIndex = insertionIndex;
+		changed = true;
+	}
+
+	// useChat 会先插入一条尚无正文的本地 user 气泡。若权威快照已经带上了
+	// 同一轮用户消息，这条空气泡必须丢掉，否则时间线上会出现两条用户消息。
+	const canDropUnmatchedPlaceholders =
+		options?.dropUnmatchedTrailingPlaceholders === true
+		&& snapshotHasSettledAssistant(authoritative);
+	for (let index = merged.length - 1; index >= 0; index -= 1) {
+		if (matchedCurrent.has(index)) continue;
+		const leftover = merged[index];
+		const dropEmptyUser = uiMessageRole(leftover) === "user" && isEmptyUiMessage(leftover);
+		// 流式：只删快照已覆盖的重复卡。
+		// 空闲且快照已有最终正文：清掉未匹配的本地思考/工具占位（含卡在中间的孤儿）。
+		const dropPlaceholder = isLocalOnlyAssistantPlaceholder(leftover) && (
+			isCoveredLocalPlaceholder(leftover, authoritative)
+			|| canDropUnmatchedPlaceholders
+		);
+		if (!dropEmptyUser && !dropPlaceholder) continue;
+		merged.splice(index, 1);
 		changed = true;
 	}
 
 	return changed ? merged : current;
+}
+
+/** 手机/Web 端回答 ask_question / confirm / input。 */
+export async function respondToUi(input: {
+	sessionId: string;
+	requestId: string;
+	agentId: string;
+	runtimeGeneration: number;
+	response: import("../../../shared/types").AgentUiResponse;
+}): Promise<void> {
+	const res = await fetch("/api/ui-response", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(input),
+	});
+	if (!res.ok) throw new Error(`ui-response ${res.status}`);
 }

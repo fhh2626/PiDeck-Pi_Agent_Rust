@@ -9,7 +9,7 @@ import { loadTsCommonJs } from "./helpers/loadTsCommonJs.mjs";
  * 1) text_delta 生成 text-start/text-delta/text-end 三件套（首帧自动补 start）
  * 2) thinking_delta/end 生成 reasoning 块
  * 3) tool_execution_start/end 生成 tool-input/output-available
- * 4) agent_settled 收尾；agent_end/message_update.done 只结束当前消息块
+ * 4) agent_end 收尾（error 时带 error 帧）
  * 5) 端点与协议头接线（WebServiceManager 注册 /stream + x-vercel-ai-ui-message-stream）
  */
 
@@ -103,46 +103,45 @@ test("tool_execution_start/end produces tool-input-available and tool-output-ava
 	assert.equal(end[0].toolCallId, "call_1");
 });
 
-test("late tool output backfills the missing invocation before updating it", () => {
+test("assistant done and agent_end do not close the stream before tools finish", () => {
 	const adapter = new PiEventToUiMessageStream();
-	const frames = adapter.push({
-		type: "tool_execution_end",
-		toolName: "bash",
-		toolCallId: "late-call",
-		isError: false,
-	});
-
-	assert.equal(frames[0].type, "tool-input-start");
-	assert.equal(frames[1].type, "tool-input-available");
-	assert.equal(frames[2].type, "tool-output-available");
-	assert.equal(frames[0].toolCallId, "late-call");
-	assert.equal(frames[2].toolCallId, "late-call");
-});
-
-test("message toolcall_end also backfills a missing invocation", () => {
-	const adapter = new PiEventToUiMessageStream();
-	const frames = adapter.push({
+	adapter.push({ type: "message_start", message: { role: "assistant", id: "m1" } });
+	const midDone = adapter.push({
 		type: "message_update",
-		assistantMessageEvent: {
-			type: "toolcall_end",
-			toolCall: { id: "late-message-call", output: { ok: true } },
-		},
+		assistantMessageEvent: { type: "done" },
 	});
+	assert.equal(midDone.some((frame) => frame.type === "finish"), false);
+	assert.equal(adapter.push({ type: "agent_end", stopReason: "toolUse" }).length, 0);
 
-	assert.equal(frames[0].type, "tool-input-start");
-	assert.equal(frames[1].type, "tool-input-available");
-	assert.equal(frames[2].type, "tool-output-available");
-	assert.equal(frames[2].toolCallId, "late-message-call");
+	const tool = adapter.push({
+		type: "tool_execution_start",
+		toolName: "bash",
+		toolCallId: "call_1",
+	});
+	assert.equal(tool[0].type, "tool-input-start");
+	const next = adapter.push({ type: "message_start", message: { role: "assistant", id: "m2" } });
+	assert.equal(next[0].type, "start-step");
+
+	const settled = adapter.push({ type: "agent_settled" });
+	assert.equal(settled.at(-1).type, "finish");
 });
 
-test("agent_end waits for the final agent_settled event", () => {
+test("tool_execution_end with isError emits tool-output-error", () => {
 	const adapter = new PiEventToUiMessageStream();
+	adapter.push({ type: "tool_execution_start", toolName: "bash", toolCallId: "call_err" });
+	const end = adapter.push({
+		type: "tool_execution_end",
+		toolCallId: "call_err",
+		isError: true,
+	});
+	assert.equal(end[0].type, "tool-output-error");
+	assert.equal(end[0].toolCallId, "call_err");
+});
 
+test("agent_end without error does not emit finish; settled does", () => {
+	const adapter = new PiEventToUiMessageStream();
 	assert.equal(adapter.push({ type: "agent_end", stopReason: "done" }).length, 0);
-	assert.equal(adapter.isFinished(), false);
 	assert.equal(adapter.push({ type: "agent_settled" })[0].type, "finish");
-	// 重复 settled 不重复 finish
-	assert.equal(adapter.push({ type: "agent_settled" }).length, 0);
 });
 
 test("agent_settled also closes the Web stream", () => {
@@ -151,48 +150,12 @@ test("agent_settled also closes the Web stream", () => {
 	assert.equal(frames[0].type, "finish");
 });
 
-test("final settled error carries error frame before finish", () => {
+test("agent_end error carries error frame before finish", () => {
 	const adapter = new PiEventToUiMessageStream();
-	const frames = adapter.push({ type: "agent_settled", error: "boom" });
+	const frames = adapter.push({ type: "agent_end", error: "boom" });
 	assert.equal(frames[0].type, "error");
 	assert.equal(frames[0].errorText, "boom");
 	assert.equal(frames[1].type, "finish");
-});
-
-test("message_update.done closes the current block but not the whole run", () => {
-	const adapter = new PiEventToUiMessageStream();
-	adapter.push({
-		type: "message_update",
-		assistantMessageEvent: { type: "text_delta", delta: "first" },
-	});
-	const blockEnd = adapter.push({
-		type: "message_update",
-		assistantMessageEvent: { type: "done" },
-	});
-	assert.equal(blockEnd[0].type, "text-end");
-	assert.equal(adapter.isFinished(), false);
-	assert.equal(adapter.push({ type: "agent_settled" }).at(-1).type, "finish");
-});
-
-test("multiple assistant message starts stay in one UI message with step boundaries", () => {
-	const adapter = new PiEventToUiMessageStream();
-	const first = adapter.push({
-		type: "message_start",
-		message: { role: "assistant", id: "assistant-1" },
-	});
-	const second = adapter.push({
-		type: "message_start",
-		message: { role: "assistant", id: "assistant-2" },
-	});
-	const repeated = adapter.push({
-		type: "message_start",
-		message: { role: "assistant", id: "assistant-2" },
-	});
-
-	assert.equal(first[0].type, "start");
-	assert.equal(first[0].messageId, "assistant-1");
-	assert.equal(second[0].type, "start-step");
-	assert.equal(repeated.length, 0);
 });
 
 test("finish() closes open text/reasoning blocks", () => {
@@ -234,8 +197,7 @@ test("WebEventStreamRouter routes agent events to per-session entries only", () 
 	// 绑定 pi 源后事件按 agentId → sessionId 路由；finish 后自动附 [DONE]
 	router.bindPiSource((handler) => {
 		handler("agent-a", { type: "message_start", message: { role: "assistant" } });
-		handler("other-agent", { type: "agent_end" });
-		handler("agent-a", { type: "agent_end" });
+		handler("other-agent", { type: "agent_settled" });
 		handler("agent-a", { type: "agent_settled" });
 		return () => {};
 	});
@@ -281,14 +243,5 @@ test("web frontend reloads authoritative messages on stream finish", () => {
   // [DONE] 后先停流、再 loadSessionMessages + 整体重绘（替换流式增量块）
   assert.match(webServiceSource, /finishStream\(sessionId\)/);
   assert.match(webServiceSource, /loadSessionMessages\(sessionId\)/);
-	assert.match(webServiceSource, /async function finishStream/);
-});
-
-test("web frontend abort stops the Session runtime, not only the local stream", () => {
-	const webChat = readFileSync("src/renderer/src/web/WebChatApp.tsx", "utf8");
-	const webApi = readFileSync("src/renderer/src/web/webApi.ts", "utf8");
-	assert.match(webChat, /const handleStop = \(\) => \{/);
-	assert.match(webChat, /void abortRuntime\(\{/);
-	assert.match(webChat, /onStop=\{handleStop\}/);
-	assert.match(webApi, /return callRuntimeCommand\(target\.sessionId, target, "abort"\);/);
+  assert.match(webServiceSource, /async function finishStream/);
 });

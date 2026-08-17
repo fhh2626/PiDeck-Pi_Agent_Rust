@@ -8,10 +8,10 @@
  * 视觉目标：代码块与表格共用「单卡片 + 微顶栏」语言，避免盒中盒。
  */
 
-/* 会话 Markdown 的换段节奏：Streamdown 根容器默认 space-y-4（16px），
- * 与项目自身的段落/列表 margin 叠加后，按回车的间距会远大于自动换行。
- * 本文仅在 markdown-body 边界内覆盖官方 utility，不影响其他 Tailwind space-y-4。 */
-.markdown-body > .space-y-4 > :not(:last-child) {
+/* 会话 Markdown 的换段节奏：Streamdown 根容器默认 space-y-4（16px）。
+ * 流式冻结会再包一层 contents 包装，根节点不再是 markdown-body 的直接子节点；
+ * 必须用后代选择器，否则流式时 16px 段距生效、settle 后才跳回用户设置。 */
+.markdown-body .space-y-4 > :not(:last-child) {
   margin-block-start: 0;
   margin-block-end: var(--chat-block-gap);
 }
@@ -20,6 +20,21 @@
  * timeline.css 的 li margin 单一控制，避免两套垂直间距叠加。 */
 .markdown-body [data-streamdown="list-item"] {
   padding-block: 0;
+}
+
+/* 流式时 Streamdown 会给根节点加 data-sd-animate，官方默认行高/段距会压过
+ * --chat-body-line-height。必须在 utilities 层钉回用户设置，settle 后才不会跳。 */
+.markdown-body [data-sd-animate],
+.markdown-body [data-sd-animate] p,
+.markdown-body [data-sd-animate] li {
+  line-height: var(--chat-body-line-height);
+}
+
+/* 关掉逐字 slideUp：4px 上移会让流式行看起来比 settle 后更疏。 */
+.markdown-body [data-sd-animate] {
+  animation: none;
+  filter: none;
+  transform: none;
 }
 
 /* ── 代码块 ─────────────────────────────────────────────── */

@@ -164,6 +164,17 @@ export type ImageContent = {
 	mimeType: string; // 如 "image/png", "image/jpeg", "image/gif", "image/webp"
 };
 
+export type ContextControllerState = {
+	/** 丢掉全部 toolCall + toolResult（早于最近 keepRecentCount 条的调用） */
+	clearToolHistory: boolean;
+	/** stub read 正文（早于最近 keepRecentCount 条的调用） */
+	clearReadContent: boolean;
+	/** stub 非 read 正文（早于最近 keepRecentCount 条的调用） */
+	clearCommandContent: boolean;
+	/** 保留最近 N 条工具结果原文不裁剪（默认 10，范围 0-99） */
+	keepRecentCount: number;
+};
+
 export type SendPromptInput = {
 	agentId: string;
 	message: string;
@@ -176,6 +187,8 @@ export type SendPromptInput = {
 	description?: string;
 	/** 发送请求的上层 requestId，用于跨 Session/runtime/AgentManager 对齐性能日志。 */
 	requestId?: string;
+	/** 静默下发：发给 Agent / 扩展但不向时间线追加用户气泡（如 UI 开关调扩展命令）。 */
+	silent?: boolean;
 };
 
 /** 主进程完成 pi prompt 预检后的明确接收结果。 */

@@ -261,12 +261,19 @@ export function createBrowserApi(): PiDesktopApi {
 					`/api/sessions/${encodeURIComponent(sessionId)}/messages/page${suffix}`,
 				);
 			},
+			readProcessEvents: async () => [],
 			readReferenceMessages: async (sessionId) => {
 				const result = await request<{
 					messages: Awaited<ReturnType<PiDesktopApi["sessions"]["readReferenceMessages"]>>;
 				}>(`/api/sessions/${encodeURIComponent(sessionId)}/reference-messages`);
 				return result.messages;
 			},
+			getContextControllerState: async () => ({
+				clearToolHistory: false,
+				clearReadContent: false,
+				clearCommandContent: false,
+				keepRecentCount: 10,
+			}),
 			sendPrompt: async (input) => {
 				const response = await request<{
 					result: Awaited<ReturnType<PiDesktopApi["sessions"]["sendPrompt"]>>;

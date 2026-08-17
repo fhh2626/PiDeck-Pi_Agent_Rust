@@ -33,16 +33,35 @@ test("composer maps compact errors via debugDetails-first friendly helper", () =
   assert.match(composer, /nothing to compact\|already compacted/i);
   assert.match(composer, /app\.compactNothingToDo/);
   assert.match(composer, /app\.compactSessionTooSmall/);
-  // chip 与 /compact 共用
-  assert.match(composer, /showNotice\(friendlyCompactError\(error\)/);
+  // 压缩被取消：静默（返回 null，不弹 toast）——取消响应可能延迟到正常对话后
+  // 返回，表现为「没点压缩却弹提示」（2026-08 用户反馈）
+  assert.match(composer, /compaction cancelled\|cancelled/i);
+  assert.match(composer, /if \(message\) showNotice\(message, 6000\)/);
+  assert.doesNotMatch(composer, /app\.compactCancelled/);
+  // chip 与 /compact 共用同一调用模式：null（静默）不弹 toast
+  assert.match(composer, /const message = friendlyCompactError\(error\)/);
   assert.equal(
-    (composer.match(/showNotice\(friendlyCompactError\(error\)/g) || []).length,
+    (composer.match(/const message = friendlyCompactError\(error\)/g) || []).length,
     2,
   );
+  assert.match(composer, /if \(message\) showNotice\(message, 6000\)/);
 });
 
 test("mock pi supports NOTHING compact failure path", () => {
   assert.match(mockPi, /function respondFail/);
   assert.match(mockPi, /NOTHING/);
   assert.match(mockPi, /nothing to compact/);
+});
+
+test("compaction_end 后主动检查 idle，避免状态卡在 running", () => {
+  // pi 压缩结束不保证发 agent_settled：不主动检查会永远 stuck 在 running，
+  // 渲染层表现：最后回复耗时继续走（LiveDuration）、加载动画常驻、
+  // 思考/工具折叠保持展开（2026-08 用户反馈）。
+  assert.match(agentManager, /typed\.type === "compaction_end"/);
+  assert.match(
+    agentManager,
+    /markIdleIfPiReportsNoWork\(agentId\)[\s\S]{0,200}Compaction ended/,
+  );
+  // idle 检查必须延迟到 pi 压缩收尾之后（文件写入/状态刷新）
+  assert.match(agentManager, /setTimeout\(\(\) => \{\s*\n\s*void this\.markIdleIfPiReportsNoWork\(agentId\);\s*\n\s*\}, 300\)/);
 });

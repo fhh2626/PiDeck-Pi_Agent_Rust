@@ -11,6 +11,7 @@ import "./styles.css";
 import "./web/web.css";
 import { setI18nLocale } from "./i18n";
 import { resolveLocale } from "./i18n";
+import { TooltipProvider } from "./components/ui-shadcn/tooltip";
 import { WebChatApp } from "./web/WebChatApp";
 
 // 与桌面端一致的 locale 解析：优先浏览器语言，中文走 zh-CN
@@ -27,6 +28,8 @@ darkMedia.addEventListener("change", applyTheme);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <WebChatApp />
+    <TooltipProvider>
+      <WebChatApp />
+    </TooltipProvider>
   </StrictMode>,
 );

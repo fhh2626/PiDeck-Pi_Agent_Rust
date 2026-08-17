@@ -145,7 +145,7 @@ export function SidebarContent(props: SidebarContentProps) {
       {props.chrome}
       <div className="sidebar-body flex min-h-0 flex-1 flex-col gap-2 px-2 pt-1 pb-1">
         {/* 搜索只过滤导航和当前项目内容；会话加载仍由 controller/App 的懒加载策略负责。 */}
-        <div className="search-row grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-xl bg-muted/25 p-1">
+        <div className="search-row grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-[10px] bg-muted/25 p-1">
           <div className="search-box relative min-w-0">
             <Search
               size={12}
@@ -172,8 +172,9 @@ export function SidebarContent(props: SidebarContentProps) {
           </Button>
         </div>
 
-        {/* 单一滚动区承载项目与展开内容，避免项目导航/详情双滚动和重复标题。 */}
-        <section className="conversation-list min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+        {/* 单一滚动区承载项目与展开内容，避免项目导航/详情双滚动和重复标题。
+            scrollbar-gutter: stable：滚动条出现/消失时列表宽度不跳变（与抽屉一致）。 */}
+        <section className="conversation-list min-h-0 flex-1 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]">
           <ProjectTree
             controller={controller}
             actions={actions}

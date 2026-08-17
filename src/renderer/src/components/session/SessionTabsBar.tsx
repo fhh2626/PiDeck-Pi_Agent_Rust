@@ -241,7 +241,7 @@ export function SessionTabsBar(props: SessionTabsBarProps) {
   // 下拉经 Portal 挂到 body；勿写 px-*（会盖掉自定义标题栏为窗口控件留的 padding-right）。
   // 抽屉开关始终在本栏最右侧；打开抽屉后靠 CSS 取消窗口控件让位，避免按钮被空出一截。
   return (
-    <div className="session-tabs-bar flex h-10 shrink-0 items-center gap-1 overflow-hidden border-b border-border/40 bg-background/80 pl-2">
+    <div className="session-tabs-bar flex h-10 shrink-0 items-center gap-1 overflow-hidden border-b border-border/40 bg-background/80 pl-[max(0.5rem,var(--session-tabs-left-inset,0.5rem))]">
       {props.listCollapsed && props.onToggleListCollapsed ? (
         <Button
           type="button"

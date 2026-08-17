@@ -33,6 +33,21 @@ test("session tabs mount once outside SessionView; pane keeps standalone header"
   assert.doesNotMatch(headerArea, /embedded/);
 });
 
+test("context and cost chips stay pinned when header switches overflow", () => {
+  const header = readFileSync(
+    "src/renderer/src/components/session/SessionHeader.tsx",
+    "utf8",
+  );
+  const switches = readFileSync(
+    "src/renderer/src/components/session/ContextControllerSwitches.tsx",
+    "utf8",
+  );
+  // 开关文案变长后必须先让位，不能把最右侧 ctx/cost chip 挤出窗口。
+  assert.match(header, /grid-cols-\[minmax\(0,1fr\)_minmax\(0,auto\)\]/);
+  assert.match(header, /<div className="shrink-0">\s*<SessionStatus/);
+  assert.match(switches, /flex min-w-0 shrink items-center justify-end gap-2 overflow-hidden/);
+});
+
 test("session status and new-session controls use the shared medium radius", () => {
   // Tab 栏右侧嵌入状态徽章；运行控制（停止/重启）在 Tab 下拉，combo 控件已移除。
   const statusBlock = surfaces.slice(
@@ -64,11 +79,15 @@ test("model-picker restart must light the SessionView overlay via restartActiveA
     "src/renderer/src/components/session/ComposerPickerHost.tsx",
     "utf8",
   );
+  const surfaceStage = readFileSync(
+    "src/renderer/src/components/session/SessionSurfaceStage.tsx",
+    "utf8",
+  );
   assert.match(
-    sessionView,
+    surfaceStage,
     /isRestarting \? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"/,
   );
-  assert.match(sessionView, /t\("app\.restarting"\)/);
+  assert.match(surfaceStage, /t\("app\.restarting"\)/);
   assert.match(runtimeInjector, /isRestarting=\{runtime\.isRestartingThisAgent\}/);
   assert.match(controller, /isRestartingThisAgent = restartingAgentId === activeAgentId/);
   assert.match(app, /setRestartingAgentId\(restartingAgent\.id\)/);

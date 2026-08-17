@@ -23,6 +23,10 @@ const drawerSurfaceSource = readFileSync(
   "src/renderer/src/components/workspace/DrawerSurface.tsx",
   "utf8",
 );
+const outlineAtomsSource = readFileSync(
+  "src/renderer/src/atoms/session-outline-atoms.ts",
+  "utf8",
+);
 
 function functionBody(name, source = appSource) {
   const marker = `function ${name}(`;
@@ -125,14 +129,16 @@ test("active Agent identity is derived from the selected Session runtime", () =>
 
 test("Session messages and composer render without an active Agent", () => {
   // 会话渲染由 currentSessionId 驱动（App 不再持有 hasActiveConversation 变量，
-  // 该语义下沉到 SessionView 的 prop），无 active agent 时 composer 仍渲染
+  // 该语义下沉到 SessionView 的 prop），无 active agent 时 composer 仍渲染；
+  // 有活动会话时底部 composer 始终渲染；空会话起始页只提供快捷 prompt。
   assert.match(
     sessionViewSource,
     /\{hasActiveConversation && \([\s\S]*<ComposerArea[\s\S]*sessionId=\{sessionId\}/,
   );
   assert.match(composerSource, /useSessionComposerController\(/);
   assert.match(composerSource, /sessionId=\{props\.sessionId\}/);
-  // 消息来自当前会话 atom / 栏内 timeline，不再依赖 activeAgent 兜底
-  assert.match(appSource, /currentSessionMessagesAtom/);
+  // 消息来自当前会话 atom / 栏内 timeline，不再依赖 activeAgent 兜底；
+  // 大纲/文件清单消费链（session-outline-atoms）仍以 currentSessionMessagesAtom 为源
+  assert.match(outlineAtomsSource, /currentSessionMessagesAtom/);
   assert.doesNotMatch(appSource, /currentSession \|\| activeAgent/);
 });

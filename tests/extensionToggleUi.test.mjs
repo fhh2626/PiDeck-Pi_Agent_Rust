@@ -21,3 +21,12 @@ test("extension menu uses lightweight refresh on entry and after toggles", () =>
 	assert.match(modal, /onRefresh=\{\(\) => void refreshExtensions\(true\)\}/);
 	assert.match(tab, /getExtensionsApi\(\)\.toggle\(extension\.source, enabled\)[\s\S]*?props\.onReload\(\)/);
 });
+
+test("context controller is a default-on built-in shown as PiDeck-Q-context-controller", () => {
+	const tab = readFileSync("src/renderer/src/config/ExtensionsTab.tsx", "utf8");
+	const builtIns = readFileSync("src/main/extensions/builtInExtensions.ts", "utf8");
+	assert.match(builtIns, /"pi-deck-context-controller\.ts"/);
+	assert.doesNotMatch(builtIns, /DEFAULT_DISABLED_BUILT_IN_EXTENSIONS = \[[^\]]*pi-deck-context-controller/);
+	assert.match(tab, /PiDeck-Q-context-controller/);
+	assert.match(tab, /"pi-deck-context-controller\.ts": "PiDeck-Q-context-controller"/);
+});

@@ -159,6 +159,9 @@
   --shadow-popover: 0 4px 6px -1px rgba(9, 9, 11, 0.1), 0 2px 4px -2px rgba(9, 9, 11, 0.1);
   --shadow-modal: 0 10px 15px -3px rgba(9, 9, 11, 0.1), 0 4px 6px -4px rgba(9, 9, 11, 0.1);
   --shadow-composer: 0 1px 2px 0 rgba(9, 9, 11, 0.05);
+  /* 输入框默认浮起阴影（参考 dsh-web composer 的 shadow-lv2）：比 shadow-composer 更柔和的
+     双层扩散，让输入卡片与消息区拉开层级；focus 时叠加 focus-ring 使用。 */
+  --shadow-composer-lifted: 0 2px 12px rgba(9, 9, 11, 0.06), 0 1px 3px rgba(9, 9, 11, 0.04);
   --shadow-drawer: -4px 0 12px rgba(9, 9, 11, 0.06);
   --focus-ring: 0 0 0 3px rgba(24, 24, 27, 0.16);
   /* 换肤背景图：none=不启用；mask 由 JS 注入（rgba 遮罩） */
@@ -455,6 +458,7 @@
   --shadow-popover: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
   --shadow-modal: 0 10px 15px -3px rgba(0, 0, 0, 0.45), 0 4px 6px -4px rgba(0, 0, 0, 0.35);
   --shadow-composer: 0 1px 2px 0 rgba(0, 0, 0, 0.35);
+  --shadow-composer-lifted: 0 2px 16px rgba(0, 0, 0, 0.38), 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-drawer: -4px 0 12px rgba(0, 0, 0, 0.35);
   --focus-ring: 0 0 0 3px rgba(250, 250, 250, 0.2);
   --overlay-backdrop: rgba(0, 0, 0, 0.7);
@@ -1182,6 +1186,21 @@ select:focus-visible {
   --window-controls-width: 144px;
   /* 内容顶到窗口上沿：不再留空白标题条。拖拽/窗口按钮用 fixed 叠层。 */
   padding-top: 0;
+}
+/* mac hiddenInset：系统红绿灯占左上角（约 78×28，trafficLightPosition 14,14）。
+   右侧不再叠 Win 控件；侧栏折叠后 Tab 栏必须给红绿灯让位，否则压住展开按钮。 */
+.wechat-shell.custom-titlebar-enabled.mac-custom-titlebar {
+  --window-controls-width: 0px;
+  --traffic-lights-width: 78px;
+}
+/* 侧栏折叠后 Tab 栏顶到窗口左缘，必须给红绿灯让位。
+   具体 padding 走组件 Tailwind（读这个变量），避免 legacy 被 utilities 压掉。 */
+.wechat-shell.custom-titlebar-enabled.mac-custom-titlebar.list-collapsed {
+  --session-tabs-left-inset: calc(var(--traffic-lights-width) + 8px);
+}
+.custom-titlebar-enabled.mac-custom-titlebar .window-drag-layer {
+  left: var(--traffic-lights-width);
+  right: 0;
 }
 .window-drag-layer {
   position: fixed;
@@ -2754,7 +2773,7 @@ select:focus-visible {
   background: color-mix(in srgb, var(--color-warning) 16%, transparent);
   color: var(--color-warning);
 }
-.chat-header-actions button,
+.chat-header-actions button:not([data-slot="switch"]):not([data-slot="checkbox"]):not([data-slot="select-trigger"]),
 .panel-action-row button {
   flex: 0 0 auto;
   min-width: 60px;
@@ -2827,11 +2846,11 @@ select:focus-visible {
 }
 
 /* ---- Header action buttons ---- */
-.chat-header-actions button:hover {
+.chat-header-actions button:not([data-slot="switch"]):not([data-slot="checkbox"]):not([data-slot="select-trigger"]):hover {
   background: var(--color-bg-hover);
   border-color: var(--color-border-strong);
 }
-.chat-header-actions button.active {
+.chat-header-actions button:not([data-slot="switch"]):not([data-slot="checkbox"]):not([data-slot="select-trigger"]).active {
   background: transparent;
   border-color: var(--color-accent);
   color: var(--color-accent);

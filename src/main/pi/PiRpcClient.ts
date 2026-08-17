@@ -21,6 +21,7 @@ export class PiRpcClient extends EventEmitter {
   private buffer = "";
   private readonly decoder = new StringDecoder("utf8");
   private readonly pending = new Map<string, PendingRequest>();
+  private closed = false;
 
   constructor(
     private readonly stdin: NodeJS.WritableStream,
@@ -32,6 +33,9 @@ export class PiRpcClient extends EventEmitter {
   }
 
   request(command: Record<string, unknown>, timeoutMs = 30_000): Promise<RpcResponse> {
+    if (this.closed) {
+      return Promise.reject(new Error("RPC client is closed"));
+    }
     const id = String(command.id ?? randomUUID());
     const payload = { ...command, id };
 
@@ -50,15 +54,19 @@ export class PiRpcClient extends EventEmitter {
   }
 
   notify(command: Record<string, unknown>) {
+    if (this.closed) return;
     this.write(command);
   }
 
   /** 直接向 pi 的 stdin 写入原始 JSONL，不经过 pending 跟踪（用于 extension_ui_response 等消息） */
   sendRaw(payload: Record<string, unknown>) {
+    if (this.closed) return;
     this.stdin.write(`${JSON.stringify(payload)}\n`);
   }
 
   close(error?: Error) {
+    if (this.closed) return;
+    this.closed = true;
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.reject(error ?? new Error(`RPC client closed before response: ${id}`));
@@ -67,6 +75,7 @@ export class PiRpcClient extends EventEmitter {
   }
 
   private write(payload: Record<string, unknown>) {
+    if (this.closed) return;
     // 记录发出的 RPC 命令，方便调试
     this.emit("log", { direction: "send", data: payload });
     // pi RPC 使用严格 JSONL 协议；每条命令必须以 LF 结尾，不能依赖 readline 之类的宽松分行。
@@ -74,11 +83,13 @@ export class PiRpcClient extends EventEmitter {
   }
 
   private consumeChunk(chunk: Buffer | string) {
+    if (this.closed) return;
     this.buffer += typeof chunk === "string" ? chunk : this.decoder.write(chunk);
     this.drainLines();
   }
 
   private consumeEnd() {
+    if (this.closed) return;
     this.buffer += this.decoder.end();
     if (this.buffer.length > 0) {
       this.handleLine(this.buffer.endsWith("\r") ? this.buffer.slice(0, -1) : this.buffer);
@@ -99,6 +110,7 @@ export class PiRpcClient extends EventEmitter {
   }
 
   private handleLine(line: string) {
+    if (this.closed) return;
     if (!line.trim()) return;
 
     let message: unknown;

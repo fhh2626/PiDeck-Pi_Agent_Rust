@@ -92,7 +92,8 @@ test("session tabs bar keeps trailing inset for drawer toggle (no px-* override)
   const tabs = readFileSync("src/renderer/src/components/session/SessionTabsBar.tsx", "utf8");
   // utility px-* 会冲掉 foundation 的右边距，导致开关钻进窗口控件下
   assert.doesNotMatch(tabs, /session-tabs-bar[^"]*px-\d/);
-  assert.match(tabs, /session-tabs-bar[^"]*pl-2/);
+  assert.match(tabs, /session-tabs-bar[^\"]*pl-\[max\(0\.5rem,var\(--session-tabs-left-inset/);
+  assert.doesNotMatch(tabs, /session-tabs-bar[^\"]*\bpl-2\b/);
   assert.match(tabs, /header-drawer-toggle/);
   assert.match(tabs, /PanelRight/);
   // margin 让位 + min-width:0：避免 flex 内容把 drag 区撑进窗口控件
@@ -140,6 +141,28 @@ test("brand lockup is larger inside the 40px titlebar", () => {
   assert.match(brand, /PiLogoCanvas size=\{28\}/);
   assert.match(sidebar, /list-toolbar flex h-10/);
   assert.doesNotMatch(sidebar, /list-toggle-native floating/);
+});
+
+test("mac custom titlebar uses system traffic lights and insets collapsed tabs", () => {
+  const header = readFileSync("src/renderer/src/components/AppHeader.tsx", "utf8");
+  const app = readFileSync("src/renderer/src/App.tsx", "utf8");
+  const settingsStore = readFileSync("src/main/settings/SettingsStore.ts", "utf8");
+  // 右侧 Win 控件只在非 darwin 渲染；mac 靠 hiddenInset 红绿灯。
+  assert.match(header, /const showWinWindowControls = platform !== "darwin"/);
+  assert.match(shell, /mac-custom-titlebar/);
+  assert.match(app, /platform=\{appInfo\.platform\}/);
+  assert.match(app, /detectRendererPlatform\(\)/);
+  assert.match(settingsStore, /titleBarStyle: useNative[\s\S]*hiddenInset/);
+  assert.match(settingsStore, /trafficLightPosition: \{ x: 14, y: 14 \}/);
+  assert.match(
+    foundation,
+    /\.wechat-shell\.custom-titlebar-enabled\.mac-custom-titlebar \{[\s\S]*--window-controls-width:\s*0px;/,
+  );
+  assert.match(
+    foundation,
+    /\.wechat-shell\.custom-titlebar-enabled\.mac-custom-titlebar\.list-collapsed \{[\s\S]*--session-tabs-left-inset:/,
+  );
+  assert.match(sidebar, /pl-\[max\(0\.625rem,var\(--traffic-lights-width/);
 });
 
 test("collapsed sidebar keeps 14px gutter; restore lives in tab bar", () => {

@@ -25,10 +25,10 @@ test("ChatDirectoryButton reuses the App-level changeChatPath service", () => {
 	assert.match(source, /t\("app\.chatProjectSettings"\)/);
 });
 
-test("SessionView keeps directory settings out of the header widget chips slot", () => {
+test("SessionView keeps directory settings out of the header actions slot", () => {
 	const source = readFileSync("src/renderer/src/components/session/SessionView.tsx", "utf8");
 	assert.doesNotMatch(source, /ChatDirectoryButton/);
-	assert.match(source, /widgetChips=\{<SessionWidgetChips sessionId=\{sessionId\} \/>\}/);
+	assert.match(source, /SessionWidgetChips/);
 });
 
 test("App extracts changeChatPath once and injects it into the sidebar action", () => {

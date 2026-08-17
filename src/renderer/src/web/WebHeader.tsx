@@ -25,6 +25,7 @@ import {
 } from "@/components/ui-shadcn/select";
 import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { WebContextChecks } from "./WebContextChecks";
 
 export type WebHeaderStatus = "idle" | "starting" | "running" | "error";
 
@@ -37,6 +38,7 @@ export function WebHeader(props: {
 	models: AvailableModel[];
 	onModelChange: (model: AvailableModel) => void;
 	onThinkingChange: (level: string) => void;
+	sessionId?: string;
 }) {
 	const {
 		title,
@@ -47,6 +49,7 @@ export function WebHeader(props: {
 		models,
 		onModelChange,
 		onThinkingChange,
+		sessionId = "",
 	} = props;
 	// 允许窄屏换行：标题保留可用宽度，控制项在下一行展开，避免手机上相互挤压。
 	return (
@@ -71,6 +74,7 @@ export function WebHeader(props: {
 				</strong>
 			</div>
 			<div className="chat-header-actions flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5">
+				<WebContextChecks sessionId={sessionId} status={status} />
 				<ModelPicker model={model} models={models} onChange={onModelChange} />
 				<Select value={thinkingLevel ?? "off"} onValueChange={onThinkingChange}>
 					<SelectTrigger

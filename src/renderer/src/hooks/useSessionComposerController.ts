@@ -84,8 +84,12 @@ import { useSessionSend, type EnqueuePromptSnapshot } from "./useSessionSend";
 /**
  * compact 错误友好文案：requireSessionCommand 的 message 是 i18n 通用失败，
  * pi 原错在 debugDetails。优先用 debugDetails 匹配 nothing-to-do / too-small。
+ * 返回 null 表示「无需提示」：压缩被取消（自动压缩撞车 / 新消息打断挂起的
+ * 请求）时 pi 已经或即将自动完成压缩，toast 只会让用户困惑——尤其取消响应
+ * 可能延迟到用户正常对话后返回（compact RPC 最长挂起 120s），表现为
+ * 「没点压缩却弹压缩提示」（2026-08 用户反馈）。
  */
-function friendlyCompactError(error: unknown): string {
+function friendlyCompactError(error: unknown): string | null {
   const debugDetails =
     error && typeof error === "object" && "debugDetails" in error
       ? String((error as { debugDetails?: unknown }).debugDetails ?? "").trim()
@@ -99,6 +103,9 @@ function friendlyCompactError(error: unknown): string {
   const lower = detail.toLowerCase();
   if (/nothing to compact|already compacted/i.test(lower)) return t("app.compactNothingToDo");
   if (/session too small|too small/i.test(lower)) return t("app.compactSessionTooSmall");
+  // 压缩被取消：静默。自动压缩在进行/刚结束，或挂起请求被新消息打断——
+  // 压缩要么由 pi 自动完成，要么本就不需要，无需打扰用户。
+  if (/compaction cancelled|cancelled/i.test(lower)) return null;
   return detail
     ? t("app.compactFailedWithReason", { error: detail })
     : t("app.compactFailed");
@@ -580,12 +587,14 @@ export function useSessionComposerController(
     prepareMessage: resolveSessionReferences,
     onDraftMutation: markDraftMutation,
     compact: async (target, prompt) => {
-      // /compact 与 chip 共用同一友好错误映射（nothing-to-do / too-small）
+      // /compact 与 chip 共用同一友好错误映射（nothing-to-do / too-small / 静默取消）
       try {
         requireSessionCommand(await desktopApi.sessions.compactRuntime(target, prompt));
       } catch (error) {
-        // compact 失败属会话异常，常驻提示直到用户手动关闭
-        showNotice(friendlyCompactError(error), Number.POSITIVE_INFINITY);
+        // 压缩失败/被拒是一次性操作提示，限时展示即可；
+        // cancelled（自动压缩撞车等）返回 null，静默不打扰（2026-08 用户反馈）。
+        const message = friendlyCompactError(error);
+        if (message) showNotice(message, 6000);
       }
     },
     resetComposerUi: resetEphemeralUi,
@@ -1065,8 +1074,10 @@ export function useSessionComposerController(
     try {
       requireSessionCommand(await desktopApi.sessions.compactRuntime(target));
     } catch (error) {
-      // compact 失败属会话异常，常驻提示直到用户手动关闭
-      showNotice(friendlyCompactError(error), Number.POSITIVE_INFINITY);
+      // 压缩失败/被拒是一次性操作提示，限时展示（同 /compact 路径语义）；
+      // cancelled 返回 null 静默
+      const message = friendlyCompactError(error);
+      if (message) showNotice(message, 6000);
     }
   }, [runtime?.agentId, runtime?.runtimeGeneration, sessionId, setDraft, promoteAndSend]);
 

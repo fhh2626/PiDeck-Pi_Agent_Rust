@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import type {
+	ContextControllerState,
 	AgentRuntimeState,
 	AppSettings,
 	AvailableModel,
@@ -25,8 +26,10 @@ import type {
 	SessionRuntimeTarget,
 	SessionSummary,
 	SessionTargetedValue,
+	SessionUiResponseInput,
 	UpdateSessionRecordInput,
 } from "../../shared/types";
+import type { PendingUiRequestSnapshot } from "../sessions/SessionRuntimeCoordinator";
 import { serializeWebClientDictionaries, webEnUS } from "./WebI18n";
 import {
 	WebEventStreamRouter,
@@ -74,6 +77,7 @@ type WebServiceDependencies = {
 		pageSize?: number,
 	) => Promise<SessionMessagePage>;
 	sendSessionPrompt: (input: SendSessionPromptInput) => Promise<SendSessionPromptResult>;
+	getContextControllerState?: (sessionId: string) => Promise<ContextControllerState>;
 	listSessionRuntimes: () => SessionRuntimeInfo[];
 	listSessionRuntimeModels: (target: SessionRuntimeTarget) => Promise<
 		SessionCommandResult<SessionTargetedValue<AvailableModel[]>>
@@ -120,7 +124,28 @@ type WebServiceDependencies = {
 		targetSessionId?: string;
 		[key: string]: unknown;
 	}>>;
+	listPendingUiRequests: () => PendingUiRequestSnapshot[];
+	respondToUi: (input: SessionUiResponseInput) => Promise<void>;
 };
+
+const CONTEXT_CONTROLLER_COMMANDS = new Set([
+	"/context-tools on",
+	"/context-tools off",
+	"/context-files on",
+	"/context-files off",
+	"/context-commands on",
+	"/context-commands off",
+]);
+
+function isAllowedContextControllerCommand(command: string): boolean {
+	if (CONTEXT_CONTROLLER_COMMANDS.has(command)) return true;
+	const match = command.match(/^\/context-keep\s+(\d+)$/);
+	if (match) {
+		const count = Number(match[1]);
+		return Number.isFinite(count) && count >= 0 && count <= 99;
+	}
+	return false;
+}
 
 function serializePublicWebPayload(body: unknown): string {
 	return JSON.stringify(body, function (key, value) {
@@ -265,6 +290,35 @@ export class WebServiceManager {
 				this.sendJson(response, await this.getState());
 				return;
 			}
+			if (url.pathname === "/api/ui-response" && request.method === "POST") {
+				const body = await this.readJson<Partial<SessionUiResponseInput>>(request);
+				const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+				const requestId = typeof body.requestId === "string" ? body.requestId.trim() : "";
+				const agentId = typeof body.agentId === "string" ? body.agentId.trim() : "";
+				const runtimeGeneration = typeof body.runtimeGeneration === "number" ? body.runtimeGeneration : NaN;
+				if (!sessionId || !requestId || !agentId || !Number.isFinite(runtimeGeneration)) {
+					this.sendError(response, 400, "webError.requestIdRequired", "ui response target is required");
+					return;
+				}
+				try {
+					await this.deps.respondToUi({
+						sessionId,
+						requestId,
+						agentId,
+						runtimeGeneration,
+						response: body.response ?? {},
+					});
+					this.sendJson(response, { ok: true });
+				} catch (error) {
+					this.sendError(
+						response,
+						409,
+						"webError.runtimeTargetRequired",
+						error instanceof Error ? error.message : "ui response rejected",
+					);
+				}
+				return;
+			}
 			if (url.pathname === "/api/models" && request.method === "GET") {
 				this.sendJson(response, { models: await this.deps.listModels() });
 				return;
@@ -390,6 +444,41 @@ export class WebServiceManager {
 				this.sendJson(response, { messages });
 				return;
 			}
+			const contextStateMatch = url.pathname.match(
+				/^\/api\/sessions\/([^/]+)\/context-controller-state$/,
+			);
+			if (contextStateMatch && request.method === "GET") {
+				const sessionId = decodeURIComponent(contextStateMatch[1]);
+				if (!this.deps.getContextControllerState) {
+					this.sendError(response, 500, "webError.internal", "context-controller state is unavailable");
+					return;
+				}
+				const state = await this.deps.getContextControllerState(sessionId);
+				this.sendJson(response, state);
+				return;
+			}
+			const contextCommandMatch = url.pathname.match(
+				/^\/api\/sessions\/([^/]+)\/context-controller$/,
+			);
+			if (contextCommandMatch && request.method === "POST") {
+				const sessionId = decodeURIComponent(contextCommandMatch[1]);
+				const body = await this.readJson<{ command?: string }>(request);
+				const command = body.command?.trim() ?? "";
+				if (!isAllowedContextControllerCommand(command)) {
+					this.sendError(response, 400, "webError.invalidContextCommand", "invalid context-controller command");
+					return;
+				}
+				const requestId = `ctx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+				const result = await this.deps.sendSessionPrompt({
+					sessionId,
+					requestId,
+					message: "",
+					agentMessage: command,
+					silent: true,
+				});
+				this.sendJson(response, { result });
+				return;
+			}
 			const sessionPromptMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/prompt$/);
 			if (sessionPromptMatch && request.method === "POST") {
 				const sessionId = decodeURIComponent(sessionPromptMatch[1]);
@@ -428,10 +517,9 @@ export class WebServiceManager {
 			if (url.pathname === "/api/chat" && request.method === "POST") {
 				const body = await this.readJson<{
 					id?: string;
-					messageId?: string;
 					messages?: Array<{ role?: string; content?: unknown; parts?: Array<{ type?: string; text?: string }> }>;
 				}>(request);
-				const sessionId = typeof body.id === "string" ? body.id.trim() : "";
+				const sessionId = body.id?.trim();
 				if (!sessionId) {
 					this.sendError(response, 400, "webError.requestIdRequired", "session id is required");
 					return;
@@ -453,23 +541,15 @@ export class WebServiceManager {
 
 				// 先开流（事件可能在 prompt 预检返回前就到达），再发 prompt。
 				this.handleStream(sessionId, request, response);
-				const messageId = typeof body.messageId === "string" ? body.messageId.trim() : "";
 				const result = await this.deps.sendSessionPrompt({
 					sessionId,
-					requestId: messageId || crypto.randomUUID(),
+					requestId: String(body.id ?? crypto.randomUUID()),
 					message,
 				}).catch((error: unknown) => ({
 					accepted: false as const,
-					delivery: "unknown" as const,
 					error: error instanceof Error ? error.message : String(error),
 				}));
 				if (!result.accepted) {
-					if (result.delivery === "unknown") {
-						// RPC 写入后无法确认响应时，pi 可能已经接收并继续运行。
-						// 不把这种不确定性伪装成 Web 终态错误，继续等待事件并由 /api/state
-						// 的权威消息快照补偿，避免“PC 正常、Web 报错”。
-						return;
-					}
 					// 预检拒绝：向已建立的流写入 error + finish + [DONE]，
 					// 前端 useChat 会进入 error 状态并可重试。
 					// 无法直接访问 router 的 entry，走响应流写协议帧。
@@ -590,6 +670,7 @@ export class WebServiceManager {
 			sessions,
 			runtimes,
 			messagesBySession,
+			pendingUiRequests: this.deps.listPendingUiRequests(),
 		};
 	}
 
@@ -1042,7 +1123,7 @@ export class WebServiceManager {
 					return;
 				}
 				// 已接受：立刻打开 SSE 订阅该会话的流式事件；
-				// 流结束后（agent_settled → [DONE]）再 refresh() 同步权威消息列表。
+				// 流结束后（agent_end → [DONE]）再 refresh() 同步权威消息列表。
 				if (activeSessionId === targetSessionId) {
 					void startStream(targetSessionId);
 				} else {
@@ -1300,7 +1381,7 @@ export class WebServiceManager {
 
 	/**
 	 * SSE 流式响应：把 pi agent 事件以 AI SDK UIMessageStream 协议推送给指定 session 的订阅者。
-	 * 连接保持到 agent_settled（或客户端断开）；断开时由 response close 事件清理路由注册。
+	 * 连接保持到 agent_end（或客户端断开）；断开时由 response close 事件清理路由注册。
 	 */
 	private handleStream(
 		sessionId: string,

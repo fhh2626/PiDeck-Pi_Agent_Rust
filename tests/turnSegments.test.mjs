@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 import vm from "node:vm";
-import { buildTurnDisplay, hasFoldableContent } from "../src/renderer/src/components/session/timeline/buildTurnDisplay.ts";
+import { buildTurnDisplay, hasFoldableContent, resolveAskLeadInPin } from "../src/renderer/src/components/session/timeline/buildTurnDisplay.ts";
 import { buildProcessSummary } from "../src/renderer/src/components/session/timeline/segmentSummary.ts";
 
 /**
@@ -18,6 +18,23 @@ import { buildProcessSummary } from "../src/renderer/src/components/session/time
  */
 
 let seq = 0;
+function askQuestionToolGroup() {
+	seq += 1;
+	const message = {
+		id: `t-${seq}`,
+		agentId: "agent",
+		role: "tool",
+		text: "✓ ask_question",
+		timestamp: seq,
+		meta: {
+			toolName: "ask_question",
+			status: "done",
+			_askCard: { question: "选一个", answered: true, answer: "A" },
+		},
+	};
+	return { kind: "tool-group", id: `tg-${message.id}`, messages: [message] };
+}
+
 function assistantMessage(text, thinking, stopReason) {
 	seq += 1;
 	return {
@@ -290,6 +307,22 @@ test("groupToolMessages 不合并连续 assistant 消息：多段回答各自独
 	assert.equal(run.items[1].message.thinking, "T2");
 });
 
+test("groupToolMessages keeps a compaction card after the preceding assistant run", () => {
+	const { groupToolMessages } = loadAppUtils();
+	const messages = [
+		{ id: "u1", agentId: "a", role: "user", text: "问题 1", timestamp: 1 },
+		{ id: "a1", agentId: "a", role: "assistant", text: "回答 1", timestamp: 2 },
+		{ id: "summary", agentId: "a", role: "system", text: "摘要", timestamp: 3, meta: { type: "compaction" } },
+		{ id: "u2", agentId: "a", role: "user", text: "问题 2", timestamp: 4 },
+		{ id: "a2", agentId: "a", role: "assistant", text: "回答 2", timestamp: 5 },
+	];
+	const rendered = groupToolMessages(messages);
+	const outline = rendered.map((item) => item.kind === "agent-run"
+		? item.items.filter((child) => child.kind === "message").map((child) => child.message.text).join("/")
+		: item.message?.text ?? item.kind);
+	assert.equal(JSON.stringify(outline), JSON.stringify(["问题 1", "回答 1", "摘要", "问题 2", "回答 2"]));
+});
+
 /* ── stopReason 协议信号判定（2026-08 升级）──
  * pi RPC message_end 携带 provider 归一化 stopReason：
  * stop=最终回复 / toolUse=中间回复（工具调用回合）/ pending=message_start 占位。
@@ -423,4 +456,165 @@ test("全空 run（连续 error 空消息）：无可折叠内容，不渲染汇
 	const items = buildTurnDisplay(run, { showThinking: true });
 	assert.equal(hasFoldableContent(items), false);
 	assert.equal(buildProcessSummary(items).interimCount, 0);
+});
+
+/* ── 提问前导语常驻展示（ask_question / pending UI 场景）──
+ * 当 LLM 向用户提问时，提问前输出的引导说明是给用户看的提示内容，
+ * 必须常驻显示在折叠栏外，不能被收纳进执行过程折叠栏。
+ * 覆盖：
+ * 1) 提问当下（hasPendingAsk=true，后面尚未生成工具组）；
+ * 2) 提问当下且前面有普通工具；
+ * 3) 历史回放（后面紧随 ask_question / _askCard 工具组）；
+ * 4) 普通后台工具绝不误提升。
+ */
+
+test("提问当下（hasPendingAsk=true）：提问前说明文字提升为 final-answer 常驻展示", () => {
+	const run = runOf([
+		{ kind: "message", message: assistantMessage("请确认这两点", undefined, "toolUse") },
+	]);
+	const items = buildTurnDisplay(run, { showThinking: true, hasPendingAsk: true });
+	assert.equal(items[0].kind, "final-answer");
+	assert.deepEqual(outline(items), ["final:请确认这两点"]);
+	assert.equal(hasFoldableContent(items), false);
+	assert.equal(buildProcessSummary(items).interimCount, 0);
+
+	// 默认没有 pending ask 时，普通 toolUse 仍保持 interim-answer
+	const hidden = buildTurnDisplay(run, { showThinking: true });
+	assert.equal(hidden[0].kind, "interim-answer");
+});
+
+test("提问当下且前面已有后台工具：普通工具进折叠栏，提问说明常驻在折叠栏外", () => {
+	const run = runOf([
+		toolGroup(), // read
+		{ kind: "message", message: assistantMessage("分析完了，请确认：", undefined, "toolUse") },
+	]);
+	const items = buildTurnDisplay(run, { showThinking: true, hasPendingAsk: true });
+	assert.deepEqual(outline(items), ["tool", "final:分析完了，请确认："]);
+	assert.equal(items[0].kind, "process-entry");
+	assert.equal(items[1].kind, "final-answer");
+	assert.equal(hasFoldableContent(items), true); // 仍有 read 工具可折叠
+	const summary = buildProcessSummary(items);
+	assert.equal(summary.toolCount, 1);
+	assert.equal(summary.interimCount, 0);
+});
+
+test("普通后台工具调用前文字：绝不因 pending ask 误提升非尾部普通工具说明", () => {
+	const run = runOf([
+		{ kind: "message", message: assistantMessage("我先读一下文件", undefined, "toolUse") },
+		toolGroup(),
+	]);
+	// 无 pending ask 正常折叠
+	const itemsNormal = buildTurnDisplay(run, { showThinking: true });
+	assert.deepEqual(outline(itemsNormal), ["interim:我先读一下文件", "tool"]);
+	assert.equal(itemsNormal[0].kind, "interim-answer");
+
+	// 即使带 hasPendingAsk，因后随普通后台工具（非提问工具），说明仍归 interim
+	const itemsWithAsk = buildTurnDisplay(run, { showThinking: true, hasPendingAsk: true });
+	assert.deepEqual(outline(itemsWithAsk), ["interim:我先读一下文件", "tool"]);
+	assert.equal(itemsWithAsk[0].kind, "interim-answer");
+});
+
+test("历史回放（后随 ask_question 工具组）：提问说明提升为 final-answer", () => {
+	const run = runOf([
+		{ kind: "message", message: assistantMessage("请选择配置", undefined, "toolUse") },
+		askQuestionToolGroup(),
+	]);
+	const items = buildTurnDisplay(run, { showThinking: true });
+	assert.deepEqual(outline(items), ["final:请选择配置", "tool"]);
+	assert.equal(items[0].kind, "final-answer");
+	assert.equal(hasFoldableContent(items), true); // 仍有 ask_question 卡片
+	assert.equal(buildProcessSummary(items).interimCount, 0);
+});
+
+test("历史回放且前面有普通工具：普通工具与提问工具保留，提问说明常驻", () => {
+	const run = runOf([
+		toolGroup(),
+		{ kind: "message", message: assistantMessage("读完了，请确认：", undefined, "toolUse") },
+		askQuestionToolGroup(),
+	]);
+	const items = buildTurnDisplay(run, { showThinking: true });
+	assert.deepEqual(outline(items), ["tool", "final:读完了，请确认：", "tool"]);
+	assert.equal(items[1].kind, "final-answer");
+	assert.equal(buildProcessSummary(items).interimCount, 0);
+});
+
+test("会话级 pending ask 不得提升上一轮普通 toolUse 收尾说明", () => {
+	// 真实现场：上一轮以 toolUse 文本收尾且尚未刷出 tool-group；
+	// 下一轮弹出提问后，会话级 hasPendingAsk=true。
+	// 旧轮不能因此把「我先读一下文件」提出折叠栏。
+	const previousRun = runOf([
+		{ kind: "message", message: assistantMessage("我先读一下文件", undefined, "toolUse") },
+	]);
+	const previousItems = buildTurnDisplay(previousRun, {
+		showThinking: true,
+		hasPendingAsk: false,
+	});
+	assert.equal(previousItems[0].kind, "interim-answer");
+
+	const currentRun = runOf([
+		{ kind: "message", message: assistantMessage("请确认", undefined, "toolUse") },
+	]);
+	const currentItems = buildTurnDisplay(currentRun, {
+		showThinking: true,
+		hasPendingAsk: true,
+	});
+	assert.equal(currentItems[0].kind, "final-answer");
+});
+
+test("提问卡刚提交、ask_question 尚未入列时继续钉住提问说明", () => {
+	const run = runOf([
+		{ kind: "message", message: assistantMessage("请确认这两点", undefined, "toolUse") },
+	]);
+
+	// 提问卡还在
+	let pin = resolveAskLeadInPin({
+		isLastAgentRun: true,
+		livePendingAsk: true,
+		wasPinned: false,
+		hasAskQuestionTool: false,
+	});
+	assert.equal(pin.pin, true);
+	assert.equal(pin.nextPinned, true);
+	assert.equal(
+		buildTurnDisplay(run, { showThinking: true, hasPendingAsk: pin.pin })[0].kind,
+		"final-answer",
+	);
+
+	// 用户已提交：live pending 消失，但工具结果还没进 run，必须继续钉住，避免回落进折叠栏。
+	pin = resolveAskLeadInPin({
+		isLastAgentRun: true,
+		livePendingAsk: false,
+		wasPinned: pin.nextPinned,
+		hasAskQuestionTool: false,
+	});
+	assert.equal(pin.pin, true);
+	assert.equal(
+		buildTurnDisplay(run, { showThinking: true, hasPendingAsk: pin.pin })[0].kind,
+		"final-answer",
+	);
+
+	// 工具结果到达后改走历史规则，sticky 可以放下。
+	const historyRun = runOf([
+		{ kind: "message", message: assistantMessage("请确认这两点", undefined, "toolUse") },
+		askQuestionToolGroup(),
+	]);
+	pin = resolveAskLeadInPin({
+		isLastAgentRun: true,
+		livePendingAsk: false,
+		wasPinned: pin.nextPinned,
+		hasAskQuestionTool: true,
+	});
+	assert.equal(pin.pin, false);
+	assert.equal(pin.nextPinned, false);
+	assert.equal(buildTurnDisplay(historyRun, { showThinking: true })[0].kind, "final-answer");
+
+	// 不再是最后一个 agent-run 时必须清掉 sticky，避免带进下一轮。
+	pin = resolveAskLeadInPin({
+		isLastAgentRun: false,
+		livePendingAsk: false,
+		wasPinned: true,
+		hasAskQuestionTool: false,
+	});
+	assert.equal(pin.pin, false);
+	assert.equal(pin.nextPinned, false);
 });

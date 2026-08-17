@@ -54,3 +54,15 @@ test("pending request is removed after timeout (no double resolve)", async () =>
     : String(error);
   assert.match(message, /timed out/);
 });
+
+test("closed client ignores late stdout events and rejects new requests", async () => {
+  const { client, stdout } = createClient(10);
+  const events = [];
+  client.on("event", (event) => events.push(event));
+
+  client.close();
+  stdout.write('{"type":"agent_start"}\n');
+
+  await assert.rejects(client.request({ type: "get_state" }, 10), /RPC client is closed/);
+  assert.deepEqual(events, []);
+});

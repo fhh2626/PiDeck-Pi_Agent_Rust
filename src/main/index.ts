@@ -1,3 +1,4 @@
+import { isDevToolsShortcut, toggleMainWindowDevTools } from "./devTools";
 import {
 	app,
 	BrowserWindow,
@@ -190,6 +191,10 @@ import {
 	type SessionRuntimeBinding,
 } from "./sessions/SessionRuntimeCoordinator";
 import { SessionCommandIpcError } from "./sessions/SessionCommandIpcError";
+import {
+	DEFAULT_CONTEXT_CONTROLLER_STATE,
+	parseContextControllerStateFromJsonl,
+} from "./sessions/contextControllerStateReader";
 import { CodexSessionImporter } from "./sessions/CodexSessionImporter";
 import { ClaudeSessionImporter } from "./sessions/ClaudeSessionImporter";
 import { OpenCodeSessionImporter } from "./sessions/OpenCodeSessionImporter";
@@ -205,7 +210,7 @@ import { XuePromptManager } from "./prompts/XuePromptManager";
 import { SkillManager } from "./skills/SkillManager";
 import { ExtensionManager } from "./extensions/ExtensionManager";
 import { ProjectResourceManager } from "./projects/ProjectResourceManager";
-import { registerProjectsIpc } from "./ipc/projectsIpc";
+import { listVisibleProjects, registerProjectsIpc } from "./ipc/projectsIpc";
 import { registerUsageStatsIpc } from "./ipc/usageStatsIpc";
 import { UsageStatsService } from "./usageStats/UsageStatsService";
 import { readLastWindowBounds, saveLastWindowBounds } from "./windowState";
@@ -410,6 +415,9 @@ async function createAnonymousSession(
 	// Agent 启动可能包含 spawn/get_state/历史准备；匿名会话先返回可选中的 Session，
 	// 再后台绑定 runtime。这样欢迎页点击后能立即进入输入框，启动失败仍通过 detach/日志收敛。
 	void activateAnonymousRuntime(session, project, input).catch(() => undefined);
+	if (mainWindow && !mainWindow.isDestroyed()) {
+		mainWindow.webContents.send(ipcChannels.sessionsCatalogRefreshed, { projectId: session.projectId });
+	}
 	return { session };
 }
 
@@ -1013,6 +1021,31 @@ function focusMainWindow() {
  * 切换到对应会话；agentId 为兼容旧 toast 的兜底格式，运行时经 coordinator 解析成会话。
  * 挂到顶层 focusExistingWindow，供版本单实例锁的 .focus 信号调用。
  */
+
+/**
+ * 页面加载期间（冷启动/窗口重建）点击通知的跳转目标：直接 send 会在 preload/React
+ * 监听注册前丢失，先存入 pending，由两条路径兜底送达：
+ * 1. did-finish-load 后 flush 一次（窗口重建/旧 renderer 兼容的尽力而为）；
+ * 2. renderer 挂载后经 app:get-focus-target-pending 主动拉取（取走即清空，保证送达）。
+ */
+let pendingFocusTarget: { sessionId: string } | null = null;
+
+/** 窗口就绪（存在且未在加载）直接推送；否则入 pending 队列。 */
+function queueFocusTarget(sessionId: string) {
+	if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
+		mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, { sessionId });
+		return;
+	}
+	pendingFocusTarget = { sessionId };
+}
+
+/** did-finish-load 兜底：仍在加载期排队的目标补发一次（不清空，renderer 拉取幂等）。 */
+function flushPendingFocusTargetOnLoad() {
+	if (pendingFocusTarget && mainWindow && !mainWindow.isDestroyed()) {
+		mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, pendingFocusTarget);
+	}
+}
+
 function handleVersionFocusRequest(payload?: FocusPayload) {
 	const target = extractFocusTargetFromArgv(payload?.argv);
 	const activateSession = () => {
@@ -1021,9 +1054,7 @@ function handleVersionFocusRequest(payload?: FocusPayload) {
 		if (!sessionId && target.agentId && sessionRuntimeCoordinator) {
 			sessionId = sessionRuntimeCoordinator.getSessionId(target.agentId);
 		}
-		if (sessionId) {
-			mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, { sessionId });
-		}
+		if (sessionId) queueFocusTarget(sessionId);
 	};
 	if (mainWindow && !mainWindow.isDestroyed()) {
 		focusMainWindow();
@@ -1244,6 +1275,12 @@ function configureBrowserPanelWebviewHost(window: BrowserWindow): void {
 			}
 			return { action: "deny" };
 		});
+
+		guest.on("before-input-event", (event, input) => {
+			if (!isDevToolsShortcut(input)) return;
+			event.preventDefault();
+			toggleMainWindowDevTools(window);
+		});
 	});
 }
 
@@ -1348,6 +1385,7 @@ async function createWindow() {
 		});
 		// 恢复用户设置的窗口缩放；在 did-finish-load 后应用，避免早期设置被覆盖。
 		mainWindow?.webContents.setZoomFactor(settingsStore.get().zoomFactor);
+		flushPendingFocusTargetOnLoad();
 	});
 	mainWindow.webContents.on(
 		"did-fail-load",
@@ -1457,52 +1495,13 @@ async function createWindow() {
 		}
 	});
 
-	// 监听浏览器标准快捷键打开开发者工具
+	// 监听浏览器标准快捷键打开开发者工具（F12 / Ctrl+Shift+I / Ctrl+Shift+J，
+	// macOS 变体与开关逻辑集中在 devTools.ts，主窗口/webview/设置 IPC 共用）
 	mainWindow.webContents.on("before-input-event", (event, input) => {
 		if (!mainWindow || mainWindow.isDestroyed()) return;
-
-		// F12
-		if (input.key === "F12" && input.type === "keyDown") {
+		if (isDevToolsShortcut(input)) {
 			event.preventDefault();
-			if (mainWindow.webContents.isDevToolsOpened()) {
-				mainWindow.webContents.closeDevTools();
-			} else {
-				mainWindow.webContents.openDevTools({ mode: "detach" });
-			}
-		}
-
-		// Ctrl+Shift+I (Windows/Linux) 或 Cmd+Option+I (macOS)
-		const isMac = process.platform === "darwin";
-		const ctrlOrCmd = isMac ? input.meta : input.control;
-		const shiftOrOption = input.shift || (isMac && input.alt);
-
-		if (
-			ctrlOrCmd &&
-			shiftOrOption &&
-			input.key.toLowerCase() === "i" &&
-			input.type === "keyDown"
-		) {
-			event.preventDefault();
-			if (mainWindow.webContents.isDevToolsOpened()) {
-				mainWindow.webContents.closeDevTools();
-			} else {
-				mainWindow.webContents.openDevTools({ mode: "detach" });
-			}
-		}
-
-		// Ctrl+Shift+J (Windows/Linux) 或 Cmd+Option+J (macOS) - 直接打开 Console
-		if (
-			ctrlOrCmd &&
-			shiftOrOption &&
-			input.key.toLowerCase() === "j" &&
-			input.type === "keyDown"
-		) {
-			event.preventDefault();
-			if (mainWindow.webContents.isDevToolsOpened()) {
-				mainWindow.webContents.closeDevTools();
-			} else {
-				mainWindow.webContents.openDevTools({ mode: "detach", activate: true });
-			}
+			toggleMainWindowDevTools(mainWindow);
 		}
 	});
 
@@ -1940,6 +1939,12 @@ app.whenReady().then(async () => {
 		deleteProject: async (projectId) => {
 			if (!projectStore.get(projectId) || projectStore.get(projectId)?.kind === "chat") return false;
 			await projectStore.remove(projectId);
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send(
+					ipcChannels.projectsChanged,
+					listVisibleProjects(projectStore, settingsStore),
+				);
+			}
 			return true;
 		},
 		listModels: () => fetchModelList(piLocator, settingsStore),
@@ -1981,13 +1986,17 @@ app.whenReady().then(async () => {
 		createSessionDraft: async (input) => {
 			const project = projectStore.get(input.projectId);
 			if (!project) throw new Error(mainCopy("project.notFound"));
-			return sessionCatalog.createDraft({
+			const record = await sessionCatalog.createDraft({
 				projectId: input.projectId,
 				title: input.title?.trim() || mainCopy("session.newTitle"),
 				environment: settingsStore.get().wslEnabled ? "wsl" : "native",
 				model: input.model,
 				thinkingLevel: input.thinkingLevel,
 			});
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send(ipcChannels.sessionsCatalogRefreshed, { projectId: input.projectId });
+			}
+			return record;
 		},
 		createAnonymousSession,
 		updateSessionRecord: async (sessionId, patch) => {
@@ -2003,10 +2012,14 @@ app.whenReady().then(async () => {
 					await sessionScanner.rename(entry.filePath, title);
 				}
 			}
-			return sessionCatalog.update(sessionId, {
+			const record = await sessionCatalog.update(sessionId, {
 				...patch,
 				title: title || undefined,
 			});
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send(ipcChannels.sessionsCatalogRefreshed, { projectId: record.projectId });
+			}
+			return record;
 		},
 		deleteSessionRecord: async (sessionId) => {
 			const entry = sessionCatalog.get(sessionId);
@@ -2017,8 +2030,12 @@ app.whenReady().then(async () => {
 			) {
 				throw new Error(mainCopy("session.stopBeforeDelete"));
 			}
+			const projectId = entry.projectId;
 			if (entry.filePath) await sessionScanner.delete(entry.filePath);
 			await sessionCatalog.remove(sessionId);
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send(ipcChannels.sessionsCatalogRefreshed, { projectId });
+			}
 			return true;
 		},
 		copySessionRecord: (sessionId) => copyCatalogSession(sessionId),
@@ -2044,7 +2061,22 @@ app.whenReady().then(async () => {
 			}
 			return result;
 		},
+		getContextControllerState: async (sessionId) => {
+			if (typeof sessionId !== "string" || !sessionId.trim()) {
+				return { ...DEFAULT_CONTEXT_CONTROLLER_STATE };
+			}
+			const entry = sessionCatalog.get(sessionId);
+			if (!entry?.filePath) return { ...DEFAULT_CONTEXT_CONTROLLER_STATE };
+			try {
+				const content = await sessionScanner.readSessionRawText(entry.filePath);
+				return parseContextControllerStateFromJsonl(content);
+			} catch {
+				return { ...DEFAULT_CONTEXT_CONTROLLER_STATE };
+			}
+		},
 		listSessionRuntimes: () => sessionRuntimeCoordinator.listRuntimes(),
+		listPendingUiRequests: () => sessionRuntimeCoordinator.listPendingUiRequests(),
+		respondToUi: (input) => sessionRuntimeCoordinator.respondToUi(input),
 		listSessionRuntimeModels: (target) => sessionRuntimeCoordinator.listRuntimeModels(target),
 		stopSessionRuntime: stopSessionRuntime,
 		abortSessionRuntime: (target) => sessionRuntimeCoordinator.abortRuntime(target),
@@ -2211,11 +2243,15 @@ app.whenReady().then(async () => {
 	// argv 携带 pideck:// URL，窗口就绪后直接向 renderer 发送跳转目标。
 	// catalog 可能尚未加载完，renderer 侧监听会小间隔重试直到能解析到会话记录。
 	const coldStartTarget = extractFocusTargetFromArgv(process.argv);
-	if (coldStartTarget?.sessionId && mainWindow && !mainWindow.isDestroyed()) {
-		mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, {
-			sessionId: coldStartTarget.sessionId,
-		});
+	if (coldStartTarget?.sessionId) {
+		queueFocusTarget(coldStartTarget.sessionId);
 	}
+	// renderer 挂载后拉取 pending 跳转目标（一次性，取走即清空）
+	ipcMain.handle(ipcChannels.appGetFocusTargetPending, () => {
+		const target = pendingFocusTarget;
+		pendingFocusTarget = null;
+		return target;
+	});
 	void detectExternalEditorsOnFirstLaunch().catch((error) => {
 		void appLogger.warn("editor", "External editor first launch detection failed", error);
 	});

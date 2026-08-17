@@ -31,11 +31,17 @@ import type { EnqueuePromptSnapshot } from "../../hooks/useSessionSend";
 export type ComposerAreaProps = {
   sessionId: string;
   gitInfo?: GitBranchInfo;
+  /** 输入框上方常驻扩展条（如 todo 条）；放在 widgets 槽位，高度由
+   *  ComposerMeasuredExtras 测量并驱动面板自适应（同一测量链路）。 */
+  widgets?: ReactNode;
   queuePanel?: ReactNode;
   onOpenFile?: (path: string) => void;
   /** 受控高度（px）。传入时由外层面板（react-resizable-panels）持有尺寸，
    *  本地 state 仅作非受控回退（#115 U5 布局换装）。 */
   height?: number;
+  /** 非受控模式的起步高度（px），默认 COMPOSER_DEFAULT_HEIGHT；
+   *  起始页等需要大输入框的场景传更高值，内容增高时仍自适应。 */
+  defaultHeight?: number;
   onHeightChange?: (height: number) => void;
   /** 输入区上方可变内容（附件栏 / 扩展 widget / 队列 / 投递通知）当前占用的额外高度（px）。
    *  内容出现时上报给外层，由外层命令式增高 composer 面板，避免固定高度挤压输入区。 */
@@ -187,15 +193,16 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
   }, [composer.attachments.length, composer.draft, props.sessionId]);
 
   // 受控/非受控双模：SessionView 以面板分隔条控制高度时传 height；
-  // 其余场景（测试、嵌入）回退本地默认值，与全局默认高度保持一致。
-  const [localHeight, setLocalHeight] = useState(COMPOSER_DEFAULT_HEIGHT);
+  // 其余场景（测试、嵌入）回退本地默认值，与全局默认高度保持一致；
+  // defaultHeight 允许宿主（如居中起始页）指定更高的起步高度，仍随内容自适应增高。
+  const [localHeight, setLocalHeight] = useState(props.defaultHeight ?? COMPOSER_DEFAULT_HEIGHT);
   const height = props.height ?? localHeight;
   const handleContentHeightChange = (extra: number) => {
     if (props.height != null) {
       props.onContentHeightChange?.(extra);
     } else if (extra > 0) {
       setLocalHeight((current) =>
-        Math.max(current, extra + COMPOSER_DEFAULT_HEIGHT),
+        Math.max(current, extra + (props.defaultHeight ?? COMPOSER_DEFAULT_HEIGHT)),
       );
     }
   };
@@ -213,11 +220,10 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
             }}
             data-session-id={props.sessionId}
           >
-            {/* 扩展 widget（Todo/Plan）已迁至 chat-header 左侧 SessionWidgetChips，
-                composer 内不再有 widget，widgets 槽位传 null；
+            {/* 扩展 widget（Todo/Plan）默认走 chat-header chips；composer widgets 槽位可空。
                 ComposerMeasuredExtras 负责测量附件/队列/通知高度并驱动 composer 自动增高。 */}
             <ComposerMeasuredExtras
-              widgets={null}
+              widgets={props.widgets ?? null}
               queuePanel={props.queuePanel}
               deliveryNotice={(
                 <SessionDeliveryNotice
@@ -240,7 +246,7 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
             />
             <div
               // overflow-visible：保留命令面板/建议浮层；面板 minSize 已保证底栏不被裁切
-              className={["composer-box relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-visible rounded-xl border border-border bg-card text-card-foreground shadow-sm transition-[border-color,box-shadow,background-color]",
+              className={["composer-box relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-visible rounded-[20px] border border-border bg-card text-card-foreground shadow-[var(--shadow-composer-lifted)] transition-[border-color,box-shadow,background-color]",
                 composer.bangMode === "bang-bang"
                   ? "shell-silent-mode"
                   : composer.bangMode === "bang"
@@ -250,7 +256,7 @@ export const ComposerArea = forwardRef<HTMLElement, ComposerAreaProps>(function 
                       : "",
               ].filter(Boolean).join(" ")}
             >
-              {/* 扩展 widget（Todo/Plan）已迁至 chat-header 左侧 SessionWidgetChips。 */}
+              {/* 扩展 widget（Todo/Plan）由头部 chips 展示。 */}
               <TipTapComposer
                 ref={composer.editor.ref}
                 value={composer.draft}

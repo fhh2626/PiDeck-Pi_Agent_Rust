@@ -119,19 +119,12 @@ export function useSessionWorkspaceChrome(options: {
     currentSessionId,
     activeProjectId,
   };
-
+  // 会话记录消失时清理 Tab / pin / preview / 分屏，并自动切换焦点
   useEffect(() => {
-    try {
-      localStorage.setItem(PINNED_TABS_STORAGE_KEY, JSON.stringify(pinnedSessionTabIds));
-    } catch {
-      // 持久化失败不影响功能
-    }
-  }, [pinnedSessionTabIds]);
-
-  // 会话记录消失时清理 Tab / pin / preview / 分屏
-  useEffect(() => {
+    let nextTabIds: string[] | undefined;
     setSessionTabIds((current) => {
       const next = current.filter((id) => Boolean(sessionRecords[id]));
+      nextTabIds = next;
       return next.length === current.length ? current : next;
     });
     setPinnedSessionTabIds((current) => {
@@ -148,24 +141,47 @@ export function useSessionWorkspaceChrome(options: {
       const ids = splitLayoutSessionIds(layout);
       return ids.every((id) => Boolean(sessionRecords[id])) ? layout : null;
     });
+
+    // 如果当前选中的会话已经被删除，自动切到邻近存活 Tab 或项目空态。
+    const snap = tabsSnapshotRef.current;
+    if (snap.currentSessionId && !sessionRecords[snap.currentSessionId]) {
+      const remaining = (nextTabIds ?? snap.tabs).filter((id) => Boolean(sessionRecords[id]));
+      if (remaining.length > 0) {
+        const deletedIndex = Math.max(0, snap.tabs.indexOf(snap.currentSessionId));
+        const nextId = remaining[Math.min(deletedIndex, remaining.length - 1)];
+        const record = sessionRecords[nextId];
+        if (record) {
+          focusHandlersRef.current.focusSession(record.projectId, nextId);
+        }
+      } else if (snap.activeProjectId) {
+        focusHandlersRef.current.focusProject(snap.activeProjectId);
+      }
+    }
   }, [sessionRecords, setSessionTabIds]);
 
-  // 主进程「跳转到某会话」推送（例如系统通知点击）：解析 record 后交给
-  // App 注入的 focus handler 切换焦点。冷启动点击通知时 catalog 可能尚未加载完，
-  // 小间隔重试（最长约 3 秒）直到能解析到会话记录，避免首帧竞态丢目标。
   useEffect(() => {
     let disposed = false;
-    const unsubscribe = window.piDesktop.app.onFocusSessionTarget(({ sessionId }) => {
+    const focusBySessionId = (sessionId: string) => {
       const tryFocus = (attempt: number) => {
         if (disposed) return;
         const record = store.get(sessionRecordByIdAtomFamily(sessionId));
         if (record) {
-          focusHandlersRef.current.focusSession(record.projectId, sessionId);
+          focusHandlersRef.current.focusSession(record.projectId, record.id);
           return;
         }
-        if (attempt < 6) window.setTimeout(() => tryFocus(attempt + 1), 500);
+        if (attempt < 15) {
+          setTimeout(() => tryFocus(attempt + 1), 200);
+        }
       };
       tryFocus(0);
+    };
+
+    const unsubscribe = window.piDesktop.app.onFocusSessionTarget(({ sessionId }) => {
+      focusBySessionId(sessionId);
+    });
+    void window.piDesktop.app.getPendingFocusTarget?.().then((target) => {
+      if (disposed || !target) return;
+      focusBySessionId(target.sessionId);
     });
     return () => {
       disposed = true;

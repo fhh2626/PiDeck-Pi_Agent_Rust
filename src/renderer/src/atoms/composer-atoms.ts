@@ -159,6 +159,28 @@ export const clearSessionComposerSnapshotAtom = atom(
   },
 );
 
+/**
+ * 把 renderer-only 虚拟会话（引导页空白输入框）的 composer 状态整体搬到真实
+ * 会话：首次发送时才创建 Catalog 会话，发送后需在同一输入框继续——把草稿/附件/
+ * 模式/发送态一起移动可避免切换 sessionId 导致重挂载丢内容。
+ */
+export const promoteSessionComposerStateAtom = atom(
+  null,
+  (get, set, input: { fromSessionId: string; toSessionId: string }) => {
+    if (input.fromSessionId === input.toSessionId) return;
+    const move = <T>(source: Record<string, T>) => {
+      if (!(input.fromSessionId in source)) return source;
+      const next = { ...source, [input.toSessionId]: source[input.fromSessionId] };
+      delete next[input.fromSessionId];
+      return next;
+    };
+    set(sessionDraftByIdAtom, move(get(sessionDraftByIdAtom)));
+    set(sessionAttachmentsByIdAtom, move(get(sessionAttachmentsByIdAtom)));
+    set(sessionComposerModeByIdAtom, move(get(sessionComposerModeByIdAtom)));
+    set(sessionSendStateByIdAtom, move(get(sessionSendStateByIdAtom)));
+  },
+);
+
 export const removeSessionComposerStateAtom = atom(null, (get, set, sessionId: string) => {
   const drafts = { ...get(sessionDraftByIdAtom) };
   delete drafts[sessionId];

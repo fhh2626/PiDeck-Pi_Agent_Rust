@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Brain, Check, ChevronDown, ChevronRight, ChevronUp, MessageCircle, Minimize, X } from "lucide-react";
+import { AlertTriangle, Brain, Check, ChevronDown, ChevronUp, MessageCircle, Minimize, X } from "lucide-react";
 import type { ChatMessage } from "../../../../shared/types";
 import { t, translateI18nDescriptor } from "../../i18n";
 import { formatDuration, formatTime, stripAnsi } from "./TimelineFormat";
@@ -88,11 +88,11 @@ export const CompactionCard = memo(function CompactionCard(props: {
 				<div className="flex px-1 pb-1">
 					<button
 						type="button"
-						className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-micro text-text-tertiary opacity-60 transition-colors duration-150 hover:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
+						className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-micro text-text-tertiary transition-colors duration-150 hover:bg-[color:color-mix(in_srgb,var(--color-bg-hover)_50%,transparent)] hover:text-text-secondary focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
 						onClick={() => setExpanded((v) => !v)}
 						aria-expanded={expanded}
 					>
-						{expanded ? <ChevronUp size={10} aria-hidden="true" /> : <ChevronDown size={10} aria-hidden="true" />}
+						{expanded ? <ChevronUp size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
 						{expanded ? t("app.compactionCollapse") : t("app.compactionExpand")}
 					</button>
 				</div>
@@ -345,9 +345,25 @@ export const ThinkingBlock = memo(
 	return (
 		<TimelineMarker kind="thinking" tone={props.endedAt ? "neutral" : "active"}>
 		<section className="w-full min-w-0 overflow-hidden rounded-md border-0">
-			{/* 标签行：图标+耗时+右侧展开/收起按钮。不显示「思考」文字，只留图标+耗时，
-			    保持轨道安静（思考内容本身已有虚线框区分）。按钮常显：折叠态可随时展开查看全文 */}
-			<div className="flex min-h-6 items-center gap-2 px-1">
+		{/* 思考栏（整行可点，仿 ToolCard trigger 行交互）：Brain 图标 + 耗时 + 旋转 chevron。
+		    不再是行尾小按钮——点击整行展开/收起，触控感：hover 淡背景 + active 轻微按压缩放 +
+		    chevron 旋转过渡。预览内容在下方虚线框内独立一行，不与「思考了」挤在同一行。 */}
+			<button
+				type="button"
+				className="group relative flex min-h-6 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-1 py-0.5 text-left transition-[background-color,transform] duration-150 motion-reduce:transition-none hover:bg-[color:color-mix(in_srgb,var(--color-bg-hover)_50%,transparent)] active:scale-[0.99] focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
+				onClick={() => setExpanded((v) => !v)}
+				aria-expanded={expanded}
+				title={expanded ? t("thinking.collapse") : t("thinking.expand")}
+			>
+				{/* 流式思考中整行扫光（dsh-web reasoning-row-sweep 同款：光带从行左滑到行右，
+				    2.6s 循环）。isStreaming 才挂载：思考结束立即消失，与状态同步；
+				    pointer-events-none 保证不挡整行点击，motion-reduce 尊重系统减弱动效 */}
+				{props.isStreaming && (
+					<span
+						aria-hidden
+						className="pointer-events-none absolute inset-y-0 left-[-300px] w-[300px] animate-thinking-sweep motion-reduce:animate-none bg-[linear-gradient(90deg,transparent,color-mix(in_srgb,var(--color-bg-app)_55%,transparent),transparent)]"
+					/>
+				)}
 				<Brain size={15} className="shrink-0 text-text-secondary" aria-hidden="true" />
 				{(hasEnded || props.isStreaming) && props.startedAt && (
 					<small className="shrink-0 font-mono text-micro tabular-nums text-text-tertiary">
@@ -363,19 +379,17 @@ export const ThinkingBlock = memo(
 						)}
 					</small>
 				)}
-				<button
-					type="button"
-					className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-micro text-text-tertiary opacity-60 transition-colors duration-150 hover:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
-					onClick={() => setExpanded((v) => !v)}
-					aria-expanded={expanded}
-				>
-					{expanded ? <ChevronUp size={10} aria-hidden="true" /> : <ChevronDown size={10} aria-hidden="true" />}
-					{expanded ? t("thinking.collapse") : t("thinking.expand")}
-				</button>
-			</div>
-			{/* 虚线框内容区：折叠态单行静态预览（不跑 streamdown、不建全文 DOM，
-			    长思考折叠时只有一行纯文本，是时间线内存最大单项的根治）；
-			    展开态 markdown 全文，字号随 --font-size-chat 联动 */}
+				{/* 展开态 chevron 旋转 180° 朝上（收起语义），折叠态朝下（展开语义），
+				    旋转过渡本身就是「触控感」的一部分 */}
+				<ChevronDown
+					size={14}
+					aria-hidden="true"
+					className={`shrink-0 text-text-tertiary transition-transform duration-200 motion-reduce:transition-none${expanded ? " rotate-180" : ""}`}
+				/>
+			</button>
+			{/* 虚线框内容区（折叠/展开共用容器，内容切换）：
+			    折叠态单行静态预览（不跑 streamdown、不建全文 DOM，长思考折叠时只有一行纯文本，
+			    是时间线内存最大单项的根治）；展开态 markdown 全文，字号随 --font-size-chat 联动 */}
 			<div className="rounded-md border border-dashed border-border-subtle bg-[color:color-mix(in_srgb,var(--color-bg-muted)_45%,transparent)]">
 				{expanded ? (
 					<div className="markdown-body px-3 pt-2 pb-1 text-text-tertiary">
@@ -387,7 +401,25 @@ export const ThinkingBlock = memo(
 						/>
 					</div>
 				) : (
-					<SingleLinePreview text={props.text} running={props.isStreaming} className="px-3 pt-2 pb-1 text-text-tertiary" />
+					<SingleLinePreview
+						text={props.text}
+						running={props.isStreaming}
+						className="px-3 pt-2 pb-1 font-mono text-caption text-text-tertiary"
+					/>
+				)}
+				{/* 收起入口：长思考展开后滚到底即可收起（不用滚回顶部思考栏）。
+				    左下角纯文本按钮，无外框、不抢视觉 */}
+				{expanded && (
+					<div className="flex px-2 pb-1.5">
+						<button
+							type="button"
+							className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-micro text-text-tertiary transition-colors duration-150 hover:bg-[color:color-mix(in_srgb,var(--color-bg-hover)_45%,transparent)] hover:text-text-secondary focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
+							onClick={() => setExpanded(false)}
+						>
+							<ChevronUp size={12} aria-hidden="true" />
+							{t("thinking.collapse")}
+						</button>
+					</div>
 				)}
 			</div>
 		</section>

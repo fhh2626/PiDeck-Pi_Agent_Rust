@@ -14,10 +14,12 @@ import { isUserFacingSessionStart } from "../../hooks/useSessionTimelineControll
 import { t } from "../../i18n";
 import { displayProjectDirectoryName } from "../../rendererUtils";
 import { Button } from "../ui-shadcn/button";
+import { ContextControllerSwitches } from "./ContextControllerSwitches";
 import { SessionStatus } from "./SurfaceParts";
 
 type HeaderActions = {
   headerRef: RefObject<HTMLDivElement | null>;
+  sessionId?: string;
   compactionCount?: number;
   isAnonymous?: boolean;
   duration?: number;
@@ -41,7 +43,6 @@ type HeaderActions = {
 
 type LegacySessionHeaderProps = HeaderActions & {
   mode?: "legacy";
-  sessionId?: never;
   title: string;
   runtimeState?: AgentRuntimeState;
   isStarting: boolean;
@@ -66,7 +67,7 @@ export type SessionHeaderProps = LegacySessionHeaderProps | ModernSessionHeaderP
  */
 export function SessionHeader(props: SessionHeaderProps) {
   const sessionMode = props.mode === "session";
-  const sessionId = sessionMode ? props.sessionId : "";
+  const sessionId = props.sessionId ?? "";
   const legacyProps = props as LegacySessionHeaderProps;
   const session = useAtomValue(sessionRecordByIdAtomFamily(sessionId));
   const runtime = useAtomValue(sessionRuntimeBySessionIdAtomFamily(sessionId));
@@ -81,7 +82,10 @@ export function SessionHeader(props: SessionHeaderProps) {
     [sessionId],
   );
   const sendState = useAtomValue(sendStateSelector);
-  const runtimeState = sessionMode ? runtime?.state : legacyProps.runtimeState;
+  // 顶栏 ctx/cost chip 必须跟 composer 同一份会话 runtime。
+  // SessionView 仍走 legacy 装配，不能只在 mode=session 时读 atom；
+  // 否则 injector 漏传 activeRuntimeState 时，底栏已有「压缩 42%」，顶栏却空白。
+  const runtimeState = runtime?.state ?? (sessionMode ? undefined : legacyProps.runtimeState);
   // session 模式也只认用户发送；预热 starting 不能给标题栏加 loading（会顶高/半透明）。
   const isStarting = sessionMode
     ? isUserFacingSessionStart(sendState?.status)
@@ -97,7 +101,7 @@ export function SessionHeader(props: SessionHeaderProps) {
   const actions = (
     <div
       ref={props.embedded ? props.headerRef : undefined}
-      className={`chat-header-actions flex min-w-0 items-center justify-end gap-1.5${props.embedded ? " h-7 w-auto shrink-0" : ""}${isStarting ? " loading" : ""}`}
+      className={`chat-header-actions flex min-w-0 max-w-full shrink items-center justify-end gap-1.5 overflow-hidden${props.embedded ? " h-7 w-auto" : ""}${isStarting ? " loading" : ""}`}
     >
       {props.widgetChips}
       {isAnonymous && (
@@ -105,7 +109,10 @@ export function SessionHeader(props: SessionHeaderProps) {
           <HatGlasses size={14} aria-hidden="true" />
         </span>
       )}
-      <SessionStatus state={runtimeState} duration={props.duration} cacheHitHistory={cacheStats[sessionId]?.cacheHitHistory} />
+      {sessionId ? <ContextControllerSwitches sessionId={sessionId} /> : null}
+      <div className="shrink-0">
+        <SessionStatus state={runtimeState} duration={props.duration} cacheHitHistory={cacheStats[sessionId]?.cacheHitHistory} />
+      </div>
     </div>
   );
 
@@ -116,7 +123,7 @@ export function SessionHeader(props: SessionHeaderProps) {
       role="banner"
       /* 普通模式：分屏 pane 的会话身份行（Tab 已外置）。
          底部分隔线去掉：分屏身份标题下再叠一条线过于碎。 */
-      className="chat-header grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 bg-background px-3 py-1"
+      className="chat-header grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,auto)] items-center gap-2 bg-background px-3 py-1"
     >
       <div className="flex min-w-0 items-center gap-1.5">
         {props.onExitSplit ? (

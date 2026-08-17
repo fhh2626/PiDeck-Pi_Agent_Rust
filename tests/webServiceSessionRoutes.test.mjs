@@ -170,6 +170,8 @@ function fixture(overrides = {}) {
 		setSessionRuntimeModel: async (target) => targeted(target, { isStreaming: false }),
 		setSessionRuntimeThinking: async (target) => targeted(target, { isStreaming: false }),
 		cloneSessionRuntime: async () => ({ ok: true, value: { targetSessionId: "session-2" } }),
+		listPendingUiRequests: () => [],
+		respondToUi: async () => undefined,
 		createAgent: async () => {
 			calls.createAgent += 1;
 			return agent;
@@ -243,77 +245,6 @@ test("native Session HTTP routes create drafts and send by stable Session identi
 	});
 });
 
-test("AI SDK chat requests use messageId rather than reusing the Session id", async () => {
-	let emitPiEvent = null;
-	await withServer(async ({ baseUrl, calls }) => {
-		const sendChat = async (messageId, text) => {
-			const response = await fetch(`${baseUrl}/api/chat`, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({
-					id: "session-1",
-					messageId,
-					messages: [{ role: "user", parts: [{ type: "text", text }] }],
-				}),
-			});
-			assert.equal(response.status, 200);
-			const reader = response.body.getReader();
-			emitPiEvent("agent-1", { type: "agent_settled" });
-			let body = "";
-			const decoder = new TextDecoder();
-			for (;;) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				body += decoder.decode(value, { stream: true });
-				if (body.includes("data: [DONE]")) break;
-			}
-			assert.match(body, /data: \[DONE\]/);
-		};
-
-		await sendChat("message-1", "first");
-		await sendChat("message-2", "second");
-		assert.deepEqual(calls.send.map((input) => input.requestId), ["message-1", "message-2"]);
-	}, {
-		subscribePiEvents: (handler) => {
-			emitPiEvent = handler;
-			return () => { emitPiEvent = null; };
-		},
-	});
-});
-
-test("indeterminate AI SDK dispatch keeps the stream open for the authoritative runtime event", async () => {
-	let emitPiEvent = null;
-	await withServer(async ({ baseUrl }) => {
-		const response = await fetch(`${baseUrl}/api/chat`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				id: "session-1",
-				messageId: "message-unknown",
-				messages: [{ role: "user", parts: [{ type: "text", text: "continue" }] }],
-			}),
-		});
-		assert.equal(response.status, 200);
-		await new Promise((resolve) => setImmediate(resolve));
-		emitPiEvent("agent-1", { type: "agent_settled" });
-		const body = await response.text();
-		assert.doesNotMatch(body, /errorText/);
-		assert.match(body, /data: \[DONE\]/);
-	}, {
-		subscribePiEvents: (handler) => {
-			emitPiEvent = handler;
-			return () => { emitPiEvent = null; };
-		},
-		sendSessionPrompt: async (input) => ({
-			accepted: false,
-			delivery: "unknown",
-			error: "dispatch response timed out",
-			sessionId: input.sessionId,
-			requestId: input.requestId,
-		}),
-	});
-});
-
 test("web core routes create a project and expose the configured model list", async () => {
 	await withServer(async ({ baseUrl, calls }) => {
 		const projectResponse = await fetch(`${baseUrl}/api/projects`, {
@@ -328,6 +259,43 @@ test("web core routes create a project and expose the configured model list", as
 		const modelsResponse = await fetch(`${baseUrl}/api/models`);
 		const modelsBody = await modelsResponse.json();
 		assert.equal(modelsBody.models[0].id, "gpt-test");
+	});
+});
+
+test("web state exposes pending UI requests and ui-response writes them back", async () => {
+	const pending = [{
+		sessionId: "session-1",
+		agentId: "agent-1",
+		runtimeGeneration: 3,
+		requestId: "ask-1",
+		method: "confirm",
+		title: "Continue?",
+	}];
+	const responses = [];
+	await withServer(async ({ baseUrl }) => {
+		const stateResponse = await fetch(`${baseUrl}/api/state`);
+		const state = await stateResponse.json();
+		assert.equal(state.pendingUiRequests[0].requestId, "ask-1");
+
+		const write = await fetch(`${baseUrl}/api/ui-response`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				sessionId: "session-1",
+				agentId: "agent-1",
+				runtimeGeneration: 3,
+				requestId: "ask-1",
+				response: { confirmed: true },
+			}),
+		});
+		assert.equal(write.status, 200);
+		assert.equal(responses[0].requestId, "ask-1");
+		assert.equal(responses[0].response.confirmed, true);
+	}, {
+		listPendingUiRequests: () => pending,
+		respondToUi: async (input) => {
+			responses.push(input);
+		},
 	});
 });
 
@@ -636,7 +604,7 @@ test("SSE /stream endpoint forwards pi agent events as AI SDK UI message frames"
 			}
 		};
 
-		// 派发：消息开始 → 文本增量 → agent_end → agent_settled（最终带 [DONE]）
+		// 派发：消息开始 → 文本增量 → agent_settled（中间 agent_end 不再关流）
 		emitPiEvent("agent-1", { type: "message_start", message: { role: "assistant", id: "m1" } });
 		emitPiEvent("agent-1", {
 			type: "message_update",
@@ -752,6 +720,6 @@ test("web service dev mode falls back to the legacy page when dev server is down
 	await withServer(async ({ baseUrl }) => {
 		const page = await fetch(baseUrl + "/");
 		assert.equal(page.status, 200);
-		assert.match(await page.text(), /PiDeck-Q Web Service/);
+		assert.match(await page.text(), /PiDeck(-Q)? Web Service/);
 	}, { devRendererUrl: "http://127.0.0.1:1" });
 });

@@ -1,4 +1,5 @@
 import type { AppAccentMode, AppSkinId } from "../../shared/types/settings";
+import type { TranslationKey } from "./i18n";
 
 /**
  * 主题色预设（UI 主题扩展点）。
@@ -11,7 +12,7 @@ import type { AppAccentMode, AppSkinId } from "../../shared/types/settings";
  */
 export type AccentPreset = {
 	id: AppAccentMode;
-	labelKey: string;
+	labelKey: TranslationKey;
 	/** 预览色（设置页色块展示） */
 	preview: string;
 };
@@ -41,7 +42,7 @@ export const DEFAULT_ACCENT: AppAccentMode = "default";
  */
 export type SkinPreset = {
 	id: AppSkinId;
-	labelKey: string;
+	labelKey: TranslationKey;
 	/** 预览色（设置页色块展示） */
 	preview: string;
 	/** 浅色主题变量覆盖：--color-* 键（不含前缀）→ 值 */

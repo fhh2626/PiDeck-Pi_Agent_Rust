@@ -20,7 +20,9 @@
 
 ## Overview
 
-PiDeck-Q is based on the excellent [PiDeck](https://github.com/ayuayue/PiDeck) project, a desktop GUI for [Pi Agent](https://pi.dev). Building on that foundation, PiDeck-Q places greater emphasis on a **lightweight footprint**, **runtime efficiency**, and **responsive interactions**.
+PiDeck-Q is based on the excellent [PiDeck](https://github.com/ayuayue/PiDeck) project, a desktop GUI for [Pi Agent](https://pi.dev). Building on that foundation, PiDeck-Q places greater emphasis on a **lightweight footprint**, **runtime efficiency**, **responsive interactions**, and **better context management**.
+
+As PiDeck-Q aims to remain lightweight and focus dedicatedly on the Pi and Pi_Agent_Rust ecosystem (with no plans to support other backends), PiDeck-Q will no longer sync upstream commits starting from August 17, 2026.
 
 ## Highlights
 
@@ -28,6 +30,7 @@ PiDeck-Q is based on the excellent [PiDeck](https://github.com/ayuayue/PiDeck) p
 - Removes less commonly used features, such as the Feishu bot and desktop pet, to reduce application size and memory usage.
 - Significantly improves the responsiveness and interaction performance of the Electron interface.
 - Removes telemetry.
+- Supports in-context tool trimming and Codex-like context compression.
 
 ## Screenshots
 

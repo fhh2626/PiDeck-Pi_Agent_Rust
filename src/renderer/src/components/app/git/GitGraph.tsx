@@ -842,7 +842,7 @@ export function SourceControlGraph(props: GitGraphProps) {
   return (
     <section
       id="git-pane-graph"
-      className={`flex min-h-0 flex-[0_0_auto] flex-col overflow-hidden border-b border-[var(--git-panel-border)] bg-[var(--git-panel-bg)] last:border-b-0${props.open ? " h-[calc(var(--git-pane-height)+26px)]" : " h-[26px]"}`}
+      className={`flex min-h-0 flex-[0_0_auto] flex-col overflow-hidden border-b border-[var(--git-panel-border)] bg-[var(--git-panel-bg)] last:border-b-0${props.open ? " h-[calc(var(--git-pane-height)+32px)]" : " h-[32px]"}`}
       style={
         { "--git-pane-height": `${props.height}px` } as CSSProperties
       }
@@ -877,7 +877,7 @@ export function SourceControlGraph(props: GitGraphProps) {
         </Button>
       </PaneHeader>
       {props.open && (
-        <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
           {loading && !commits.length && (
             <div className="git-status-msg">
               <Loader2 size={14} className="animate-spin" />{" "}

@@ -213,7 +213,7 @@ export function ComposerSendControls(props: {
       <div className="send-behavior-menu-wrap relative flex items-center gap-1.5">
         {/* 发送按钮 + 行为下拉常显（无需输入内容）：默认点击发送到当前会话，
             chevron 展开菜单选择发送行为 */}
-        <div className="send-behavior-toggle inline-flex h-8 overflow-hidden rounded-md bg-primary text-primary-foreground">
+        <div className="send-behavior-toggle inline-flex h-8 overflow-hidden rounded-full bg-primary text-primary-foreground">
           <Button
             variant="default"
             size="icon-sm"

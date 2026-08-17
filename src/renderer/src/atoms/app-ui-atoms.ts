@@ -30,7 +30,7 @@ export const sidebarExpandedProjectIdsAtom = atom<ReadonlySet<string>>(
  * 默认值与 main SettingsStore.defaultSettings 保持一致。
  */
 export type TurnFlowSettings = {
-	/** 流式对话时展开中间过程（默认关：对话过程中不自动撑开，手动展开不受影响）。 */
+	/** 流式对话时展开中间过程（默认关：省渲染资源，手动展开不受影响）。 */
 	expandInterimDuringStream: boolean;
 	/** 新一轮开始时收起上一轮（默认开：发送新消息后收起所有非最新轮，含手动展开的）。 */
 	collapsePrevRunsOnNewTurn: boolean;
@@ -39,5 +39,15 @@ export type TurnFlowSettings = {
 export const turnFlowSettingsAtom = atom<TurnFlowSettings>({
 	expandInterimDuringStream: false,
 	collapsePrevRunsOnNewTurn: true,
+});
+
+export type ContextControllerSettings = {
+	piRpcNoExtensions: boolean;
+	removedBuiltInExtensions: readonly string[];
+};
+
+export const contextControllerSettingsAtom = atom<ContextControllerSettings>({
+	piRpcNoExtensions: false,
+	removedBuiltInExtensions: ["pi-better-compaction.ts"],
 });
 

@@ -28,7 +28,7 @@ import {
   isLanWeb,
   missingElectronPreload,
 } from "./desktopApi";
-import { turnFlowSettingsAtom } from "./atoms/app-ui-atoms";
+import { contextControllerSettingsAtom, turnFlowSettingsAtom } from "./atoms/app-ui-atoms";
 // 文件链接路由：图片类型走弹窗预览
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico"]);
 const ConfigModal = lazy(() => import("./ConfigModal").then((m) => ({ default: m.ConfigModal })));
@@ -56,6 +56,7 @@ import {
   toSessionRuntimeTarget,
 } from "./utils/sessionCommands";
 import { resolveChatSessionBootstrap } from "./utils/chatSessionBootstrap";
+import { detectRendererPlatform } from "./lib/detectRendererPlatform";
 
 import { usePiUpdate } from "./hooks/usePiUpdate";
 import { useAppUpdateController } from "./hooks/useAppUpdateController";
@@ -542,7 +543,6 @@ export function App() {
     chatContentWidthPct: 80,
     maxEditorFileSizeMB: 5,
     externalEditors: createDefaultExternalEditorSettings(),
-
     favoriteModels: [],
 
     // 字体配置：与 main SettingsStore 默认值保持一致，避免启动时闪烁
@@ -581,6 +581,18 @@ export function App() {
     setTurnFlowSettings,
   ]);
 
+  const setContextControllerSettings = useSetAtom(contextControllerSettingsAtom);
+  useEffect(() => {
+    setContextControllerSettings({
+      piRpcNoExtensions: Boolean(settings.piRpcNoExtensions),
+      removedBuiltInExtensions: settings.removedBuiltInExtensions ?? [],
+    });
+  }, [
+    settings.piRpcNoExtensions,
+    settings.removedBuiltInExtensions,
+    setContextControllerSettings,
+  ]);
+
   // Guard: hide git drawer when git management is disabled.
   // Equivalent to: if (panel === "git" && !settings.enableGitManagement) return
   // Pinned cleanup (filter(([, panel]) => panel !== "git")) is handled inside useWorkspacePanels.
@@ -595,7 +607,8 @@ export function App() {
   const [appInfo, setAppInfo] = useState<AppInfo>({
     version: "-",
     releasesUrl: "https://github.com/ayuayue/pi-desktop/releases",
-    platform: "win32",
+    // 同步判定，避免 Mac 首帧在 appInfo IPC 返回前误画 Win 窗口按钮
+    platform: detectRendererPlatform(),
     homeDir: "",
   });
   const [systemLanguage, setSystemLanguage] = useState<string | null>(null);
@@ -1002,8 +1015,6 @@ export function App() {
     root.dataset.uiFontSize = uiFontSize;
     root.dataset.chatFontSize = chatFontSize;
     root.dataset.inputFontSize = inputFontSize;
-    // 会话排版（行距/块间距/列表/代码密度）：档位 → token 由纯函数解析后写入。
-    // CSS 只消费 token；data-* 仅用于测试与调试定位。
     root.dataset.chatBodyLineHeight = settings.chatBodyLineHeight;
     root.dataset.chatBlockGap = settings.chatBlockGap;
     root.dataset.chatListDensity = settings.chatListDensity;
@@ -1850,7 +1861,11 @@ export function App() {
   }
 
   function requestCloseAgent(agent: AgentTab): Promise<void> {
-    if (!agent.noSession) return closeAgent(agent.id);
+    if (!agent.noSession) {
+      return closeAgent(agent.id).catch((error) => {
+        showToast(error instanceof Error ? error.message : String(error), 5000);
+      });
+    }
     overlays.showConfirm({
       title: t("app.anonymousChatCloseTitle"),
       message: t("app.anonymousChatCloseBody"),
@@ -2378,20 +2393,28 @@ export function App() {
   }
 
   async function deleteSidebarSession(projectId: string, session: SessionSummary) {
-    await api.sessions.deleteRecord(session.id);
-    removeSessionState(session.id);
-    removeSessionComposerState(session.id);
-    showToast(t("app.sessionDeleted"), 2200);
-    await refreshProjectSessions(projectId);
+    try {
+      await api.sessions.deleteRecord(session.id);
+      removeSessionState(session.id);
+      removeSessionComposerState(session.id);
+      showToast(t("app.sessionDeleted"), 2200);
+      await refreshProjectSessions(projectId);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), 4000);
+    }
   }
 
   /** 归档会话：从列表移除但不销毁文件，可在会话管理弹窗中恢复 */
   async function archiveSidebarSession(projectId: string, session: SessionSummary) {
-    await api.sessions.archiveRecord(session.id);
-    removeSessionState(session.id);
-    removeSessionComposerState(session.id);
-    showToast(t("app.sessionArchived"), 2200);
-    await refreshProjectSessions(projectId);
+    try {
+      await api.sessions.archiveRecord(session.id);
+      removeSessionState(session.id);
+      removeSessionComposerState(session.id);
+      showToast(t("app.sessionArchived"), 2200);
+      await refreshProjectSessions(projectId);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), 4000);
+    }
   }
 
   /** 恢复归档会话：文件移回原路径并重新扫描 */
@@ -2460,9 +2483,21 @@ export function App() {
   async function changeChatPath(project: Project) {
     const picked = await api.projects.chooseChatPath();
     if (!picked || picked === project.path) return;
-    await api.projects.setChatPath(picked);
-    await refreshProjectSessions(project.id);
-    showToast(t("app.chatProjectPathUpdated"), 1800);
+    try {
+      await api.projects.setChatPath(picked);
+      await refreshProjectSessions(project.id);
+      showToast(t("app.chatProjectPathUpdated"), 1800);
+    } catch (error) {
+      // 主进程拒绝把聊天目录指向已注册的项目目录（CHAT_PATH_OVERLAPS_PROJECT，issue #149）：
+      // 同路径会吞掉项目区的新项目，这里给出明确提示而不是静默失败。
+      const message = String(error instanceof Error ? error.message : error);
+      showToast(
+        message.includes("CHAT_PATH_OVERLAPS_PROJECT")
+          ? t("app.chatPathOverlapsProject")
+          : message,
+        5000,
+      );
+    }
   }
 
   const sidebarActions: SidebarActions = {
@@ -2470,6 +2505,9 @@ export function App() {
       add: addProject,
       select: (projectId) => {
         selectProjectCommand(projectId);
+        // 点开目录只选中项目并显示引导页：不自动创建会话，避免每点一个目录都
+        // 悄悄新建一个 agent 会话 tab。创建由用户手动点「启动 Agent / 临时对话」
+        // 触发；启动时首项目自动选中除外（见 bootstrapProps.onProjectsChanged）。
         // 空项目也可能已经成功加载；用 catalog 状态区分“空结果”和“尚未扫描”。
         const loadState = store.get(sessionCatalogLoadStateAtom)[projectId];
         if (loadState?.status !== "loading" && loadState?.status !== "ready") {
@@ -2669,8 +2707,17 @@ export function App() {
     // 会话从未启动（无绑定 agent）时隐藏“关闭会话”：停止无意义，关闭走“关闭标签页”
     onStopCurrent: activeAgentId
       ? () => {
-          void abortAgent(activeAgentId);
-          if (currentSessionId) workspaceChrome.closeTab(currentSessionId);
+          const sessionId = currentSessionId;
+          void (async () => {
+            try {
+              // 必须 stopRuntime，不能 abort：abort 只取消当前一轮，pi 进程仍占用会话文件。
+              if (isPendingAgentId(activeAgentId)) return;
+              await closeAgent(activeAgentId);
+              if (sessionId) workspaceChrome.closeTab(sessionId);
+            } catch (error) {
+              showToast(error instanceof Error ? error.message : String(error), 5000);
+            }
+          })();
         }
       : undefined,
     canRestartCurrent: Boolean(activeAgentId),
@@ -2848,6 +2895,7 @@ export function App() {
         // 引导页同样可以打开项目级终端（owner=project），在空态下方渲染 dock。
         <>
           <div className="min-h-0 flex-1">
+            {/* 无会话空态：启动 Agent / 临时对话入口，创建真实 Catalog 会话后再进时间线。 */}
             <ProjectEmptyState
               activeProject={activeProject}
               onCreateAgent={(preferences) => void createSessionDraftWithTab(undefined, preferences)}
@@ -3067,6 +3115,7 @@ export function App() {
       drawerCollapsed={drawerCollapsed}
       drawerWidth={drawerWidth}
       useNativeTitleBar={settings.useNativeTitleBar}
+      platform={appInfo.platform}
       chatPaneRef={chatPaneRef}
       terminalRowHeight={terminalRowHeight}
       chatContentWidthPct={settings.chatContentWidthPct}

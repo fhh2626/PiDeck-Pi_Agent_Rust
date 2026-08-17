@@ -67,8 +67,9 @@ test("listActiveBuiltInExtensionPaths respects removedBuiltIn and missing files"
 		);
 		assert.equal(paths.length, 1);
 		assert.ok(String(paths[0]).endsWith("pi-deck-ask-question.ts"));
-		// 内置扩展清单随版本增长：ask/nul-redirect/plan-mode/security-gate/todo/vision/better-compaction
-		assert.equal(BUILT_IN_EXTENSIONS.length, 7);
+		// 内置扩展清单随版本增长：ask/context-controller/nul-redirect/plan-mode/security-gate/todo/vision/better-compaction
+		assert.equal(BUILT_IN_EXTENSIONS.length, 8);
+		assert.ok(BUILT_IN_EXTENSIONS.includes("pi-deck-context-controller.ts"));
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

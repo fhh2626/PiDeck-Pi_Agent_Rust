@@ -13,6 +13,18 @@ test("resize state commits via Group onLayoutChanged, not per-frame Panel onResi
   assert.doesNotMatch(shell, /onResize=\{handle/);
 });
 
+test("container zoom/resize syncs panel pixels via ResizeObserver", () => {
+  // 库 onLayoutChanged 在 preserve-relative-size 下 zoom 前后百分比不变，W 深比较
+  // 判定相同跳过 → AppShell 收不到通知。必须直察 Group 容器：RO 回调排库之后，
+  // getSize() 已更新，把 drawer/list 实际像素写回 --drawer-*/listWidth。
+  assert.match(shell, /elementRef=\{groupRef\}/);
+  assert.match(shell, /new ResizeObserver\(\(\) => \{/);
+  assert.match(shell, /ro\.observe\(el\)/);
+  assert.match(shell, /setDrawerWidth\(px\)/);
+  assert.match(shell, /setListWidth\(px\)/);
+  assert.match(shell, /drawerOpenRef\.current/);
+});
+
 test("programmatic layout changes do not write collapsed or expand-to-min width", () => {
   // isUserInteraction=false 仍须在折叠状态回写前 return，避免 effect → resize → 回写回路。
   // 抽屉像素宽走 shouldCommitPanelPixels：折叠 0 与 expand→min 都不写，缩放后的真实像素才写。

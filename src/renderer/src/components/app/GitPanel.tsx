@@ -149,7 +149,9 @@ const EMPTY_GROUPS: GitResourceGroups = {
 };
 const PANE_IDS: PaneId[] = ["changes", "graph", "compare"];
 const PANE_MIN_BODY_HEIGHT = 24;
-const PANE_HEADER_HEIGHT = 26;
+// 头部实际高度 h-8 = 32px（Tailwind rem 基准 16px）。早期按 26px 预算：
+// 折叠时溢出 6px 被 overflow-hidden 裁掉，折叠按钮视觉偏下且底部被切。
+const PANE_HEADER_HEIGHT = 32;
 /* 分支栏大约高度，用于 fitPaneHeights 中从可用空间预减，避免未计入分支栏高度导致 pane body 溢出 */
 const BRANCH_BAR_HEIGHT = 36;
 const PANE_RESIZE_STEP = 20;
@@ -1209,7 +1211,7 @@ export function GitPanel(props: GitPanelProps) {
       </div>
       <section
         id="git-pane-changes"
-        className={`flex min-h-0 flex-[0_0_auto] flex-col overflow-hidden border-b border-[var(--git-panel-border)] bg-[var(--git-panel-bg)] last:border-b-0${paneState.open.changes ? " h-[calc(var(--git-pane-height)+26px)]" : " h-[26px]"}`}
+        className={`flex min-h-0 flex-[0_0_auto] flex-col overflow-hidden border-b border-[var(--git-panel-border)] bg-[var(--git-panel-bg)] last:border-b-0${paneState.open.changes ? " h-[calc(var(--git-pane-height)+32px)]" : " h-[32px]"}`}
         style={paneStyle("changes")}
       >
         <PaneHeader
@@ -1431,7 +1433,7 @@ export function GitPanel(props: GitPanelProps) {
               <div className="git-status-msg flex min-h-[22px] shrink-0 items-center gap-1 px-[9px] text-[13px] text-[var(--git-desc-fg)]">{t("git.noPendingChanges")}</div>
             )}
 
-            <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+            <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
               {groups.merge.length > 0 && (
                 <ResourceGroup
                   title={t("git.mergeChanges")}
@@ -1712,7 +1714,7 @@ function CompareChanges(props: {
   return (
     <section
       id="git-pane-compare"
-      className={`flex min-h-0 flex-[0_0_auto] flex-col overflow-hidden border-b border-[var(--git-panel-border)] bg-[var(--git-panel-bg)] last:border-b-0${props.open ? " h-[calc(var(--git-pane-height)+26px)]" : " h-[26px]"}`}
+      className={`flex min-h-0 flex-[0_0_auto] flex-col overflow-hidden border-b border-[var(--git-panel-border)] bg-[var(--git-panel-bg)] last:border-b-0${props.open ? " h-[calc(var(--git-pane-height)+32px)]" : " h-[32px]"}`}
       style={
         { "--git-pane-height": `${props.height}px` } as React.CSSProperties
       }
@@ -1725,7 +1727,7 @@ function CompareChanges(props: {
         onToggle={props.onToggle}
       />
       {props.open && (
-        <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
           <div className="git-compare-controls">
             <Label>
               <span>{t("git.base")}</span>

@@ -1,4 +1,3 @@
-import { ChevronDown } from "lucide-react";
 import { useAtomValue } from "jotai";
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject, type ReactNode, type MutableRefObject } from "react";
 import {
@@ -15,13 +14,12 @@ import type { AgentRuntimeState, GitBranchInfo, ImageContent, TerminalTarget } f
 import type { SessionTimelineController } from "../../hooks/useSessionTimelineController";
 import type { QueuedPrompt } from "../../hooks/useQueuedPrompt";
 import type { PiDesktopApi } from "../../../../preload";
-import { t } from "../../i18n";
 import { isLanWeb, desktopApi as api } from "../../desktopApi";
 import { useNotifyLayoutResized } from "../../hooks/useNotifyLayoutResized";
 import { SessionHeader } from "./SessionHeader";
 import { SessionBranchBar } from "./SessionBranchBar";
 import { SessionWidgetChips } from "./SessionWidgetChips";
-import { SessionMessageTimeline } from "./SessionMessageTimeline";
+import { SessionSurfaceStage } from "./SessionSurfaceStage";
 import { ComposerArea } from "./ComposerArea";
 import { SessionRuntimeDock } from "./SessionRuntimeDock";
 import { QueuedPromptPanel } from "./ComposerPanels";
@@ -50,8 +48,8 @@ export type SessionViewProps = {
     noSession?: boolean;
     status?: string;
   } | null;
-  activeRuntimeState?: AgentRuntimeState;
   hasActiveConversation: boolean;
+  activeRuntimeState?: AgentRuntimeState;
   hasProject: boolean;
 
   // ── Layout refs ──
@@ -126,8 +124,8 @@ export function SessionView({
   onFocusPane,
   activeAgentId,
   activeAgent,
-  activeRuntimeState,
   hasActiveConversation,
+  activeRuntimeState,
   hasProject,
   chatHeaderRef,
   composerRef,
@@ -441,6 +439,7 @@ export function SessionView({
           本栏只保留会话状态徽章与分屏身份标题（抽屉开关在共享 Tab 栏）。 */}
       <SessionHeader
         headerRef={chatHeaderRef}
+        sessionId={sessionId}
         title={sessionTitle}
         projectName={projectName}
         paneTitle={splitPane ? sessionTitle : undefined}
@@ -471,58 +470,30 @@ export function SessionView({
         resizeTargetMinimumSize={{ fine: 20, coarse: 24 }}
       >
         <ResizablePanel id="timeline" minSize={TIMELINE_MIN_HEIGHT} className="session-v-timeline">
-          <div className="relative h-full min-h-0">
-          <SessionMessageTimeline
+          <SessionSurfaceStage
             sessionId={sessionId}
-            controller={sessionTimeline}
-            hasProject={hasProject}
-            onCreateSession={runCreateSessionDraft}
-            showThinking={showThinking}
-            validCommandNames={validCommandNames}
-            validFilePaths={validFilePaths}
-            onPreviewImage={onPreviewImage}
-            onOpenExternal={(url: string, forceSystem?: boolean) => api.app.openExternal(url, forceSystem)}
-            onOpenFile={onOpenFile}
-            onDiffFile={onDiffFile}
-            onResendUserMessage={
-              canMutateActiveMessages ? onResendUserMessage : undefined
-            }
-            onEditMessage={
-              canMutateActiveMessages ? onEditMessage : undefined
-            }
-            onDeleteMessage={
-              canMutateActiveMessages ? onDeleteMessage : undefined
-            }
-            onForkMessage={
-              canMutateActiveMessages ? onForkMessage : undefined
-            }
-            forkingMessageId={forkingMessageId}
-            onToast={onToast}
-            onQuickPrompt={onQuickPrompt}
-            runtimeUi={runtimeUi}
+            sessionTimeline={sessionTimeline}
+            isRestarting={isRestarting}
+            timelineProps={{
+              hasProject,
+              onCreateSession: runCreateSessionDraft,
+              showThinking,
+              validCommandNames,
+              validFilePaths,
+              onPreviewImage,
+              onOpenExternal: (url: string, forceSystem?: boolean) => api.app.openExternal(url, forceSystem),
+              onOpenFile,
+              onDiffFile,
+              onResendUserMessage: canMutateActiveMessages ? onResendUserMessage : undefined,
+              onEditMessage: canMutateActiveMessages ? onEditMessage : undefined,
+              onDeleteMessage: canMutateActiveMessages ? onDeleteMessage : undefined,
+              onForkMessage: canMutateActiveMessages ? onForkMessage : undefined,
+              forkingMessageId,
+              onToast,
+              onQuickPrompt,
+              runtimeUi,
+            }}
           />
-
-          {sessionTimeline.showScrollToBottom && (
-            <button
-              className="scroll-to-bottom-btn"
-              onClick={sessionTimeline.scrollToBottom}
-              title={t("app.scrollToBottom")}
-              aria-label={t("app.scrollToBottom")}
-            >
-              <ChevronDown size={18} />
-            </button>
-          )}
-          {/* 重启动画：opacity 过渡 + loader 旋转均为合成器驱动（transform/opacity），
-              不占用渲染主线程，不会导致窗口卡顿；始终挂载以支持重启结束时的平滑淡出。 */}
-          <div
-            className={`absolute inset-0 z-30 flex flex-col items-center justify-center gap-2.5 bg-bg-panel/70 transition-opacity duration-200 ${isRestarting ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
-            role={isRestarting ? "status" : undefined}
-            aria-hidden={!isRestarting}
-          >
-            <div className="loader" />
-            <span className="text-body text-text-secondary">{t("app.restarting")}</span>
-          </div>
-          </div>
         </ResizablePanel>
 
         {hasActiveConversation && (

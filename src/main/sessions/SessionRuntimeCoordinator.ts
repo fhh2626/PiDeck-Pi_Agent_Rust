@@ -102,12 +102,20 @@ type DeliveryCacheEntry = {
 	promise: Promise<SendSessionPromptResult>;
 };
 
-type PendingUiRequest = {
+export type PendingUiRequestSnapshot = {
 	sessionId: string;
 	agentId: string;
 	runtimeGeneration: number;
 	requestId: string;
+	method: string;
+	title: string;
+	options?: string[];
+	placeholder?: string;
+	prefill?: string;
+	allowOther?: boolean;
 };
+
+type PendingUiRequest = PendingUiRequestSnapshot;
 
 export type SessionRuntimeBinding = {
 	sessionId: string;
@@ -196,7 +204,9 @@ export class SessionRuntimeCoordinator {
 		const requestId = input.requestId.trim();
 		if (!sessionId) return Promise.resolve(this.rejected(input, "Session ID is required"));
 		if (!requestId) return Promise.resolve(this.rejected(input, "Request ID is required"));
-		if (!input.message.trim() && !input.images?.length) {
+		// 静默扩展命令允许 message 为空、由 agentMessage 驱动（如顶栏上下文开关）。
+		const hasSilentCommand = Boolean(input.silent && input.agentMessage?.trim());
+		if (!input.message.trim() && !input.images?.length && !hasSilentCommand) {
 			return Promise.resolve(this.rejected(input, "消息不能为空", {
 				i18nKey: "diagnostic.messageRequired",
 			}));
@@ -640,11 +650,20 @@ export class SessionRuntimeCoordinator {
 			return;
 		}
 		if (!isInteractiveUiMethod(event.payload.method)) return;
+		const options = Array.isArray(event.payload.options)
+			? event.payload.options.filter((option): option is string => typeof option === "string")
+			: undefined;
 		this.pendingUiRequests.set(key, {
 			sessionId: event.sessionId,
 			agentId: event.agentId,
 			runtimeGeneration: event.runtimeGeneration,
 			requestId,
+			method: String(event.payload.method),
+			title: typeof event.payload.title === "string" ? event.payload.title : "",
+			options,
+			placeholder: typeof event.payload.placeholder === "string" ? event.payload.placeholder : undefined,
+			prefill: typeof event.payload.prefill === "string" ? event.payload.prefill : undefined,
+			allowOther: event.payload.allowOther === true,
 		});
 
 		// 非聚焦会话收到 Ask 类请求时触发桌面通知：用户切到别的会话时
@@ -657,6 +676,16 @@ export class SessionRuntimeCoordinator {
 			const question = typeof event.payload.title === "string" ? event.payload.title : "";
 			this.agents.notifyAskPending(event.agentId, event.sessionId, title, question);
 		}
+	}
+
+	/** Web / 飞书以外的只读快照：手机端轮询后渲染确认卡片。 */
+	listPendingUiRequests(sessionId?: string): PendingUiRequestSnapshot[] {
+		const items: PendingUiRequestSnapshot[] = [];
+		for (const pending of this.pendingUiRequests.values()) {
+			if (sessionId && pending.sessionId !== sessionId) continue;
+			items.push({ ...pending });
+		}
+		return items;
 	}
 
 	async respondToUi(input: SessionUiResponseInput): Promise<void> {
@@ -862,6 +891,7 @@ export class SessionRuntimeCoordinator {
 					agentMessage: input.agentMessage,
 					description: input.description,
 					requestId: input.requestId,
+					silent: input.silent,
 				});
 				void this.logger?.info("session-perf", "Prompt dispatch completed", {
 					sessionId: input.sessionId,

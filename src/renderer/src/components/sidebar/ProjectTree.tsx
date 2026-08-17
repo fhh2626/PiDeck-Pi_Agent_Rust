@@ -16,7 +16,7 @@ import { cn } from "../../lib/utils";
 // 只有当前资源使用 inset surface，避免每个项目都变成独立卡片。
 // 根项目行保留折叠层级，但收窄左右留白，给窄侧栏中的目录名多留出可用宽度。
 const treeRowClass =
-  "group conversation relative flex min-h-7 w-full items-center gap-1.5 rounded-md border border-transparent px-1 py-0 text-body text-foreground shadow-none transition-[background-color,border-color,box-shadow] duration-200 hover:border-border-subtle hover:bg-muted/60 hover:text-foreground";
+  "group conversation relative flex min-h-8 w-full items-center gap-1.5 rounded-lg border border-transparent px-1 py-0 text-body text-foreground shadow-none transition-[background-color,border-color,box-shadow] duration-200 hover:border-border-subtle hover:bg-muted/60 hover:text-foreground";
 
 /** 项目行右侧操作按钮的虚化模式：absolute 浮层，不参与布局（不挤压项目名文字），
  * 默认隐藏（pointer-events 一并关闭防误触），行 hover / 行内聚焦时显现。
@@ -90,7 +90,7 @@ export function ProjectTree(props: {
       const rootProjectSessions = props.controller.catalog.sessionsByProject[project.id] ?? [];
       // 运行态属于具体会话，而不是项目容器；项目行只负责导航，避免多个 Agent 同时运行时
       // 项目头像出现无法指向目标会话的聚合动画。
-      return <div key={project.id} className={cn("project-group mb-2", project.worktreeEnabled && "worktree-enabled")}>
+      return <div key={project.id} className={cn("project-group mb-1.5", project.worktreeEnabled && "worktree-enabled")}>
         <div
           className={cn(
             treeRowClass,
@@ -111,34 +111,34 @@ export function ProjectTree(props: {
           >
             <ChevronRight size={14} className={cn("transition-transform", !collapsed && "rotate-90")} />
           </button>
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 items-center gap-1 py-0 pr-1 text-left"
-            draggable={!props.controller.search.trim()}
-            onDragStart={(event) => dragStart(event, project.id)}
-            onDragOver={(event) => { if (props.controller.drag.sourceProjectId && props.controller.drag.sourceProjectId !== project.id) { event.preventDefault(); props.controller.setProjectDropTarget(project.id); } }}
-            onDragLeave={() => props.controller.setProjectDropTarget(undefined)}
-            onDrop={(event) => drop(event, project.id)}
-            onDragEnd={props.controller.finishProjectDrag}
-            onClick={() => {
-              // 项目主行同时承担选择和手风琴切换，让项目卡片本身保持唯一且明确的导航入口。
-              props.controller.toggleProject(project.id);
-              props.actions.projects.select(project.id);
-            }}
-          >
-            <span className="grid size-5 shrink-0 place-items-center text-muted-foreground" aria-hidden="true">
-              {collapsed ? <Folder size={14} /> : <FolderOpen size={14} />}
-            </span>
-            <div className="conversation-body min-w-0 flex-1 transition-[padding-right] @max-[255px]:group-hover:pr-29 @max-[255px]:group-focus-within:pr-29">
-              <div className="conversation-title flex min-w-0 items-center">
-                {/* 悬浮展示完整项目目录名 + 路径（目录名在行内常被 truncate） */}
-                <PathTooltip content={`${projectDirectoryName}\n${project.path}`}>
+          {/* 触发区包整行选择按钮：只包截断的 <strong> 时，快划过右侧气泡会立刻离开关闭。 */}
+          <PathTooltip content={`${projectDirectoryName}\n${project.path}`}>
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-1 py-0 pr-1 text-left"
+              draggable={!props.controller.search.trim()}
+              onDragStart={(event) => dragStart(event, project.id)}
+              onDragOver={(event) => { if (props.controller.drag.sourceProjectId && props.controller.drag.sourceProjectId !== project.id) { event.preventDefault(); props.controller.setProjectDropTarget(project.id); } }}
+              onDragLeave={() => props.controller.setProjectDropTarget(undefined)}
+              onDrop={(event) => drop(event, project.id)}
+              onDragEnd={props.controller.finishProjectDrag}
+              onClick={() => {
+                // 项目主行同时承担选择和手风琴切换，让项目卡片本身保持唯一且明确的导航入口。
+                props.controller.toggleProject(project.id);
+                props.actions.projects.select(project.id);
+              }}
+            >
+              <span className="grid size-5 shrink-0 place-items-center text-muted-foreground" aria-hidden="true">
+                {collapsed ? <Folder size={14} /> : <FolderOpen size={14} />}
+              </span>
+              <div className="conversation-body min-w-0 flex-1 transition-[padding-right] @max-[255px]:group-hover:pr-29 @max-[255px]:group-focus-within:pr-29">
+                <div className="conversation-title flex min-w-0 items-center">
                   <strong className="min-w-0 flex-1 truncate font-medium">{projectDirectoryName}</strong>
-                </PathTooltip>
+                </div>
+                {/* 项目名称只承担导航信息；详细会话状态由下方的 Agent/历史会话行承担。 */}
               </div>
-              {/* 项目名称只承担导航信息；详细会话状态由下方的 Agent/历史会话行承担。 */}
-            </div>
-          </button>
+            </button>
+          </PathTooltip>
           <div className={cn(dimmedActionsClass, "pr-1", props.controller.menu?.kind === "project" && props.controller.menu.projectId === project.id && "pointer-events-auto opacity-100")}>
             {sourceFilter !== null && (
               <button
@@ -366,6 +366,32 @@ export function ProjectTree(props: {
           </div>
         </div>
         {workspaceProjects.map(renderProject)}
+      </section>
+    )}
+    {/* 无任何工作区项目（新用户只有内置 Chat）：显式渲染「项目」分组 + 空态引导。
+        此前该分组整体不渲染，侧边栏只剩搜索行一个 24px + 图标，用户不知道可以
+        添加自己的项目目录，误以为 PiDeck 只能聊天（issue #149 同类反馈）。
+        对标 dsh-web 侧边栏：无工作区时给出显眼的目录添加引导。 */}
+    {workspaceProjects.length === 0 && (
+      <section aria-label={t("app.sidebarProjects")} className="mt-1">
+        <div className="px-1 pb-1 text-caption font-medium text-muted-foreground">
+          {t("app.sidebarProjects")}
+        </div>
+        <div className="mx-1 rounded-lg border border-dashed border-border-subtle bg-muted/20 px-3 py-4 text-center">
+          <FolderPlus className="mx-auto mb-2 size-5 text-muted-foreground" aria-hidden="true" />
+          <div className="text-body font-medium text-foreground">{t("sidebar.emptyProjectsTitle")}</div>
+          <p className="mt-1 text-caption text-muted-foreground">{t("sidebar.emptyProjectsDesc")}</p>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="mt-3"
+            onClick={() => void props.actions.projects.add()}
+          >
+            <FolderPlus className="size-3.5" aria-hidden="true" />
+            {t("app.addProject")}
+          </Button>
+        </div>
       </section>
     )}
   </>;

@@ -7,6 +7,8 @@ const mainIndex = readFileSync("src/main/index.ts", "utf8");
 const settingsStore = readFileSync("src/main/settings/SettingsStore.ts", "utf8");
 const settingsTypes = readFileSync("src/shared/types/settings.ts", "utf8");
 const settingsModal = readFileSync("src/renderer/src/components/app/SettingsModal.tsx", "utf8");
+const commonTab = readFileSync("src/renderer/src/components/app/settings/CommonTab.tsx", "utf8");
+const gitModelsHook = readFileSync("src/renderer/src/components/app/settings/gitModels.ts", "utf8");
 const fileSortControl = readFileSync("src/renderer/src/components/session/FileSortControl.tsx", "utf8");
 const composerComponents = readFileSync("src/renderer/src/components/session/ComposerComponents.tsx", "utf8");
 const projectEmptyState = readFileSync("src/renderer/src/components/session/ProjectEmptyState.tsx", "utf8");
@@ -61,20 +63,24 @@ test("Shared model picker keeps one model line and supports collapse and selecte
   assert.match(composerComponents, /value=\{props\.current\}/);
   assert.match(commandPicker, /search\.trim\(\) \? <CommandEmpty/);
   assert.match(commandPicker, /scrollIntoView\(\{ block: \"center\" \}\)/);
+  // 启动配置选择统一由输入框底栏（ComposerArea/ComposerBottomBar）承担：
+  // 空态页不得再出现第二套模型/思考级别选择器（防止双实现回归）
   assert.match(projectEmptyState, /<ModelPicker/);
   assert.match(projectEmptyState, /<ThinkingPicker/);
 });
 
 
 test("Git summary settings expose the shared command model picker", () => {
-  assert.match(settingsModal, /projects\.listModels\(\)/);
-  assert.match(settingsModal, /ModelPicker/);
-  assert.match(settingsModal, /gitModelPickerOpen/);
-  assert.doesNotMatch(settingsModal, /<datalist/);
-  assert.doesNotMatch(settingsModal, /git-commit-message-providers/);
-  assert.doesNotMatch(settingsModal, /git-commit-message-models/);
-  assert.match(settingsModal, /gitCommitMessageProvider/);
-  assert.match(settingsModal, /gitCommitMessageModel/);
+  // Git 分区与模型选择器位于常用设置 tab（CommonTab）；数据源 hook 独立成文件（gitModels.ts，
+  // 以便 CommonTab lazy 加载）——listModels 调用在 hook 里
+  assert.match(gitModelsHook, /projects\.listModels\(\)/);
+  assert.match(commonTab, /ModelPicker/);
+  assert.match(commonTab, /gitModelPickerOpen/);
+  assert.doesNotMatch(commonTab, /<datalist/);
+  assert.doesNotMatch(commonTab, /git-commit-message-providers/);
+  assert.doesNotMatch(commonTab, /git-commit-message-models/);
+  assert.match(commonTab, /gitCommitMessageProvider/);
+  assert.match(commonTab, /gitCommitMessageModel/);
   assert.equal(i18n.match(/"settings\.gitCommitMessageModel":/g)?.length, 2);
   assert.equal(i18n.match(/"settings\.gitCommitMessageModelUnset":/g)?.length, 2);
   assert.match(i18n, /git\.commitMessageModelRequired/);

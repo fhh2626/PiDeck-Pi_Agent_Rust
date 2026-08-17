@@ -8,6 +8,8 @@
  *   （后随 tool/thinking 条目）即使暂时是最后一条 assistant，也只是中间回答，
  *   防止 steer 打断/工具回合中「中间回复被提升为最终回答、随 run 追加又降级」。
  *   真正的最终回答必然是 run 的收尾条目，因此一旦提升即稳定，不会反复。
+ *   例外：提问说明（当前轮 pending ask，或后面紧跟 ask_question/_askCard）
+ *   即使 stopReason=toolUse、后面还有提问工具，也提升为 final-answer，避免被折进执行过程。
  * - 思考/工具步骤：原位出现，不打包进同一 DOM 容器（避免折叠容器被回答文本打断），
  *   由外层 run 级折叠开关统一控制显隐。
  * - assistant 消息自带的 thinking 作为思考步骤插到该回答之前（保持「思考→回答」时序）。
@@ -32,6 +34,72 @@ function stripThinkingTags(text: string): string {
 	return text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, "").trim();
 }
 
+function isAskQuestionToolGroup(item: AgentRunItem["items"][number]): boolean {
+	if (item.kind !== "tool-group") return false;
+	return item.messages.some((message) => {
+		const toolName = String(message.meta?.toolName ?? "").toLowerCase();
+		if (toolName === "ask_question") return true;
+		const askCard = message.meta?._askCard;
+		return Boolean(askCard && typeof askCard === "object");
+	});
+}
+
+/** 本轮是否已经出现 ask_question / _askCard 工具组（历史回放与 sticky 解除都靠它）。 */
+export function hasAskQuestionTool(run: AgentRunItem): boolean {
+	return run.items.some(isAskQuestionToolGroup);
+}
+
+/**
+ * 提问说明的会话级钉住状态。
+ * 用户提交后 pending UI 会立刻变成 completed，但 ask_question 工具结果往往还没进 run。
+ * 若此时立刻把 hasPendingAsk 降为 false，说明文字会从 final-answer 掉回折叠栏再被提回去。
+ * 因此：本轮曾经出现过 pending ask，且还没看到提问工具组时，继续钉住。
+ */
+export function resolveAskLeadInPin(input: {
+	isLastAgentRun: boolean;
+	livePendingAsk: boolean;
+	wasPinned: boolean;
+	hasAskQuestionTool: boolean;
+}): { pin: boolean; nextPinned: boolean } {
+	if (!input.isLastAgentRun) return { pin: false, nextPinned: false };
+	if (input.hasAskQuestionTool) return { pin: false, nextPinned: false };
+	const nextPinned = input.wasPinned || input.livePendingAsk;
+	return { pin: nextPinned, nextPinned };
+}
+
+function shouldPinAskLeadIn(
+	run: AgentRunItem,
+	messageIndex: number,
+	options: { hasPendingAsk?: boolean },
+): boolean {
+	const item = run.items[messageIndex];
+	if (item.kind !== "message" || item.message.role !== "assistant") return false;
+	const text = stripThinkingTags(stripAnsi(item.message.text)).trim();
+	if (!text) return false;
+
+	// 只允许提升“最后一条有正文的 assistant”
+	for (let i = messageIndex + 1; i < run.items.length; i += 1) {
+		const later = run.items[i];
+		if (later.kind === "message" && later.message.role === "assistant") {
+			const laterText = stripThinkingTags(stripAnsi(later.message.text)).trim();
+			if (laterText) return false;
+		}
+	}
+
+	const laterItems = run.items.slice(messageIndex + 1);
+	const laterAsk = laterItems.some(isAskQuestionToolGroup);
+	if (laterAsk) return true;
+
+	if (!options.hasPendingAsk) return false;
+
+	// 提问当下：后面还没有 ask_question 工具组。
+	// 如果后面已经出现普通工具，说明这不是提问说明，而是普通 toolUse 中间回复。
+	const laterNonAskTool = laterItems.some(
+		(later) => later.kind === "tool-group" && !isAskQuestionToolGroup(later),
+	);
+	return !laterNonAskTool;
+}
+
 export function buildTurnDisplay(
 	run: AgentRunItem,
 	options: {
@@ -39,6 +107,8 @@ export function buildTurnDisplay(
 		isComplete?: boolean;
 		/** 当前 live 思考段 id（msg-thinking-*）；命中时即使 message.thinking 仍空也挂思考步 */
 		liveThinkingId?: string;
+		/** 当前会话是否存在等待用户处理的交互提问请求（select/confirm/input 等） */
+		hasPendingAsk?: boolean;
 	} = {},
 ): TurnDisplayItem[] {
 	const showThinking = Boolean(options.showThinking);
@@ -113,13 +183,16 @@ export function buildTurnDisplay(
 		// - stopReason === "stop"：pi RPC message_end 的 provider 归一化枚举，
 		//   message_end 时即确定、永不反复（steer 排队的中间回复恒为 toolUse，不会误提升）；
 		// - 无 stopReason / pending（骨架占位残留）：回退启发式（历史旧数据兼容）。
+		// - 例外：提问导语（pending ask 或后随 ask_question）即使 stopReason=toolUse 也提升为 final-answer
 		// 位置守卫防御异常数据（stop 消息后仍有条目）：保证每 run 至多一个 final-answer。
+		const isAskLeadIn = shouldPinAskLeadIn(run, index, { hasPendingAsk: options.hasPendingAsk });
 		const isRunTail = isComplete && index === run.items.length - 1;
 		const isFinal =
-			isRunTail &&
-			(item.message.stopReason === "stop" ||
-				!item.message.stopReason ||
-				item.message.stopReason === "pending");
+			isAskLeadIn ||
+			(isRunTail &&
+				(item.message.stopReason === "stop" ||
+					!item.message.stopReason ||
+					item.message.stopReason === "pending"));
 		if (isFinal) {
 			items.push({ kind: "final-answer", id: item.message.id, message: item.message });
 		} else {

@@ -16,9 +16,9 @@ import {
 	clearSessionHistoryAtom,
 	prependSessionHistoryPageAtom,
 	prependSessionMessagePageAtom,
-  sessionMessageLoadStateAtom,
   sessionMessagesCacheAtom,
   sessionMessageCacheBySessionIdAtomFamily,
+  sessionMessageLoadStateBySessionIdAtomFamily,
   saveSessionScrollAnchorAtom,
   sessionScrollAnchorByIdAtom,
   setSessionMessageLoadStateAtom,
@@ -52,6 +52,7 @@ function trackLatestLoad(sessionId: string, sequence: number) {
 }
 /** sessionId 为空时的占位 atom：恒 undefined（无会话不订缓存条目）。 */
 const NO_CACHE_ENTRY_ATOM = atom(undefined);
+const NO_LOAD_STATE_ATOM = atom(undefined);
 
 // 用户主动向上滚超过此阈值后停止自动跟底。值设很小是为了让用户稍微滚一点就能挣脱自动滚动，
 // 避免流式消息频繁触发 ResizeObserver/MutationObserver 把用户弹回底部造成"颤抖"。
@@ -294,7 +295,11 @@ export function useSessionTimelineController(options: {
 	const prependHistoryPage = useSetAtom(prependSessionHistoryPageAtom);
   const setLoadState = useSetAtom(setSessionMessageLoadStateAtom);
   const touchMessages = useSetAtom(touchSessionMessagesAtom);
-  const loadStates = useAtomValue(sessionMessageLoadStateAtom);
+  const loadState = useAtomValue(
+    options.sessionId
+      ? sessionMessageLoadStateBySessionIdAtomFamily(options.sessionId)
+      : NO_LOAD_STATE_ATOM,
+  );
   const lastLoadedSessionRef = useRef<string | undefined>(undefined);
 
 	// useLayoutEffect 而非 useEffect：loading 状态必须在首帧 paint 之前写入，
@@ -304,10 +309,18 @@ export function useSessionTimelineController(options: {
     if (!sessionId) return;
     const previouslyLoaded = lastLoadedSessionRef.current === sessionId;
     // 已加载且缓存条目仍在 → 跳过（正常运行路径）。
-    // 缓存条目被 8-LRU 淘汰（条目变 undefined）时重新走磁盘加载自愈——
-    // 否则已挂载会话永久卡骨架屏（2026-12 回归修复）。
     if (previouslyLoaded && cachedEntry) return;
-    if (!previouslyLoaded) lastLoadedSessionRef.current = sessionId;
+
+    // 已挂载会话的磁盘首页失败后，不要每帧重新 set loading。
+    // LRU 淘汰导致 cachedEntry 变 undefined 时仍允许自愈重试。
+    const currentStatus = loadState?.status;
+    if (previouslyLoaded && currentStatus === "error") {
+      return;
+    }
+    if (previouslyLoaded && currentStatus === "loading") {
+      return;
+    }
+    lastLoadedSessionRef.current = sessionId;
 
     const entry = cachedEntry;
     const sequence = ++nextLoadSequence;
@@ -339,7 +352,7 @@ export function useSessionTimelineController(options: {
           },
         });
       });
-  }, [options.sessionId, cachedEntry]);
+  }, [options.sessionId, cachedEntry, loadState]);
 
 	const diskPage = controllerEnabled && cachedEntry?.source === "disk"
 		? cachedEntry.page

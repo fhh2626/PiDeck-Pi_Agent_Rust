@@ -115,8 +115,8 @@ test("preload exposes security namespace with three IPC methods", () => {
 
 test("default settings stay zero-intervention (enabled=false)", () => {
 	const securityTypes = readFileSync("src/shared/types/security.ts", "utf8");
-	// 默认工厂必须关闭总开关：升级后老用户行为不变
 	assert.match(securityTypes, /enabled:\s*false/);
+	assert.match(securityTypes, /defaultLevelId:\s*"standard"/);
 	// 快照 schemaVersion 与扩展侧常量一致
 	assert.match(securityTypes, /schemaVersion:\s*1/);
 });

@@ -167,7 +167,12 @@ export function DrawerSurface(props: DrawerSurfaceProps) {
         </div>
       ) : drawer && drawer !== "browser" && drawer !== "editor" && drawer !== "git" ? (
         <LazyWrapper
-          className="drawer-content-frame"
+          // 滚动层上移到这里：files/sessions 面板自身不再滚动（见 timeline.css
+          // .files-panel/.sessions-panel 注释），占位与内容共用同一滚动容器，配合
+          // scrollbar-gutter: stable 让内容宽度不随滚动条出现/消失跳变——
+          // 否则切 tab 重挂时占位(无滚动条,320) → 内容(有滚动条,310) 瞬间收窄，
+          // 且树高度跨阈值时滚动条反复出现/消失，形成“呼吸式”宽度摆动。
+          className="drawer-content-frame overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
           enabled={true}
           threshold={0}
           rootMargin="50px"

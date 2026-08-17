@@ -30,6 +30,7 @@ import { getProcessSnapshot } from "../process/ProcessMonitor";
 import type { ProcessMetricsSnapshot } from "../../shared/types";
 import { getWslExe } from "../wsl/wslExe";
 import { listWebNetworkAddresses } from "../web/WebNetwork";
+import { toggleMainWindowDevTools } from "../devTools";
 
 /**
  * IPC 边界校验：RPC 日志条目必须字段齐全，防止渲染层传伪造对象写盘。
@@ -856,14 +857,5 @@ export function registerSystemIpc(deps: SystemIpcDeps): void {
 
 	// ── 开发者控制台 ─────────────────────────────────────────────────
 
-	ipcMain.handle(ipcChannels.appToggleDevTools, () => {
-		const win = getMainWindow();
-		if (!win || win.isDestroyed()) return false;
-		if (win.webContents.isDevToolsOpened()) {
-			win.webContents.closeDevTools();
-			return false;
-		}
-		win.webContents.openDevTools({ mode: "detach" });
-		return true;
-	});
+	ipcMain.handle(ipcChannels.appToggleDevTools, () => toggleMainWindowDevTools(getMainWindow()));
 }

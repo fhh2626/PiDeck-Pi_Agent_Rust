@@ -63,6 +63,15 @@ export class ProjectStore {
    */
   async setChatProjectPath(path: string) {
     const normalized = this.normalizeProjectPath(path);
+    // 边界保护：聊天目录不允许指向已注册的普通项目目录（issue #149）。否则聊天项目与
+    // 该项目同路径并存，重启后 ensureChatProject 曾把该项目整条吸收，且「添加项目」选
+    // 同一目录只会返回 builtin-chat，项目区永远不再出现新项目。
+    const occupied = this.projects.find(
+      (project) => !this.isChatProject(project) && this.sameProjectPath(project.path, normalized),
+    );
+    if (occupied) {
+      throw new Error("CHAT_PATH_OVERLAPS_PROJECT");
+    }
     this.chatProjectPath = normalized;
     await writeFile(this.chatPathFile, JSON.stringify({ path: normalized }), "utf8");
     const chat = this.projects.find(
@@ -112,7 +121,12 @@ export class ProjectStore {
   /** 添加项目，可指定所属环境（缺省 windows） */
   async add(path: string, worktreeParentId?: string, environment?: "windows" | "wsl") {
     const normalizedPath = this.normalizeProjectPath(path);
-    const existing = this.projects.find(project => this.sameProjectPath(project.path, normalizedPath));
+    // 内置聊天项目不参与「同路径即已有项目」匹配（issue #149）：用户挑选的目录即使与
+    // 聊天目录相同，也必须创建真正的项目记录——否则 add() 永远返回 builtin-chat，
+    // 项目区不再出现新项目，侧栏只剩聊天区。
+    const existing = this.projects.find(
+      (project) => !this.isChatProject(project) && this.sameProjectPath(project.path, normalizedPath),
+    );
     if (existing) {
       existing.path = normalizedPath;
       existing.lastOpenedAt = Date.now();
@@ -171,11 +185,13 @@ export class ProjectStore {
   }
 
   private ensureChatProject() {
+    // 只按身份定位聊天项目（kind/id），不按路径匹配（issue #149）：聊天目录被设为某项目
+    // 目录后，路径相同的普通项目会被误判为聊天项目，整条覆盖（id/name/kind 被改写）并
+    // 从列表中删除——用户的项目区从此只剩聊天区，重启后仍被持久化。
     const existing = this.projects.find(
       (project) =>
         this.isChatProject(project) ||
-        project.id === CHAT_PROJECT_ID ||
-        project.path === this.chatProjectPath,
+        project.id === CHAT_PROJECT_ID,
     );
     const nextChatProject: Project = {
       id: CHAT_PROJECT_ID,
@@ -201,12 +217,11 @@ export class ProjectStore {
       existing.pinned !== nextChatProject.pinned ||
       existing.sortOrder !== nextChatProject.sortOrder;
     Object.assign(existing, nextChatProject);
+    // 仅去重多余的聊天项目记录（kind/id 命中），普通项目即使路径与聊天目录相同也保留。
     this.projects = this.projects.filter(
       (project, index) =>
         index === this.projects.indexOf(existing) ||
-        (!this.isChatProject(project) &&
-          project.id !== CHAT_PROJECT_ID &&
-          project.path !== this.chatProjectPath),
+        (!this.isChatProject(project) && project.id !== CHAT_PROJECT_ID),
     );
     return changed || this.projects.length !== previousLength;
   }

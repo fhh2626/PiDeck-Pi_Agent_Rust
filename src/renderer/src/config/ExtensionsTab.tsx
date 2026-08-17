@@ -37,6 +37,8 @@ const PIDEK_BUILTIN_SOURCE: Record<string, string> = {
 	"pi-deck-plan-mode": "pi-deck-plan-mode.ts",
 	"pi-deck-ask-question": "pi-deck-ask-question.ts",
 	"pi-deck-nul-redirect-fix": "pi-deck-nul-redirect-fix.ts",
+	"pi-deck-context-controller": "pi-deck-context-controller.ts",
+	"PiDeck-Q-context-controller": "pi-deck-context-controller.ts",
 };
 
 /** 推荐扩展包：描述走 i18n（descriptionKey），不在组件里硬编码中英文案。 */
@@ -46,6 +48,16 @@ const RECOMMENDED_PACKAGES: RecommendedPackage[] = [
 		name: "pi-deck-todo",
 		descriptionKey: "config.extRecommended.piDeckTodo",
 		installCmd: "npm:@earendil-works/pi-deck-todo",
+		tags: ["extension"],
+		downloads: "",
+		updated: "",
+		npmUrl: "",
+		repoUrl: "https://github.com/fhh2626/PiDeck-Pi_Agent_Rust",
+	},
+	{
+		name: "PiDeck-Q-context-controller",
+		descriptionKey: "config.extRecommended.piDeckContextController",
+		installCmd: "npm:@earendil-works/pi-deck-context-controller",
 		tags: ["extension"],
 		downloads: "",
 		updated: "",
@@ -124,12 +136,21 @@ const RECOMMENDED_PACKAGES: RecommendedPackage[] = [
 	},
 ];
 
+/** 内置扩展的用户可见产品名；source 仍是 pi-deck-*.ts，供 -e 注入。 */
+const BUILT_IN_DISPLAY_NAME: Record<string, string> = {
+	"pi-deck-context-controller.ts": "PiDeck-Q-context-controller",
+	"pi-deck-context-controller": "PiDeck-Q-context-controller",
+};
+
 /** 从扩展来源提取简短描述名 */
 function shortName(source: string): string {
-	return source
+	const trimmed = source.trim();
+	if (BUILT_IN_DISPLAY_NAME[trimmed]) return BUILT_IN_DISPLAY_NAME[trimmed];
+	const stripped = trimmed
 		.replace(/^(?:npm|file|github|git|https?):/i, "")
 		.replace(/\.ts$/, "")
 		.replace(/@[^/]+\//, "");
+	return BUILT_IN_DISPLAY_NAME[stripped] ?? stripped;
 }
 
 export function ExtensionsTab(props: {
@@ -226,7 +247,7 @@ export function ExtensionsTab(props: {
 		setInstallingSources((current) => new Set(current).add(pkg.installCmd));
 		try {
 			// 对已移除的内置扩展，走恢复流程而非 npm 安装
-			const builtInSource = pkg.name.startsWith("pi-deck-") ? PIDEK_BUILTIN_SOURCE[pkg.name] : undefined;
+						const builtInSource = PIDEK_BUILTIN_SOURCE[pkg.name];
 			if (builtInSource) {
 				await getExtensionsApi().restoreBuiltIn(builtInSource);
 			} else {
@@ -344,7 +365,7 @@ export function ExtensionsTab(props: {
 				<div className="extensions-recommended-list">
 					{RECOMMENDED_PACKAGES.map((pkg) => {
 						// 内置扩展按 source 文件名匹配，npm 扩展按 installCmd 匹配
-						const builtInSource = pkg.name.startsWith("pi-deck-") ? PIDEK_BUILTIN_SOURCE[pkg.name] : undefined;
+			const builtInSource = PIDEK_BUILTIN_SOURCE[pkg.name];
 						const builtInExt = builtInSource
 							? props.data.extensions.find((ext) => ext.builtIn && ext.source === builtInSource)
 							: undefined;
@@ -492,7 +513,7 @@ function ExtensionTableRow(props: {
 	onCopyUpdateCommand: (extension: PiExtensionSummary) => void;
 }) {
 	const { extension } = props;
-	const name = extension.source.replace(/^(?:npm|file|github|git):/i, "");
+	const name = shortName(extension.source);
 	return (
 		<TableRow aria-busy={props.uninstalling}>
 			<TableCell className="min-w-0">

@@ -5,6 +5,7 @@
  * - process-entry：思考/工具步骤，原位出现，受 run 级折叠开关控制显隐；
  * - interim-answer：中间回答（本轮非最后一条 assistant 文本），同样受折叠控制；
  * - final-answer：最终回答（本轮最后一条 assistant 文本），常驻、永不折叠。
+ *   提问说明也走 final-answer：当前轮 pending ask，或后面紧跟 ask_question/_askCard。
  *
  * 领域对象类型（AgentRunItem / ThinkingGroupItem / ToolGroupItem）目前暂存于
  * AppUtils.ts，随重构逐步迁移至此；本模块只定义展示层新增类型，避免大爆炸。
