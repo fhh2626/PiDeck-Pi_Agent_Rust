@@ -22,6 +22,8 @@
 
 PiDeck-Q is based on the excellent [PiDeck](https://github.com/ayuayue/PiDeck) project, a desktop GUI for [Pi Agent](https://pi.dev). Building on that foundation, PiDeck-Q places greater emphasis on a **lightweight footprint**, **runtime efficiency**, **responsive interactions**, and **better context management**.
 
+As PiDeck-Q aims to remain lightweight and focus dedicatedly on the Pi and Pi_Agent_Rust ecosystem (with no plans to support other backends), PiDeck-Q will no longer sync upstream commits starting from August 17, 2026.
+
 ## Highlights
 
 - Supports both the original [Pi Agent](https://pi.dev) and the Rust-based [Pi_Agent_Rust](https://github.com/Dicklesworthstone/pi_agent_rust). Pi_Agent_Rust is currently less mature than the original Pi Agent, but uses less memory and delivers a smoother experience.
