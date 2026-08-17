@@ -110,22 +110,30 @@ export function useSessionActions(options: UseSessionActionsOptions) {
   }
 
   async function deleteHistorySession(session: SessionSummary) {
-    await api.sessions.deleteRecord(session.id);
-    removeSessionState(session.id);
-    removeSessionComposerState(session.id);
-    showToast(t("app.sessionDeleted"), 2200);
-    const projectId = sessionsProjectId ?? activeProjectId;
-    if (projectId) await refreshProjectSessions(projectId);
+    try {
+      await api.sessions.deleteRecord(session.id);
+      removeSessionState(session.id);
+      removeSessionComposerState(session.id);
+      showToast(t("app.sessionDeleted"), 2200);
+      const projectId = sessionsProjectId ?? activeProjectId;
+      if (projectId) await refreshProjectSessions(projectId);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), 4000);
+    }
   }
 
   /** 归档历史会话：文件移入归档目录并从列表移除（可恢复，区别于删除） */
   async function archiveHistorySession(session: SessionSummary) {
-    await api.sessions.archiveRecord(session.id);
-    removeSessionState(session.id);
-    removeSessionComposerState(session.id);
-    showToast(t("app.sessionArchived"), 2200);
-    const projectId = sessionsProjectId ?? activeProjectId;
-    if (projectId) await refreshProjectSessions(projectId);
+    try {
+      await api.sessions.archiveRecord(session.id);
+      removeSessionState(session.id);
+      removeSessionComposerState(session.id);
+      showToast(t("app.sessionArchived"), 2200);
+      const projectId = sessionsProjectId ?? activeProjectId;
+      if (projectId) await refreshProjectSessions(projectId);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), 4000);
+    }
   }
 
   /** 恢复归档会话：文件移回原路径并重新入目录 */

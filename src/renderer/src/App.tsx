@@ -1861,7 +1861,11 @@ export function App() {
   }
 
   function requestCloseAgent(agent: AgentTab): Promise<void> {
-    if (!agent.noSession) return closeAgent(agent.id);
+    if (!agent.noSession) {
+      return closeAgent(agent.id).catch((error) => {
+        showToast(error instanceof Error ? error.message : String(error), 5000);
+      });
+    }
     overlays.showConfirm({
       title: t("app.anonymousChatCloseTitle"),
       message: t("app.anonymousChatCloseBody"),
@@ -2389,20 +2393,28 @@ export function App() {
   }
 
   async function deleteSidebarSession(projectId: string, session: SessionSummary) {
-    await api.sessions.deleteRecord(session.id);
-    removeSessionState(session.id);
-    removeSessionComposerState(session.id);
-    showToast(t("app.sessionDeleted"), 2200);
-    await refreshProjectSessions(projectId);
+    try {
+      await api.sessions.deleteRecord(session.id);
+      removeSessionState(session.id);
+      removeSessionComposerState(session.id);
+      showToast(t("app.sessionDeleted"), 2200);
+      await refreshProjectSessions(projectId);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), 4000);
+    }
   }
 
   /** 归档会话：从列表移除但不销毁文件，可在会话管理弹窗中恢复 */
   async function archiveSidebarSession(projectId: string, session: SessionSummary) {
-    await api.sessions.archiveRecord(session.id);
-    removeSessionState(session.id);
-    removeSessionComposerState(session.id);
-    showToast(t("app.sessionArchived"), 2200);
-    await refreshProjectSessions(projectId);
+    try {
+      await api.sessions.archiveRecord(session.id);
+      removeSessionState(session.id);
+      removeSessionComposerState(session.id);
+      showToast(t("app.sessionArchived"), 2200);
+      await refreshProjectSessions(projectId);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), 4000);
+    }
   }
 
   /** 恢复归档会话：文件移回原路径并重新扫描 */
@@ -2695,8 +2707,17 @@ export function App() {
     // 会话从未启动（无绑定 agent）时隐藏“关闭会话”：停止无意义，关闭走“关闭标签页”
     onStopCurrent: activeAgentId
       ? () => {
-          void abortAgent(activeAgentId);
-          if (currentSessionId) workspaceChrome.closeTab(currentSessionId);
+          const sessionId = currentSessionId;
+          void (async () => {
+            try {
+              // 必须 stopRuntime，不能 abort：abort 只取消当前一轮，pi 进程仍占用会话文件。
+              if (isPendingAgentId(activeAgentId)) return;
+              await closeAgent(activeAgentId);
+              if (sessionId) workspaceChrome.closeTab(sessionId);
+            } catch (error) {
+              showToast(error instanceof Error ? error.message : String(error), 5000);
+            }
+          })();
         }
       : undefined,
     canRestartCurrent: Boolean(activeAgentId),

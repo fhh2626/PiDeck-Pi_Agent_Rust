@@ -87,6 +87,8 @@ test("tab dropdown menu: no switch-to item, state-based disable with visible gra
 	// 无绑定 agent 时“关闭会话”隐藏（App 条件传 onStopCurrent，关闭走“关闭标签页”）
 	const app = readFileSync("src/renderer/src/App.tsx", "utf8");
 	assert.match(app, /onStopCurrent: activeAgentId\n\s*\? \(\) => \{/);
+	assert.match(app, /await closeAgent\(activeAgentId\)/);
+	assert.doesNotMatch(app, /onStopCurrent: activeAgentId[\s\S]{0,400}abortAgent\(activeAgentId\)/);
 	// i18n key 同步删除
 	const zh = readFileSync("src/renderer/src/i18n/rendererCopy.zh-CN.ts", "utf8");
 	const en = readFileSync("src/renderer/src/i18n/rendererCopy.en-US.ts", "utf8");
