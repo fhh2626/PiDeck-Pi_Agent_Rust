@@ -38,6 +38,12 @@ import {
 	updateSessionRecord,
 } from "./webApi";
 import type { WebProject, WebState } from "./webTypes";
+import {
+	markWebStateFailure,
+	markWebStateSuccess,
+	WEB_STATE_POLL_MS,
+	type WebConnectionSnapshot,
+} from "./webConnection";
 
 /** 分页元数据：已加载消息总数 + 更早一页的游标。 */
 type HistoryMeta = {
@@ -57,6 +63,7 @@ export function WebChatApp() {
 	const [activeSessionId, setActiveSessionId] = useState<string>("");
 	const [creatingProjectId, setCreatingProjectId] = useState<string>("");
 	const [connected, setConnected] = useState(false);
+	const connectionRef = useRef<WebConnectionSnapshot>({ connected: false, failures: 0 });
 	const [loadingMore, setLoadingMore] = useState(false);
 	const [models, setModels] = useState<AvailableModel[]>([]);
 	const [commandError, setCommandError] = useState<string | null>(null);
@@ -248,7 +255,9 @@ export function WebChatApp() {
 				if (disposed) return;
 				setState(next);
 				syncRuntimeMessages(next, activeSessionIdRef.current);
-				setConnected(true);
+				const nextConnection = markWebStateSuccess();
+				connectionRef.current = nextConnection;
+				setConnected(nextConnection.connected);
 				// 清理已被外部删除的会话缓存
 				const validSessionIds = new Set(next.sessions.map((s) => s.id));
 				for (const id of Object.keys(messagesBySessionRef.current)) {
@@ -263,11 +272,14 @@ export function WebChatApp() {
 					setActiveSessionId("");
 				}
 			} catch {
-				if (!disposed) setConnected(false);
+				if (disposed) return;
+				const nextConnection = markWebStateFailure(connectionRef.current);
+				connectionRef.current = nextConnection;
+				setConnected(nextConnection.connected);
 			}
 		};
 		void refresh();
-		const timer = setInterval(refresh, 3000);
+		const timer = setInterval(refresh, WEB_STATE_POLL_MS);
 		return () => {
 			disposed = true;
 			clearInterval(timer);
@@ -344,7 +356,6 @@ export function WebChatApp() {
 			await refreshNow();
 		} catch (error) {
 			setCommandError(error instanceof Error ? error.message : String(error));
-			setConnected(false);
 		} finally {
 			setCreatingProjectId("");
 		}
@@ -371,7 +382,6 @@ export function WebChatApp() {
 			await refreshNow();
 		} catch (error) {
 			setCommandError(error instanceof Error ? error.message : String(error));
-			setConnected(false);
 		} finally {
 			setCreatingProjectId("");
 		}
@@ -484,9 +494,13 @@ export function WebChatApp() {
 			const next = await fetchState();
 			setState(next);
 			syncRuntimeMessages(next, activeSessionIdRef.current);
-			setConnected(true);
+			const nextConnection = markWebStateSuccess();
+			connectionRef.current = nextConnection;
+			setConnected(nextConnection.connected);
 		} catch {
-			setConnected(false);
+			const nextConnection = markWebStateFailure(connectionRef.current);
+			connectionRef.current = nextConnection;
+			setConnected(nextConnection.connected);
 		}
 	};
 

@@ -245,3 +245,8 @@ test("web frontend reloads authoritative messages on stream finish", () => {
   assert.match(webServiceSource, /loadSessionMessages\(sessionId\)/);
   assert.match(webServiceSource, /async function finishStream/);
 });
+test("WebServiceManager disables Node request timeouts for long SSE replies", () => {
+	assert.match(webServiceSource, /server\.requestTimeout = 0/);
+	assert.match(webServiceSource, /server\.headersTimeout = 0/);
+	assert.doesNotMatch(webServiceSource, /server\.keepAliveTimeout = 0/);
+});
