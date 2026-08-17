@@ -28,6 +28,7 @@ test("header status cards share the right-aligned actions group", () => {
   assert.match(sessionHeader, /runtimeState=\{activeRuntimeState\}/);
   // pure official：右对齐由 Tailwind justify-end 承担，不再依赖 CSS justify-self；
   // 运行控制已迁入 Tab 下拉，不再有独立的 session-actions 按钮组
-  assert.match(headerSource, /chat-header-actions flex min-w-0 items-center justify-end/);
+  assert.match(headerSource, /chat-header-actions flex min-w-0[^"]*items-center justify-end/);
+  assert.match(headerSource, /<div className="shrink-0">\s*<SessionStatus/);
   assert.doesNotMatch(headerSource, /header-actions-right/);
 });

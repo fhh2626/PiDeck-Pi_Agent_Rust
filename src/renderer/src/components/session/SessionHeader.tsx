@@ -98,7 +98,7 @@ export function SessionHeader(props: SessionHeaderProps) {
   const actions = (
     <div
       ref={props.embedded ? props.headerRef : undefined}
-      className={`chat-header-actions flex min-w-0 items-center justify-end gap-1.5${props.embedded ? " h-7 w-auto shrink-0" : ""}${isStarting ? " loading" : ""}`}
+      className={`chat-header-actions flex min-w-0 max-w-full shrink items-center justify-end gap-1.5 overflow-hidden${props.embedded ? " h-7 w-auto" : ""}${isStarting ? " loading" : ""}`}
     >
       {props.widgetChips}
       {isAnonymous && (
@@ -107,7 +107,9 @@ export function SessionHeader(props: SessionHeaderProps) {
         </span>
       )}
       {sessionId ? <ContextControllerSwitches sessionId={sessionId} /> : null}
-      <SessionStatus state={runtimeState} duration={props.duration} cacheHitHistory={cacheStats[sessionId]?.cacheHitHistory} />
+      <div className="shrink-0">
+        <SessionStatus state={runtimeState} duration={props.duration} cacheHitHistory={cacheStats[sessionId]?.cacheHitHistory} />
+      </div>
     </div>
   );
 
@@ -118,7 +120,7 @@ export function SessionHeader(props: SessionHeaderProps) {
       role="banner"
       /* 普通模式：分屏 pane 的会话身份行（Tab 已外置）。
          底部分隔线去掉：分屏身份标题下再叠一条线过于碎。 */
-      className="chat-header grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 bg-background px-3 py-1"
+      className="chat-header grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,auto)] items-center gap-2 bg-background px-3 py-1"
     >
       <div className="flex min-w-0 items-center gap-1.5">
         {props.onExitSplit ? (

@@ -330,7 +330,7 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 			: undefined;
 
 	return (
-		<div className="flex shrink-0 items-center gap-2 pr-1">
+		<div className="flex min-w-0 shrink items-center justify-end gap-2 overflow-hidden pr-1">
 			<ContextKeepSpinBox
 				value={currentState.keepRecent}
 				disabled={disabled}
