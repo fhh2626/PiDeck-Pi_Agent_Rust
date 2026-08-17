@@ -176,7 +176,7 @@ function ContextCheck(props: {
 							props.onToggle(value === true);
 						}}
 						onClick={(event) => event.stopPropagation()}
-						className="size-3.5"
+						className="size-3.5 min-w-3.5"
 						aria-label={props.tooltip}
 					/>
 					<span className={props.disabled ? "opacity-50" : undefined}>{props.label}</span>

@@ -2754,7 +2754,7 @@ select:focus-visible {
   background: color-mix(in srgb, var(--color-warning) 16%, transparent);
   color: var(--color-warning);
 }
-.chat-header-actions button,
+.chat-header-actions button:not([data-slot="switch"]):not([data-slot="checkbox"]):not([data-slot="select-trigger"]),
 .panel-action-row button {
   flex: 0 0 auto;
   min-width: 60px;
@@ -2827,11 +2827,11 @@ select:focus-visible {
 }
 
 /* ---- Header action buttons ---- */
-.chat-header-actions button:hover {
+.chat-header-actions button:not([data-slot="switch"]):not([data-slot="checkbox"]):not([data-slot="select-trigger"]):hover {
   background: var(--color-bg-hover);
   border-color: var(--color-border-strong);
 }
-.chat-header-actions button.active {
+.chat-header-actions button:not([data-slot="switch"]):not([data-slot="checkbox"]):not([data-slot="select-trigger"]).active {
   background: transparent;
   border-color: var(--color-accent);
   color: var(--color-accent);

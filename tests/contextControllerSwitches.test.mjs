@@ -228,7 +228,12 @@ test("i18n dictionaries contain matching context switch keys in both locales", (
 
 test("switch component has compact sm size and symmetric translate-x-2", () => {
 	const source = readFileSync("src/renderer/src/components/ui-shadcn/switch.tsx", "utf8");
-	assert.match(source, /data-\[size=sm\]:h-3\s+data-\[size=sm\]:w-5\s+data-\[size=sm\]:p-0\.5/);
+	assert.match(source, /data-\[size=sm\]:h-3\s+data-\[size=sm\]:w-5\s+data-\[size=sm\]:min-w-5\s+data-\[size=sm\]:p-0\.5/);
 	assert.match(source, /data-\[size=sm\]:size-2\s+data-\[size=sm\]:data-\[state=checked\]:translate-x-2/);
 	assert.match(source, /data-\[size=default\]:size-4/);
+});
+
+test("foundation.css header button rules exclude switch, checkbox, and select triggers from min-width: 60px", () => {
+	const css = readFileSync("src/renderer/src/styles/foundation.css", "utf8");
+	assert.match(css, /\.chat-header-actions button:not\(\[data-slot="switch"\]\):not\(\[data-slot="checkbox"\]\)/);
 });
