@@ -51,7 +51,8 @@ test("Web header mounts context checkboxes before the model picker", () => {
 	assert.ok(pickerIndex > checksIndex, "context checks must sit left of the model picker");
 	const checks = readFileSync("src/renderer/src/web/WebContextChecks.tsx", "utf8");
 	assert.match(checks, /applyLocalSwitch/);
-	assert.match(checks, /sendContextControllerCommand/);
+	assert.match(checks, /WebKeepSpinBox/);
+	assert.match(checks, /\/context-keep/);
 	assert.match(checks, /pendingRef/);
 });
 

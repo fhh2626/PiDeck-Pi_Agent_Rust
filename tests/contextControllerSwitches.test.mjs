@@ -48,7 +48,7 @@ const switchStubs = {
 	"../ui-shadcn/tooltip": {},
 };
 
-test("parseSwitchStateFromWidgetLines extracts the three switches", () => {
+test("parseSwitchStateFromWidgetLines extracts the two switches and keep-recent count", () => {
 	const { parseSwitchStateFromWidgetLines, parseSavedEstimateFromWidgetLines } = compile(
 		"src/renderer/src/components/session/ContextControllerSwitches.tsx",
 		switchStubs,
@@ -62,16 +62,16 @@ test("parseSwitchStateFromWidgetLines extracts the three switches", () => {
 	sameJson(
 		parseSwitchStateFromWidgetLines([
 			"~12k/256k 4.7%",
-			"Tool history ON",
+			"Keep recent 10",
 			"File content ON",
 			"Command output ON",
 		]),
-		{ toolHistory: true, fileContent: true, commandOutput: true },
+		{ fileContent: true, commandOutput: true, keepRecent: 10 },
 	);
 	assert.equal(
 		parseSavedEstimateFromWidgetLines([
 			"~12k/256k 4.7%",
-			"Tool history ON",
+			"Keep recent 10",
 			"File content ON",
 			"Command output ON",
 		]),
@@ -81,17 +81,17 @@ test("parseSwitchStateFromWidgetLines extracts the three switches", () => {
 	sameJson(
 		parseSwitchStateFromWidgetLines([
 			"~8k/256k 3.1%",
-			"Tool history ON",
+			"Keep recent 5",
 			"File content ON",
 			"Command output OFF",
 			"Saved ~4k (33%)",
 		]),
-		{ toolHistory: true, fileContent: true, commandOutput: false },
+		{ fileContent: true, commandOutput: false, keepRecent: 5 },
 	);
 	assert.equal(
 		parseSavedEstimateFromWidgetLines([
 			"~8k/256k 3.1%",
-			"Tool history ON",
+			"Keep recent 5",
 			"File content ON",
 			"Command output OFF",
 			"Saved ~4k (33%)",
@@ -108,48 +108,45 @@ test("parseSwitchStateFromWidgetLines extracts the three switches", () => {
 	);
 });
 
-test("applyLocalSwitch matches the plugin interlock table", () => {
+test("applyLocalSwitch updates individual switch without interlock", () => {
 	const { applyLocalSwitch } = compile(
 		"src/renderer/src/components/session/ContextControllerSwitches.tsx",
 		switchStubs,
 	);
-	const allOn = { toolHistory: true, fileContent: true, commandOutput: true };
-	sameJson(applyLocalSwitch(allOn, "toolHistory", false), {
-		toolHistory: false,
-		fileContent: false,
+	const allOn = { fileContent: true, commandOutput: true, keepRecent: 10 };
+	sameJson(applyLocalSwitch(allOn, "commandOutput", false), {
+		fileContent: true,
 		commandOutput: false,
+		keepRecent: 10,
 	});
-	sameJson(
-		applyLocalSwitch({ toolHistory: true, fileContent: true, commandOutput: true }, "commandOutput", false),
-		{ toolHistory: true, fileContent: true, commandOutput: false },
-	);
-	sameJson(
-		applyLocalSwitch({ toolHistory: false, fileContent: false, commandOutput: false }, "fileContent", true),
-		{ toolHistory: true, fileContent: true, commandOutput: false },
-	);
+	sameJson(applyLocalSwitch(allOn, "fileContent", false), {
+		fileContent: false,
+		commandOutput: true,
+		keepRecent: 10,
+	});
 });
 
-test("parseContextControllerStateFromJsonl extracts latest three-field state", () => {
+test("parseContextControllerStateFromJsonl extracts latest state with keepRecentCount", () => {
 	const { parseContextControllerStateFromJsonl } = compile(
 		"src/main/sessions/contextControllerStateReader.ts",
 		{},
 	);
 
 	const empty = parseContextControllerStateFromJsonl("");
-	sameJson(empty, { clearToolHistory: false, clearReadContent: false, clearCommandContent: false });
+	sameJson(empty, { clearToolHistory: false, clearReadContent: false, clearCommandContent: false, keepRecentCount: 10 });
 
 	const jsonlWithHistory = [
 		JSON.stringify({ type: "session", id: "sess-1" }),
 		JSON.stringify({
 			type: "custom",
 			customType: "pi-deck-context-controller",
-			data: { clearReadContent: true, clearCommandContent: false, clearToolHistory: false },
+			data: { clearReadContent: true, clearCommandContent: false, clearToolHistory: false, keepRecentCount: 5 },
 		}),
 		JSON.stringify({ type: "message", role: "assistant", content: "ok" }),
 		JSON.stringify({
 			type: "custom",
 			customType: "pi-deck-context-controller",
-			data: { clearReadContent: true, clearCommandContent: true, clearToolHistory: true },
+			data: { clearReadContent: true, clearCommandContent: true, clearToolHistory: true, keepRecentCount: 20 },
 		}),
 	].join("\n");
 
@@ -157,6 +154,7 @@ test("parseContextControllerStateFromJsonl extracts latest three-field state", (
 		clearToolHistory: true,
 		clearReadContent: true,
 		clearCommandContent: true,
+		keepRecentCount: 20,
 	});
 
 	const unknownLegacy = [
@@ -170,6 +168,7 @@ test("parseContextControllerStateFromJsonl extracts latest three-field state", (
 		clearToolHistory: false,
 		clearReadContent: false,
 		clearCommandContent: false,
+		keepRecentCount: 10,
 	});
 });
 
@@ -203,8 +202,9 @@ test("i18n dictionaries contain matching context switch keys in both locales", (
 	const en = readFileSync("src/renderer/src/i18n/rendererCopy.en-US.ts", "utf8");
 
 	const keys = [
-		"ctx.switches.allTools",
-		"ctx.switches.allToolsTooltip",
+		"ctx.switches.keepRecent",
+		"ctx.switches.keepRecentUnit",
+		"ctx.switches.keepRecentTooltip",
 		"ctx.switches.fileContent",
 		"ctx.switches.fileContentTooltip",
 		"ctx.switches.commandOutput",
@@ -213,7 +213,6 @@ test("i18n dictionaries contain matching context switch keys in both locales", (
 		"ctx.switches.pluginDisabled",
 		"ctx.switches.nextTurnNote",
 		"ctx.switches.savedEstimate",
-		"ctx.switches.webAllTools",
 		"ctx.switches.webFileContent",
 		"ctx.switches.webCommandOutput",
 	];
@@ -222,8 +221,8 @@ test("i18n dictionaries contain matching context switch keys in both locales", (
 		assert.ok(zh.includes(`"${key}"`), `zh-CN missing ${key}`);
 		assert.ok(en.includes(`"${key}"`), `en-US missing ${key}`);
 	}
-	assert.ok(!zh.includes("ctx.switches.toolOutput"), "zh-CN still has retired toolOutput key");
-	assert.ok(!en.includes("ctx.switches.toolOutput"), "en-US still has retired toolOutput key");
+	assert.ok(!zh.includes("ctx.switches.allTools"), "zh-CN still has retired allTools key");
+	assert.ok(!en.includes("ctx.switches.allTools"), "en-US still has retired allTools key");
 });
 
 test("switch component has compact sm size and symmetric translate-x-2", () => {

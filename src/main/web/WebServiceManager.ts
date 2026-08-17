@@ -134,7 +134,13 @@ const CONTEXT_CONTROLLER_COMMANDS = new Set([
 ]);
 
 function isAllowedContextControllerCommand(command: string): boolean {
-	return CONTEXT_CONTROLLER_COMMANDS.has(command);
+	if (CONTEXT_CONTROLLER_COMMANDS.has(command)) return true;
+	const match = command.match(/^\/context-keep\s+(\d+)$/);
+	if (match) {
+		const count = Number(match[1]);
+		return Number.isFinite(count) && count >= 0 && count <= 99;
+	}
+	return false;
 }
 
 function serializePublicWebPayload(body: unknown): string {

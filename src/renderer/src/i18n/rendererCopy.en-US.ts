@@ -185,8 +185,9 @@ export const enUS: Record<TranslationKey, string> = {
   "ctx.detail.snapshots": "snapshots",
   "ctx.detail.cost": "Total cost",
   "ctx.detail.costCny": "≈ CNY",
-  "ctx.switches.allTools": "All Tools",
-  "ctx.switches.allToolsTooltip": "Include all tool history in context (drops tool calls and outputs when off)",
+  "ctx.switches.keepRecent": "Keep last",
+  "ctx.switches.keepRecentUnit": "cmds",
+  "ctx.switches.keepRecentTooltip": "Keep the latest N tool results verbatim in context (regardless of switches; earlier calls are filtered, default 10)",
   "ctx.switches.fileContent": "File Contents",
   "ctx.switches.fileContentTooltip": "Include read-tool file bodies in context (omits file text, keeps paths and line ranges)",
   "ctx.switches.commandOutput": "Command Outputs",
@@ -195,7 +196,6 @@ export const enUS: Record<TranslationKey, string> = {
   "ctx.switches.pluginDisabled": "Context controller is disabled (enable in Settings)",
   "ctx.switches.nextTurnNote": "Applies to the next prompt; context usage numbers update after the next reply.",
   "ctx.switches.savedEstimate": "Estimated savings on next turn: {saved}",
-  "ctx.switches.webAllTools": "Tools",
   "ctx.switches.webFileContent": "Files",
   "ctx.switches.webCommandOutput": "Cmds",
   "app.cycleModel": "Cycle Model",
@@ -1168,7 +1168,7 @@ export const enUS: Record<TranslationKey, string> = {
   // Extension manager: the "(filtered)" marker from pi list (object-form entry in settings, loads resources selectively)
   "config.extensionFiltered": "Filtered install",
   // Localized descriptions for the recommended extension list (ExtensionsTab renders via descriptionKey)
-  "config.extRecommended.piDeckContextController": "Built into PiDeck-Q: a context controller. /context-tools toggles all tool history; /context-files toggles read-tool file bodies; /context-commands toggles non-read tool outputs. All stay on by default.",
+  "config.extRecommended.piDeckContextController": "Built into PiDeck-Q: a context controller. /context-keep keeps the latest N tool results verbatim; /context-files toggles older read-tool bodies; /context-commands toggles older non-read outputs. All stay on by default, keeping the last 10.",
   "config.extRecommended.piDeckTodo": "Built into PiDeck-Q: a TODO list extension that adds and manages task items in conversations, tracks completion, and persists across sessions.",
   "config.extRecommended.piDeckPlanMode": "Built into PiDeck-Q: a plan-mode extension that makes the AI produce an execution plan before replying, keeping complex tasks clear.",
   "config.extRecommended.piDeckAskQuestion": "Built into PiDeck-Q: inserts carefully designed question cards into conversations to guide the AI toward more precise answers.",

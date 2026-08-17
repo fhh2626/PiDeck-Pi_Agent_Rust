@@ -71,9 +71,9 @@ function sampleMessages() {
 	];
 }
 
-const ALL_ON = { clearToolHistory: false, clearReadContent: false, clearCommandContent: false };
+const ALL_ON = { clearToolHistory: false, clearReadContent: false, clearCommandContent: false, keepRecentCount: 10 };
 
-test("default state keeps the full context", () => {
+test("default state keeps the full context and keepRecent 10", () => {
 	const { DEFAULT_STATE, normalizeState } = loadContextControllerModule();
 	sameJson(DEFAULT_STATE, ALL_ON);
 	sameJson(normalizeState(undefined), ALL_ON);
@@ -85,6 +85,7 @@ test("turning history off also drops both content switches", () => {
 		clearToolHistory: true,
 		clearReadContent: true,
 		clearCommandContent: true,
+		keepRecentCount: 10,
 	});
 });
 
@@ -92,11 +93,11 @@ test("turning history on only restores the master switch", () => {
 	const { applyIncludeSwitch } = loadContextControllerModule();
 	sameJson(
 		applyIncludeSwitch(
-			{ clearToolHistory: true, clearReadContent: true, clearCommandContent: true },
+			{ clearToolHistory: true, clearReadContent: true, clearCommandContent: true, keepRecentCount: 10 },
 			"clearToolHistory",
 			true,
 		),
-		{ clearToolHistory: false, clearReadContent: true, clearCommandContent: true },
+		{ clearToolHistory: false, clearReadContent: true, clearCommandContent: true, keepRecentCount: 10 },
 	);
 });
 
@@ -104,19 +105,19 @@ test("turning file or command on also opens history", () => {
 	const { applyIncludeSwitch } = loadContextControllerModule();
 	sameJson(
 		applyIncludeSwitch(
-			{ clearToolHistory: true, clearReadContent: true, clearCommandContent: true },
+			{ clearToolHistory: true, clearReadContent: true, clearCommandContent: true, keepRecentCount: 10 },
 			"clearReadContent",
 			true,
 		),
-		{ clearToolHistory: false, clearReadContent: false, clearCommandContent: true },
+		{ clearToolHistory: false, clearReadContent: false, clearCommandContent: true, keepRecentCount: 10 },
 	);
 	sameJson(
 		applyIncludeSwitch(
-			{ clearToolHistory: false, clearReadContent: false, clearCommandContent: false },
+			{ clearToolHistory: false, clearReadContent: false, clearCommandContent: false, keepRecentCount: 10 },
 			"clearCommandContent",
 			false,
 		),
-		{ clearToolHistory: false, clearReadContent: false, clearCommandContent: true },
+		{ clearToolHistory: false, clearReadContent: false, clearCommandContent: true, keepRecentCount: 10 },
 	);
 });
 
@@ -126,12 +127,41 @@ test("filter keeps the full list when all strip switches are off", () => {
 	assert.equal(filterContextMessages(messages, DEFAULT_STATE).length, messages.length);
 });
 
+test("keepRecent window preserves the latest toolResult verbatim even when switch is off", () => {
+	const { filterContextMessages } = loadContextControllerModule();
+	// sampleMessages 有两个 toolResult：call_1 (read), call_2 (bash)
+	// keepRecentCount: 1 时，最新的 call_2 (bash) 原样保留，call_1 (read) 发生裁剪
+	const filtered = filterContextMessages(sampleMessages(), {
+		clearToolHistory: false,
+		clearReadContent: true,
+		clearCommandContent: true,
+		keepRecentCount: 1,
+	});
+	assert.equal(filtered.length, 6);
+	assert.equal(filtered[2].content[0].text, "[File content omitted: config.json (lines 1-40)]");
+	assert.match(filtered[4].content[0].text, /PASS tests/);
+});
+
+test("keepRecent 0 omits all matching tool results", () => {
+	const { filterContextMessages } = loadContextControllerModule();
+	const filtered = filterContextMessages(sampleMessages(), {
+		clearToolHistory: false,
+		clearReadContent: true,
+		clearCommandContent: true,
+		keepRecentCount: 0,
+	});
+	assert.equal(filtered.length, 6);
+	assert.equal(filtered[2].content[0].text, "[File content omitted: config.json (lines 1-40)]");
+	assert.equal(filtered[4].content[0].text, "[Command output omitted: npm test]");
+});
+
 test("clearReadContent stubs only read results and keeps the path", () => {
 	const { filterContextMessages } = loadContextControllerModule();
 	const filtered = filterContextMessages(sampleMessages(), {
 		clearToolHistory: false,
 		clearReadContent: true,
 		clearCommandContent: false,
+		keepRecentCount: 0,
 	});
 	assert.equal(filtered.length, 6);
 	assert.equal(filtered[2].role, "toolResult");
@@ -146,6 +176,7 @@ test("clearCommandContent stubs non-read results including bash without toolName
 		clearToolHistory: false,
 		clearReadContent: false,
 		clearCommandContent: true,
+		keepRecentCount: 0,
 	});
 	assert.match(filtered[2].content[0].text, /port/);
 	assert.equal(filtered[4].content[0].text, "[Command output omitted: npm test]");
@@ -167,16 +198,18 @@ test("websearch and webfetch follow the command-output switch", () => {
 		clearToolHistory: false,
 		clearReadContent: true,
 		clearCommandContent: true,
+		keepRecentCount: 0,
 	});
 	assert.equal(filtered[1].content[0].text, `[Web search omitted: "pi rpc"]`);
 });
 
-test("clearToolHistory removes toolResult and tool-only assistant turns", () => {
+test("clearToolHistory removes toolResult and tool-only assistant turns outside keepRecent", () => {
 	const { filterContextMessages } = loadContextControllerModule();
 	const filtered = filterContextMessages(sampleMessages(), {
 		clearToolHistory: true,
 		clearReadContent: true,
 		clearCommandContent: true,
+		keepRecentCount: 0,
 	});
 	assert.equal(filtered.some((message) => message.role === "toolResult"), false);
 	assert.equal(filtered.some((message) =>
@@ -187,23 +220,44 @@ test("clearToolHistory removes toolResult and tool-only assistant turns", () => 
 	assert.equal(filtered[1].content.some((block) => block.type === "thinking"), true);
 });
 
+test("clearToolHistory still keeps protected tool-only assistant turns", () => {
+	const { filterContextMessages } = loadContextControllerModule();
+	const filtered = filterContextMessages(sampleMessages(), {
+		clearToolHistory: true,
+		clearReadContent: true,
+		clearCommandContent: true,
+		keepRecentCount: 1,
+	});
+	assert.equal(filtered.some((message) => message.role === "toolResult" && message.toolCallId === "call_2"), true);
+	assert.equal(filtered.some((message) =>
+		Array.isArray(message.content) && message.content.some((block) => block.type === "toolCall" && block.id === "call_2"),
+	), true);
+	assert.equal(filtered.some((message) => message.role === "toolResult" && message.toolCallId === "call_1"), false);
+});
+
 test("session snapshot overrides the global fallback", () => {
 	const { restoreStateFromEntries, DEFAULT_STATE } = loadContextControllerModule();
 	const restored = restoreStateFromEntries([
 		{ type: "custom", customType: "other", data: { clearToolHistory: true } },
 		{ type: "custom", customType: "pi-deck-context-controller", data: { clearReadContent: true } },
-		{ type: "custom", customType: "pi-deck-context-controller", data: { clearToolHistory: true, clearCommandContent: true } },
+		{ type: "custom", customType: "pi-deck-context-controller", data: { clearToolHistory: true, clearCommandContent: true, keepRecentCount: 5 } },
 	], DEFAULT_STATE);
-	sameJson(restored, { clearToolHistory: true, clearReadContent: true, clearCommandContent: true });
+	sameJson(restored, { clearToolHistory: true, clearReadContent: true, clearCommandContent: true, keepRecentCount: 5 });
 });
 
 test("on/off args are explicit and do not invert", () => {
-	const { parseOnOffArg } = loadContextControllerModule();
+	const { parseOnOffArg, parseKeepRecentArg } = loadContextControllerModule();
 	assert.equal(parseOnOffArg("on"), true);
 	assert.equal(parseOnOffArg("off"), false);
 	assert.equal(parseOnOffArg(""), null);
 	assert.equal(parseOnOffArg("true"), null);
 	assert.equal(parseOnOffArg("ON"), true);
+	assert.equal(parseKeepRecentArg("10"), 10);
+	assert.equal(parseKeepRecentArg("0"), 0);
+	assert.equal(parseKeepRecentArg("99"), 99);
+	assert.equal(parseKeepRecentArg("100"), 99);
+	assert.equal(parseKeepRecentArg("-1"), null);
+	assert.equal(parseKeepRecentArg("abc"), null);
 });
 
 test("widget first line is the estimated usage so the chip shows it immediately", () => {
@@ -213,14 +267,14 @@ test("widget first line is the estimated usage so the chip shows it immediately"
 	assert.equal(formatUsageLine({ filteredTokens: 12400, savedTokens: 0, percentSaved: 0, contextWindow: 128000 }), "~12k/128k 9.7%");
 	sameJson(
 		buildWidgetLines(ALL_ON, { filteredTokens: 12400, savedTokens: 0, percentSaved: 0, contextWindow: 128000 }),
-		["~12k/128k 9.7%", "Tool history ON", "File content ON", "Command output ON"],
+		["~12k/128k 9.7%", "Keep recent 10", "File content ON", "Command output ON"],
 	);
 	sameJson(
 		buildWidgetLines(
-			{ clearToolHistory: true, clearReadContent: true, clearCommandContent: true },
+			{ clearToolHistory: true, clearReadContent: true, clearCommandContent: true, keepRecentCount: 10 },
 			{ filteredTokens: 2100, savedTokens: 10300, percentSaved: 83, contextWindow: 128000 },
 		),
-		["~2.1k/128k 1.6%", "Tool history OFF", "File content OFF", "Command output OFF", "Saved ~10k (83%)"],
+		["~2.1k/128k 1.6%", "Keep recent 10", "File content OFF", "Command output OFF", "Saved ~10k (83%)"],
 	);
 });
 
@@ -230,19 +284,21 @@ test("status helper reports include flags for the current chat", () => {
 		toolHistory: "on",
 		fileContent: "on",
 		commandOutput: "on",
+		keepRecent: 10,
 	});
 	assert.equal(
 		formatStatusText(getContextControllerStatus(DEFAULT_STATE)),
-		"tool-history on | file-content on | command-output on",
+		"keep-recent 10 | tool-history on | file-content on | command-output on",
 	);
 	sameJson(
-		getContextControllerStatus({ clearToolHistory: false, clearReadContent: true, clearCommandContent: false }),
-		{ toolHistory: "on", fileContent: "off", commandOutput: "on" },
+		getContextControllerStatus({ clearToolHistory: false, clearReadContent: true, clearCommandContent: false, keepRecentCount: 5 }),
+		{ toolHistory: "on", fileContent: "off", commandOutput: "on", keepRecent: 5 },
 	);
 });
 
-test("slash commands use the three-switch names", () => {
+test("slash commands include context-keep, files, commands, and tools", () => {
 	const source = readFileSync("resources/extensions/pi-deck-context-controller.ts", "utf8");
+	assert.match(source, /registerCommand\("context-keep"/);
 	assert.match(source, /registerCommand\("context-tools"/);
 	assert.match(source, /registerCommand\("context-files"/);
 	assert.match(source, /registerCommand\("context-commands"/);
@@ -263,7 +319,10 @@ test("command off immediately shrinks the widget estimate and snapshots the sess
 	} = loadContextControllerModule();
 	const messages = sampleMessages();
 	const full = summarizeFilter(messages, DEFAULT_STATE);
-	const afterOff = applyIncludeSwitch(DEFAULT_STATE, "clearCommandContent", parseOnOffArg("off"));
+	const afterOff = {
+		...applyIncludeSwitch(DEFAULT_STATE, "clearCommandContent", parseOnOffArg("off")),
+		keepRecentCount: 0,
+	};
 	const stripped = summarizeFilter(messages, afterOff);
 	assert.ok(stripped.filteredTokens < full.filteredTokens);
 	assert.ok(stripped.savedTokens > 0);
@@ -271,7 +330,7 @@ test("command off immediately shrinks the widget estimate and snapshots the sess
 
 	const lines = buildWidgetLines(afterOff, { ...stripped, contextWindow: 128000 });
 	assert.match(lines[0], /^~/);
-	assert.equal(lines[1], "Tool history ON");
+	assert.equal(lines[1], "Keep recent 0");
 	assert.equal(lines[2], "File content ON");
 	assert.equal(lines[3], "Command output OFF");
 

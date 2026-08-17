@@ -1,5 +1,5 @@
 /**
- * Web 顶栏上下文控制：三个 Checkbox，规则与桌面三开关相同。
+ * Web 顶栏上下文控制：保留最近 N 条数字框 + 两个 Checkbox（文件/命令）。
  * 状态以会话 JSONL 快照为准；乐观更新期间不让轮询盖掉本地选择。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -8,35 +8,29 @@ import { Checkbox } from "@/components/ui-shadcn/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui-shadcn/tooltip";
 import {
 	applyLocalSwitch,
+	DEFAULT_SWITCH_STATE,
 	type ContextSwitchState,
 } from "../components/session/ContextControllerSwitches";
 import { fetchContextControllerState, sendContextControllerCommand } from "./webApi";
 import type { WebHeaderStatus } from "./WebHeader";
 
-const DEFAULT_SWITCH_STATE: ContextSwitchState = {
-	toolHistory: true,
-	fileContent: true,
-	commandOutput: true,
-};
-
 const POLL_MS = 4000;
 
-function commandForKey(key: keyof ContextSwitchState, include: boolean): string {
+function commandForKey(key: "fileContent" | "commandOutput", include: boolean): string {
 	const flag = include ? "on" : "off";
-	if (key === "toolHistory") return `/context-tools ${flag}`;
 	if (key === "fileContent") return `/context-files ${flag}`;
 	return `/context-commands ${flag}`;
 }
 
 function toSwitchState(res: {
-	clearToolHistory: boolean;
 	clearReadContent: boolean;
 	clearCommandContent: boolean;
+	keepRecentCount?: number;
 }): ContextSwitchState {
 	return {
-		toolHistory: !res.clearToolHistory,
 		fileContent: !res.clearReadContent,
 		commandOutput: !res.clearCommandContent,
+		keepRecent: typeof res.keepRecentCount === "number" ? res.keepRecentCount : 10,
 	};
 }
 
@@ -76,7 +70,7 @@ export function WebContextChecks(props: {
 		void loadState(sessionId);
 	}, [sessionId, loadState]);
 
-	// 桌面端改开关后，Web 靠 JSONL 轮询跟上；本地乐观更新期间跳过，防止闪回。
+	// 桌面端改动后，Web 靠 JSONL 轮询跟上；本地乐观更新期间跳过，防止闪回。
 	useEffect(() => {
 		if (!sessionId) return;
 		const timer = window.setInterval(() => {
@@ -85,15 +79,14 @@ export function WebContextChecks(props: {
 		return () => window.clearInterval(timer);
 	}, [sessionId, loadState]);
 
-	const toggle = useCallback(async (key: keyof ContextSwitchState, include: boolean) => {
+	const sendCommand = useCallback(async (command: string, next: ContextSwitchState) => {
 		if (disabled || !sessionId) return;
 		const prev = state;
-		const next = applyLocalSwitch(prev, key, include);
 		setState(next);
 		setError(null);
 		pendingRef.current = true;
 		try {
-			const result = await sendContextControllerCommand(sessionId, commandForKey(key, include));
+			const result = await sendContextControllerCommand(sessionId, command);
 			if (sessionIdRef.current !== sessionId) return;
 			if (!result.accepted) {
 				setState(prev);
@@ -108,6 +101,16 @@ export function WebContextChecks(props: {
 		}
 	}, [disabled, sessionId, state]);
 
+	const toggle = useCallback((key: "fileContent" | "commandOutput", include: boolean) => {
+		const next = applyLocalSwitch(state, key, include);
+		void sendCommand(commandForKey(key, include), next);
+	}, [sendCommand, state]);
+
+	const setKeepRecent = useCallback((count: number) => {
+		const next = { ...state, keepRecent: count };
+		void sendCommand(`/context-keep ${count}`, next);
+	}, [sendCommand, state]);
+
 	const disabledReason = !sessionId
 		? t("web.chooseSession")
 		: busy
@@ -116,13 +119,11 @@ export function WebContextChecks(props: {
 
 	return (
 		<div className="flex min-w-0 flex-wrap items-center gap-2">
-			<ContextCheck
-				label={t("ctx.switches.webAllTools")}
-				tooltip={t("ctx.switches.allToolsTooltip")}
-				checked={state.toolHistory}
+			<WebKeepSpinBox
+				value={state.keepRecent}
 				disabled={disabled}
 				disabledReason={disabledReason}
-				onToggle={(next) => void toggle("toolHistory", next)}
+				onChange={setKeepRecent}
 			/>
 			<ContextCheck
 				label={t("ctx.switches.webFileContent")}
@@ -146,6 +147,68 @@ export function WebContextChecks(props: {
 				</span>
 			) : null}
 		</div>
+	);
+}
+
+function WebKeepSpinBox(props: {
+	value: number;
+	disabled: boolean;
+	disabledReason?: string;
+	onChange: (next: number) => void;
+}) {
+	const [text, setText] = useState(() => String(props.value));
+
+	useEffect(() => {
+		setText(String(props.value));
+	}, [props.value]);
+
+	const commit = useCallback(() => {
+		const parsed = Number(text.trim());
+		const clamped = Number.isFinite(parsed) ? Math.max(0, Math.min(99, Math.floor(parsed))) : props.value;
+		setText(String(clamped));
+		if (clamped !== props.value) {
+			props.onChange(clamped);
+		}
+	}, [props, text]);
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<label className={`flex items-center gap-1 text-caption text-muted-foreground select-none ${props.disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
+					<span className="whitespace-nowrap">{t("ctx.switches.keepRecent")}</span>
+					<input
+						type="number"
+						min={0}
+						max={99}
+						step={1}
+						disabled={props.disabled}
+						value={text}
+						onChange={(e) => setText(e.target.value)}
+						onBlur={commit}
+						onKeyDown={(e) => {
+							if (e.key === "Enter") {
+								commit();
+								e.currentTarget.blur();
+							}
+						}}
+						onClick={(e) => e.stopPropagation()}
+						className="h-5 w-8 rounded border border-input bg-transparent px-0.5 text-center text-caption font-medium tabular-nums shadow-2xs outline-none focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
+						aria-label={t("ctx.switches.keepRecentTooltip")}
+					/>
+					<span className="whitespace-nowrap">{t("ctx.switches.keepRecentUnit")}</span>
+				</label>
+			</TooltipTrigger>
+			<TooltipContent side="bottom" align="end" className="max-w-72">
+				{props.disabledReason ?? (
+					<div className="grid gap-1">
+						<div>{t("ctx.switches.keepRecentTooltip")}</div>
+						<div className="border-t border-border/60 pt-1 text-micro text-muted-foreground">
+							{t("ctx.switches.nextTurnNote")}
+						</div>
+					</div>
+				)}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 

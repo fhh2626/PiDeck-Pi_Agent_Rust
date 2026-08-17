@@ -271,6 +271,7 @@ export function createBrowserApi(): PiDesktopApi {
 				clearToolHistory: false,
 				clearReadContent: false,
 				clearCommandContent: false,
+				keepRecentCount: 10,
 			}),
 			sendPrompt: async (input) => {
 				const response = await request<{

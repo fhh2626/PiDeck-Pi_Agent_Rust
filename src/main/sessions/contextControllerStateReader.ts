@@ -4,11 +4,17 @@ export const DEFAULT_CONTEXT_CONTROLLER_STATE: ContextControllerState = {
 	clearToolHistory: false,
 	clearReadContent: false,
 	clearCommandContent: false,
+	keepRecentCount: 10,
 };
+
+function clampKeepRecentCount(raw: unknown): number {
+	if (typeof raw !== "number" || !Number.isFinite(raw)) return 10;
+	return Math.max(0, Math.min(99, Math.floor(raw)));
+}
 
 /**
  * 从会话 JSONL 文本从后向前扫描最后一条 pi-deck-context-controller 状态快照。
- * 只认三字段新契约；无快照或字段缺失时按默认全开（false）。
+ * 无快照或字段缺失时按默认值全开 + 保留最近 10 条。
  */
 export function parseContextControllerStateFromJsonl(content: string): ContextControllerState {
 	if (!content) return { ...DEFAULT_CONTEXT_CONTROLLER_STATE };
@@ -28,6 +34,7 @@ export function parseContextControllerStateFromJsonl(content: string): ContextCo
 					clearToolHistory: data.clearToolHistory === true,
 					clearReadContent: data.clearReadContent === true,
 					clearCommandContent: data.clearCommandContent === true,
+					keepRecentCount: clampKeepRecentCount(data.keepRecentCount),
 				};
 			}
 		} catch {

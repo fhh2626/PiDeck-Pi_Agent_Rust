@@ -165,12 +165,14 @@ export type ImageContent = {
 };
 
 export type ContextControllerState = {
-	/** 丢掉全部 toolCall + toolResult */
+	/** 丢掉全部 toolCall + toolResult（早于最近 keepRecentCount 条的调用） */
 	clearToolHistory: boolean;
-	/** stub read 正文 */
+	/** stub read 正文（早于最近 keepRecentCount 条的调用） */
 	clearReadContent: boolean;
-	/** stub 非 read 正文 */
+	/** stub 非 read 正文（早于最近 keepRecentCount 条的调用） */
 	clearCommandContent: boolean;
+	/** 保留最近 N 条工具结果原文不裁剪（默认 10，范围 0-99） */
+	keepRecentCount: number;
 };
 
 export type SendPromptInput = {

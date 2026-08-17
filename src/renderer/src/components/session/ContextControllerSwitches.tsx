@@ -1,7 +1,7 @@
 import { useAtomValue } from "jotai";
 import { selectAtom } from "jotai/utils";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { FileText, Terminal, Wrench } from "lucide-react";
+import { FileText, Terminal } from "lucide-react";
 import {
 	contextControllerSettingsAtom,
 	sessionRuntimeBySessionIdAtomFamily,
@@ -16,42 +16,48 @@ import { Switch } from "../ui-shadcn/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui-shadcn/tooltip";
 
 export type ContextSwitchState = {
-	toolHistory: boolean;
 	fileContent: boolean;
 	commandOutput: boolean;
+	keepRecent: number;
 };
 
-const DEFAULT_SWITCH_STATE: ContextSwitchState = {
-	toolHistory: true,
+export const DEFAULT_SWITCH_STATE: ContextSwitchState = {
 	fileContent: true,
 	commandOutput: true,
+	keepRecent: 10,
 };
 
 /**
- * 从 CTX widget 文本行解析当前开/关状态。
+ * 从 CTX widget 文本行解析当前开/关状态与保留窗口。
  * 行契约：
- *   "Tool history ON" | "Tool history OFF"
+ *   "Keep recent 10"
  *   "File content ON" | "File content OFF"
  *   "Command output ON" | "Command output OFF"
  */
 export function parseSwitchStateFromWidgetLines(lines?: readonly string[]): ContextSwitchState | null {
 	if (!lines || lines.length === 0) return null;
-	let toolHistory: boolean | null = null;
 	let fileContent: boolean | null = null;
 	let commandOutput: boolean | null = null;
+	let keepRecent: number | null = null;
 
 	for (const line of lines) {
-		const trimmed = line.trim().toUpperCase();
-		if (trimmed === "TOOL HISTORY ON") toolHistory = true;
-		else if (trimmed === "TOOL HISTORY OFF") toolHistory = false;
-		else if (trimmed === "FILE CONTENT ON") fileContent = true;
-		else if (trimmed === "FILE CONTENT OFF") fileContent = false;
-		else if (trimmed === "COMMAND OUTPUT ON") commandOutput = true;
-		else if (trimmed === "COMMAND OUTPUT OFF") commandOutput = false;
+		const trimmed = line.trim();
+		const upper = trimmed.toUpperCase();
+		if (upper === "FILE CONTENT ON") fileContent = true;
+		else if (upper === "FILE CONTENT OFF") fileContent = false;
+		else if (upper === "COMMAND OUTPUT ON") commandOutput = true;
+		else if (upper === "COMMAND OUTPUT OFF") commandOutput = false;
+		else {
+			const keepMatch = trimmed.match(/^Keep\s+recent\s+(\d+)$/i);
+			if (keepMatch) {
+				const num = Number(keepMatch[1]);
+				if (Number.isFinite(num)) keepRecent = Math.max(0, Math.min(99, Math.floor(num)));
+			}
+		}
 	}
 
-	if (toolHistory != null && fileContent != null && commandOutput != null) {
-		return { toolHistory, fileContent, commandOutput };
+	if (fileContent != null && commandOutput != null) {
+		return { fileContent, commandOutput, keepRecent: keepRecent ?? 10 };
 	}
 	return null;
 }
@@ -72,34 +78,80 @@ export function parseSavedEstimateFromWidgetLines(lines?: readonly string[]): st
 	return null;
 }
 
-/** 与插件 applyIncludeSwitch 同一张联动表：关总闸三项全关；开文件/命令则打开总闸。 */
 export function applyLocalSwitch(
 	state: ContextSwitchState,
-	key: keyof ContextSwitchState,
+	key: "fileContent" | "commandOutput",
 	include: boolean,
 ): ContextSwitchState {
-	if (key === "toolHistory") {
-		return include
-			? { ...state, toolHistory: true }
-			: { toolHistory: false, fileContent: false, commandOutput: false };
-	}
-	if (include) {
-		return { ...state, [key]: true, toolHistory: true };
-	}
-	return { ...state, [key]: false };
+	return { ...state, [key]: include };
 }
 
-function commandForKey(key: keyof ContextSwitchState, include: boolean): string {
+function commandForKey(key: "fileContent" | "commandOutput", include: boolean): string {
 	const flag = include ? "on" : "off";
-	if (key === "toolHistory") return `/context-tools ${flag}`;
 	if (key === "fileContent") return `/context-files ${flag}`;
 	return `/context-commands ${flag}`;
 }
 
-function tooltipKeyFor(key: keyof ContextSwitchState): "ctx.switches.allToolsTooltip" | "ctx.switches.fileContentTooltip" | "ctx.switches.commandOutputTooltip" {
-	if (key === "toolHistory") return "ctx.switches.allToolsTooltip";
-	if (key === "fileContent") return "ctx.switches.fileContentTooltip";
-	return "ctx.switches.commandOutputTooltip";
+function ContextKeepSpinBox(props: {
+	value: number;
+	disabled: boolean;
+	disabledReason?: string;
+	onChange: (next: number) => void;
+}) {
+	const [text, setText] = useState(() => String(props.value));
+
+	useEffect(() => {
+		setText(String(props.value));
+	}, [props.value]);
+
+	const commit = useCallback(() => {
+		const parsed = Number(text.trim());
+		const clamped = Number.isFinite(parsed) ? Math.max(0, Math.min(99, Math.floor(parsed))) : props.value;
+		setText(String(clamped));
+		if (clamped !== props.value) {
+			props.onChange(clamped);
+		}
+	}, [props, text]);
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<label className={`flex items-center gap-1 text-xs text-muted-foreground select-none ${props.disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
+					<span className="text-caption font-medium whitespace-nowrap">{t("ctx.switches.keepRecent")}</span>
+					<input
+						type="number"
+						min={0}
+						max={99}
+						step={1}
+						disabled={props.disabled}
+						value={text}
+						onChange={(e) => setText(e.target.value)}
+						onBlur={commit}
+						onKeyDown={(e) => {
+							if (e.key === "Enter") {
+								commit();
+								e.currentTarget.blur();
+							}
+						}}
+						onClick={(e) => e.stopPropagation()}
+						className="h-5 w-8 rounded border border-input bg-transparent px-0.5 text-center text-caption font-medium tabular-nums shadow-2xs outline-none focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
+						aria-label={t("ctx.switches.keepRecentTooltip")}
+					/>
+					<span className="text-caption font-medium whitespace-nowrap">{t("ctx.switches.keepRecentUnit")}</span>
+				</label>
+			</TooltipTrigger>
+			<TooltipContent side="bottom" align="end" className="max-w-72">
+				{props.disabledReason ?? (
+					<div className="grid gap-1">
+						<div>{t("ctx.switches.keepRecentTooltip")}</div>
+						<div className="border-t border-border/60 pt-1 text-muted-foreground text-micro">
+							{t("ctx.switches.nextTurnNote")}
+						</div>
+					</div>
+				)}
+			</TooltipContent>
+		</Tooltip>
+	);
 }
 
 function ContextSwitchRow(props: {
@@ -128,7 +180,7 @@ function ContextSwitchRow(props: {
 				>
 					<span className={labelClass}>
 						{props.icon}
-						<span className="text-caption font-medium">{props.label}</span>
+						<span className="text-caption font-medium whitespace-nowrap">{props.label}</span>
 					</span>
 					<Switch
 						size="sm"
@@ -206,9 +258,9 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 			.then((res) => {
 				if (cancelled || !res) return;
 				setPersistedState({
-					toolHistory: !res.clearToolHistory,
 					fileContent: !res.clearReadContent,
 					commandOutput: !res.clearCommandContent,
+					keepRecent: typeof res.keepRecentCount === "number" ? res.keepRecentCount : 10,
 				});
 			})
 			.catch(() => {
@@ -223,9 +275,9 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 	useEffect(() => {
 		if (!pendingState || !widgetState) return;
 		if (
-			widgetState.toolHistory === pendingState.toolHistory &&
 			widgetState.fileContent === pendingState.fileContent &&
-			widgetState.commandOutput === pendingState.commandOutput
+			widgetState.commandOutput === pendingState.commandOutput &&
+			widgetState.keepRecent === pendingState.keepRecent
 		) {
 			setPendingState(null);
 		}
@@ -233,28 +285,24 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 
 	const currentState = pendingState ?? widgetState ?? persistedState;
 
-	const sendSilentCommand = useCallback(async (
-		key: keyof ContextSwitchState,
-		include: boolean,
-	) => {
+	const sendSilentCommand = useCallback(async (command: string, nextState: ContextSwitchState) => {
 		if (isBusy || isPluginDisabled || !sessionId) return;
 		const prev = currentState;
-		const next = applyLocalSwitch(prev, key, include);
-		setPendingState(next);
-		setPersistedState(next);
+		setPendingState(nextState);
+		setPersistedState(nextState);
 
 		try {
 			const result = await desktopApi.sessions.sendPrompt({
 				sessionId,
 				requestId: crypto.randomUUID(),
 				message: "",
-				agentMessage: commandForKey(key, include),
+				agentMessage: command,
 				silent: true,
 			});
 			if (!result.accepted) {
 				setPendingState(null);
 				setPersistedState(prev);
-				showNotice(result.error || t(tooltipKeyFor(key)), 3000, "error");
+				showNotice(result.error || t("ctx.switches.pluginDisabled"), 3000, "error");
 			}
 		} catch (error) {
 			setPendingState(null);
@@ -263,6 +311,16 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 			showNotice(message, 3000, "error");
 		}
 	}, [currentState, isBusy, isPluginDisabled, sessionId]);
+
+	const toggleSwitch = useCallback((key: "fileContent" | "commandOutput", include: boolean) => {
+		const next = applyLocalSwitch(currentState, key, include);
+		void sendSilentCommand(commandForKey(key, include), next);
+	}, [currentState, sendSilentCommand]);
+
+	const setKeepRecent = useCallback((count: number) => {
+		const next = { ...currentState, keepRecent: count };
+		void sendSilentCommand(`/context-keep ${count}`, next);
+	}, [currentState, sendSilentCommand]);
 
 	const disabled = isPluginDisabled || isBusy;
 	const disabledReason = isPluginDisabled
@@ -273,15 +331,11 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 
 	return (
 		<div className="flex shrink-0 items-center gap-2 pr-1">
-			<ContextSwitchRow
-				icon={<Wrench size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />}
-				label={t("ctx.switches.allTools")}
-				tooltip={t("ctx.switches.allToolsTooltip")}
-				checked={currentState.toolHistory}
+			<ContextKeepSpinBox
+				value={currentState.keepRecent}
 				disabled={disabled}
 				disabledReason={disabledReason}
-				savedEstimate={savedEstimate}
-				onToggle={(next) => void sendSilentCommand("toolHistory", next)}
+				onChange={setKeepRecent}
 			/>
 			<ContextSwitchRow
 				icon={<FileText size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />}
@@ -291,7 +345,7 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 				disabled={disabled}
 				disabledReason={disabledReason}
 				savedEstimate={savedEstimate}
-				onToggle={(next) => void sendSilentCommand("fileContent", next)}
+				onToggle={(next) => void toggleSwitch("fileContent", next)}
 			/>
 			<ContextSwitchRow
 				icon={<Terminal size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />}
@@ -301,7 +355,7 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 				disabled={disabled}
 				disabledReason={disabledReason}
 				savedEstimate={savedEstimate}
-				onToggle={(next) => void sendSilentCommand("commandOutput", next)}
+				onToggle={(next) => void toggleSwitch("commandOutput", next)}
 			/>
 		</div>
 	);

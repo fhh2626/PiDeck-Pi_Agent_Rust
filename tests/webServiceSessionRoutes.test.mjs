@@ -256,6 +256,7 @@ test("context-controller routes share silent sendSessionPrompt and do not lock p
 			clearToolHistory: false,
 			clearReadContent: false,
 			clearCommandContent: true,
+			keepRecentCount: 10,
 		});
 
 		const posted = await fetch(`${baseUrl}/api/sessions/session-1/context-controller`, {
@@ -271,13 +272,30 @@ test("context-controller routes share silent sendSessionPrompt and do not lock p
 		assert.equal(calls.send[0].agentMessage, "/context-commands off");
 		assert.equal(calls.send[0].message, "");
 
+		const postedKeep = await fetch(`${baseUrl}/api/sessions/session-1/context-controller`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ command: "/context-keep 15" }),
+		});
+		assert.equal(postedKeep.status, 200);
+		assert.equal((await postedKeep.json()).result.accepted, true);
+		assert.equal(calls.send.length, 2);
+		assert.equal(calls.send[1].agentMessage, "/context-keep 15");
+
+		const rejectedKeep = await fetch(`${baseUrl}/api/sessions/session-1/context-controller`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ command: "/context-keep 100" }),
+		});
+		assert.equal(rejectedKeep.status, 400);
+
 		const rejected = await fetch(`${baseUrl}/api/sessions/session-1/context-controller`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ command: "/context-tools flip" }),
 		});
 		assert.equal(rejected.status, 400);
-		assert.equal(calls.send.length, 1);
+		assert.equal(calls.send.length, 2);
 
 		const promptResponse = await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
 			method: "POST",
@@ -286,12 +304,13 @@ test("context-controller routes share silent sendSessionPrompt and do not lock p
 		});
 		assert.equal(promptResponse.status, 200);
 		assert.equal((await promptResponse.json()).result.accepted, true);
-		assert.equal(calls.send.length, 2);
+		assert.equal(calls.send.length, 3);
 	}, {
 		getContextControllerState: async () => ({
 			clearToolHistory: false,
 			clearReadContent: false,
 			clearCommandContent: true,
+			keepRecentCount: 10,
 		}),
 	});
 });
