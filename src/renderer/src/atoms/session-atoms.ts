@@ -120,6 +120,8 @@ export type SessionMessageCacheEntry = {
 		nextBefore: number | null;
 		/** 下一页续页锚点（页最旧条目的 entryId，2026-11 缓存优先路径用） */
 		nextBeforeEntryId?: string | null;
+		/** 磁盘分页已确认到顶。slideOut 合成的 nextBefore=null 不算到顶。 */
+		exhausted?: boolean;
 		version?: string;
 		/** 压缩刚完成时暂缓自动回底清理，避免用户看到的历史立即消失。 */
 		sticky?: boolean;
@@ -748,8 +750,6 @@ function reconcileHistoryPrefix(
     return history;
   }
   const nextBefore = history?.nextBefore ?? (
-    preserveHistory &&
-    slideMessages.length > 0 &&
     typeof historyBefore === "number" &&
     historyBefore > 0
       ? historyBefore
@@ -760,6 +760,7 @@ function reconcileHistoryPrefix(
     ...(history?.nextBeforeEntryId !== undefined
       ? { nextBeforeEntryId: history?.nextBeforeEntryId }
       : {}),
+    ...(history?.exhausted ? { exhausted: true } : {}),
     version: fileVersion ?? history?.version,
     ...(stickyHistory ? { sticky: true } : {}),
     messages,
@@ -787,8 +788,15 @@ export const prependSessionHistoryPageAtom = atom(
     ) {
       return false;
     }
-    // 续页必须游标连续；首次加载（无 history）不要求
-    if (current.history && current.history.nextBefore !== input.before) return false;
+    // 续页必须游标连续；首次加载（无 history）不要求。
+    // slideOut 合成前缀的 nextBefore=null 只表示「游标未知」，不是到顶，
+    // 按首次页（before === undefined）接受，避免长会话滚到顶后无法再翻。
+    if (current.history && current.history.nextBefore !== input.before) {
+      const unknownCursor = current.history.nextBefore === null && !current.history.exhausted;
+      // 未知游标既可能走 beforeEntryId 首次页（before === undefined），
+      // 也可能用 windowStartFilePos 当数值 before。两者都不是续页错位。
+      if (!(unknownCursor && (input.before === undefined || typeof input.before === "number"))) return false;
+    }
     // 回底清理后迟到的续页直接拒绝：history 已清空时只接受新的首次页（before === undefined），
     // 否则慢响应会把已释放的历史前缀复活并携带旧滚动锚点。
     if (!current.history && input.before !== undefined) return false;
@@ -811,16 +819,17 @@ export const prependSessionHistoryPageAtom = atom(
       ...get(sessionMessagesCacheAtom),
       [input.sessionId]: {
         ...current,
-        history: merged.length > 0 || input.page.nextBefore !== null
-          ? {
+        // 空页 + nextBefore=null 也要留下 exhausted 前缀：
+        // 否则 history 被清掉后 hasMore 会回退到 windowStart>0，顶部按钮反复出现、空翻死循环。
+        history: {
               messages: merged,
               nextBefore: input.page.nextBefore,
               // 续页锚点：本次页最旧条目的 entryId（渲染层续页请求携带，缓存优先路径依赖）
               ...(input.page.nextBeforeEntryId ? { nextBeforeEntryId: input.page.nextBeforeEntryId } : {}),
+              ...(input.page.nextBefore === null ? { exhausted: true } : {}),
               version: input.page.indexVersion ?? current.history?.version,
               ...(current.history?.sticky ? { sticky: true } : {}),
-            }
-          : undefined,
+            },
         updatedAt: Date.now(),
       },
     });

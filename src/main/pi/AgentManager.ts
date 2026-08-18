@@ -717,9 +717,13 @@ export class AgentManager {
 		const page = list.slice(start, pos);
 		const oldest = page[0] ?? list[0];
 		const oldestEntryId = typeof oldest?.meta?.entryId === "string" ? oldest.meta.entryId : undefined;
-		const nextBefore = oldestEntryId
-			? (await this.sessionHistoryReader.resolveEntryPosition(sessionPath, oldestEntryId)) ?? null
-			: null;
+		// 缓存页的 nextBefore 必须是文件下标空间。缺 entryId 或解析失败时，
+		// 不能用运行时数组下标冒充，更不能写成 null（那是「已经到顶」）。
+		// 这两种情况都回退文件路径，由 SessionHistoryReader 给出正确游标。
+		if (!oldestEntryId) return null;
+		const resolvedOldest = await this.sessionHistoryReader.resolveEntryPosition(sessionPath, oldestEntryId);
+		if (resolvedOldest === undefined) return null;
+		const nextBefore = resolvedOldest;
 		const total = await this.sessionHistoryReader.getActiveEntryCount(sessionPath);
 		// 与文件路径同口径的会话文件版本：渲染层据此检测压缩/外部改写并丢弃已缓存的历史前缀
 		// （indexVersion 缺失会让 cache 页沿用旧版本，压缩后前缀失效不可见）。

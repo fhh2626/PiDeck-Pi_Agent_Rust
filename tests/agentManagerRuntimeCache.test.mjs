@@ -165,6 +165,39 @@ test("tryReadRuntimeTurnPage cache pages carry the file indexVersion and cursor 
   }
 });
 
+test("tryReadRuntimeTurnPage misses instead of claiming the top when the cache page has no entryId", async () => {
+  const { manager, sessionPath, directory } = await createHarness();
+  try {
+    const list = manager.messages.get("agent-1").map((message) => (
+      message.meta.entryId === "e7"
+        ? message
+        : { ...message, meta: {} }
+    ));
+    manager.messages.set("agent-1", list);
+    const page = await manager.tryReadRuntimeTurnPage(sessionPath, "agent-1", {
+      beforeEntryId: "e7",
+      turnCount: 3,
+    });
+    assert.equal(page, null, "cache pages without entryId must not emit a runtime-index cursor");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("tryReadRuntimeTurnPage misses instead of claiming the top when the file cursor cannot be resolved", async () => {
+  const { manager, sessionPath, directory } = await createHarness();
+  try {
+    manager.sessionHistoryReader.resolveEntryPosition = async () => undefined;
+    const page = await manager.tryReadRuntimeTurnPage(sessionPath, "agent-1", {
+      beforeEntryId: "e7",
+      turnCount: 3,
+    });
+    assert.equal(page, null, "unresolved file cursor must fall back to the disk path, not nextBefore=null");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("cache-miss edit/delete/resend locate the file entry via synthetic ids and restore the text draft", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pideck-runtime-cache-miss-"));
   const sessionPath = join(directory, "session.jsonl");
