@@ -54,13 +54,17 @@ export type SidebarCatalog = {
   catalogLoadStateByProject: Readonly<Record<string, { status: string } | undefined>>;
 };
 
-/** A terminal runtime no longer owns its Session and may safely be discarded. */
+/**
+ * 侧栏是否仍绑着一个可关闭的 pi 进程。
+ * error 不是终态：prompt 中断/RPC 失败后进程常还在，只是状态打成 error。
+ * 若把 error 当成已退出，右键会落到「只有删除」的历史菜单，删除又因进程还在而失败。
+ * 只有 detached/closed 才表示进程已释放，可以走删除/归档。
+ */
 export function hasLiveSidebarRuntime(runtime: SidebarRuntimeSummary | undefined): boolean {
   return Boolean(
     runtime?.agentId &&
     runtime.status !== "detached" &&
-    runtime.status !== "closed" &&
-    runtime.status !== "error",
+    runtime.status !== "closed",
   );
 }
 
@@ -131,7 +135,8 @@ export function getBoundSidebarRuntimeAgent(
   const agentId = runtime?.agentId;
   if (!hasLiveSidebarRuntime(runtime) || !agentId) return undefined;
   const agent = catalog.agents.find((candidate) => candidate.id === agentId);
-  return agent && agent.status !== "closed" && agent.status !== "error" ? agent : undefined;
+  // error 的 agent 仍占着进程，必须能打开「关闭 Agent」菜单。
+  return agent && agent.status !== "closed" ? agent : undefined;
 }
 
 /**

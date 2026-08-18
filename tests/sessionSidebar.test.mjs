@@ -99,6 +99,28 @@ test("runtime context authorization uses the record binding instead of a same-pa
   assert.doesNotMatch(source, /getAgentForSessionPath/);
 });
 
+test("interrupted error runtimes stay closeable instead of falling back to delete-only", () => {
+  const { getBoundSidebarRuntimeAgent, hasLiveSidebarRuntime } = loadControllerModule();
+  assert.equal(hasLiveSidebarRuntime({ agentId: "broken", status: "error" }), true);
+  assert.equal(hasLiveSidebarRuntime({ agentId: "gone", status: "closed" }), false);
+  assert.equal(hasLiveSidebarRuntime({ agentId: "gone", status: "detached" }), false);
+  const catalog = {
+    runtimeBySessionId: {
+      "session-error": { agentId: "broken", status: "error" },
+      "session-closed": { agentId: "gone", status: "closed" },
+    },
+    agents: [
+      { id: "broken", status: "error", sessionPath: "C:/broken.jsonl" },
+      { id: "gone", status: "closed", sessionPath: "C:/gone.jsonl" },
+    ],
+  };
+  assert.equal(getBoundSidebarRuntimeAgent(catalog, "session-error").id, "broken");
+  assert.equal(getBoundSidebarRuntimeAgent(catalog, "session-closed"), undefined);
+  const source = readFileSync("src/renderer/src/components/sidebar/SessionTree.tsx", "utf8");
+  assert.match(source, /getBoundSidebarRuntimeAgent\(props\.controller\.catalog, session\.id\)/);
+  assert.doesNotMatch(source, /getAgentForSessionPath/);
+});
+
 test("request gate rejects stale menu results after a newer request or close", () => {
   const { createSidebarRequestGate } = loadControllerModule();
   const gate = createSidebarRequestGate();
