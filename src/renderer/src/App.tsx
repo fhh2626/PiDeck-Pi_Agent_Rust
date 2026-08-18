@@ -112,6 +112,7 @@ import { useScratchPad } from "./hooks/useScratchPad";
 import { useWorktreeActions } from "./hooks/useWorktreeActions";
 import { ChatSessionPane } from "./components/session/ChatSessionPane";
 import { SessionSplitStage } from "./components/session/SessionSplitStage";
+import { canStopBoundAgent } from "./utils/canStopBoundAgent";
 import { splitLayoutSessionIds } from "./utils/sessionSplitEdge";
 import { SessionTabsBar } from "./components/session/SessionTabsBar";
 import { SessionPaneServicesProvider } from "./components/session/SessionPaneServices";
@@ -2702,8 +2703,7 @@ export function App() {
     onExitAllSplit: workspaceChrome.exitAllSplit,
     // Tab 下拉运行控制（织入对方收敛方案）：只对当前会话 Tab 生效。
     // 关闭会话 = 停止 Agent 运行 + 移除会话 Tab（与“关闭标签页”仅移除 Tab 不同）
-    canStopCurrent:
-      activeAgent?.status === "running" || activeAgent?.status === "idle",
+    canStopCurrent: canStopBoundAgent(activeAgent?.status),
     // 会话从未启动（无绑定 agent）时隐藏“关闭会话”：停止无意义，关闭走“关闭标签页”
     onStopCurrent: activeAgentId
       ? () => {

@@ -15,6 +15,7 @@ import {
 } from "../atoms/session-selectors";
 import { sessionSendStateByIdAtom } from "../atoms/composer-atoms";
 import { isUserFacingSessionStart } from "./useSessionTimelineController";
+import { canStopBoundAgent } from "../utils/canStopBoundAgent";
 import type { QueuedPrompt } from "./useQueuedPrompt";
 import { t } from "../i18n";
 import { dismissNotice, type NoticeId } from "../utils/notice";
@@ -174,11 +175,9 @@ export function useSessionRuntimeController(
 
   // ── SessionView shortcuts ──
 
-  // 停止对已启动的 Agent 始终可用：running=执行中 / idle=空闲待命（进程仍在，
-  // 停止可释放资源）；starting（启动中）、error、closed 不可停止；
-  // pending（重启中）由 App.abortAgent 内部的 isPendingAgentId 防护忽略。
-  const canStopSession =
-    activeAgent?.status === "running" || activeAgent?.status === "idle";
+  // 停止对已启动的 Agent 始终可用：running=执行中 / idle=空闲待命 / error=中断后进程仍在。
+  // starting、closed 不可停止；pending（重启中）由 App.abortAgent 内部防护忽略。
+  const canStopSession = canStopBoundAgent(activeAgent?.status);
 
   const canRestartSession = Boolean(
     currentSessionId &&
