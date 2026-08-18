@@ -329,6 +329,28 @@ test("drops a trailing local thinking/tool placeholder after the authoritative t
 	assert.equal(merged.at(-1)?.parts.find((part) => part.type === "text")?.text, "真正最新的回复");
 });
 
+test("reorders matched cached messages to the authoritative timeline after reconnect", () => {
+	const current = chatMessagesToUiMessages([
+		message({ id: "cached-user", role: "user", text: "继续", timestamp: 100, meta: { entryId: "entry-user" } }),
+		message({ id: "cached-final", role: "assistant", text: "真正最新的回复", timestamp: 130, meta: { entryId: "entry-final" } }),
+		message({ id: "cached-think", role: "assistant", text: "", thinking: "这一轮的思考", timestamp: 110, meta: { entryId: "entry-think" } }),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({ id: "rt-user", role: "user", text: "继续", timestamp: 100, meta: { entryId: "entry-user" } }),
+		message({ id: "rt-think", role: "assistant", text: "", thinking: "这一轮的思考", timestamp: 110, meta: { entryId: "entry-think" } }),
+		message({ id: "rt-final", role: "assistant", text: "真正最新的回复", timestamp: 130, meta: { entryId: "entry-final" } }),
+	]);
+
+	const merged = mergeAuthoritativeUiMessages(current, authoritative, {
+		dropUnmatchedTrailingPlaceholders: true,
+	});
+	assert.deepEqual(
+		Array.from(merged, (item) => item.id),
+		["rt-user", "rt-think", "rt-final"],
+	);
+	assert.equal(merged.at(-1)?.parts.find((part) => part.type === "text")?.text, "真正最新的回复");
+});
+
 test("keeps an unmatched mid-timeline SSE assistant reply that is not a trailing placeholder", () => {
 	const current = [
 		{ id: "web-u-1", role: "user", parts: [{ type: "text", text: "问" }] },

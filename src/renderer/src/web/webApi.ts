@@ -526,6 +526,30 @@ export function mergeAuthoritativeUiMessages(
 		}
 
 		if (matchIndex >= 0) {
+			// 缓存自身可能已被早先一次增量合并排乱，例如最终正文留在思考卡之前。
+			// 仅替换命中的内容无法自愈；当命中项落在上一条权威消息之前时，
+			// 必须把它移动到上一条之后，保证重连后严格恢复权威时间线顺序。
+			if (matchIndex < lastPlacedIndex) {
+				merged.splice(matchIndex, 1);
+				const shiftedAfterRemoval = [...matchedCurrent].map((index) =>
+					index > matchIndex ? index - 1 : index,
+				);
+				matchedCurrent.clear();
+				for (const index of shiftedAfterRemoval) matchedCurrent.add(index);
+				lastPlacedIndex -= 1;
+
+				const insertionIndex = lastPlacedIndex + 1;
+				const shiftedAfterInsertion = [...matchedCurrent].map((index) =>
+					index >= insertionIndex ? index + 1 : index,
+				);
+				matchedCurrent.clear();
+				for (const index of shiftedAfterInsertion) matchedCurrent.add(index);
+				merged.splice(insertionIndex, 0, incoming);
+				matchedCurrent.add(insertionIndex);
+				lastPlacedIndex = insertionIndex;
+				changed = true;
+				continue;
+			}
 			matchedCurrent.add(matchIndex);
 			if (!sameUiMessage(merged[matchIndex], incoming)) {
 				merged[matchIndex] = incoming;
