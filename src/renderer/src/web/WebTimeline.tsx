@@ -343,6 +343,19 @@ export function WebTimeline(props: {
 			onScroll={updateScrollState}
 		>
 			<div className="message-list flex flex-col gap-2 p-4">
+				{hasMoreHistory && (
+					<div className="flex justify-center py-1">
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={loadingMore}
+							onClick={onLoadMore}
+							className="h-8 px-4 text-caption"
+						>
+							{loadingMore ? t("timeline.loadingMore") : t("timeline.loadMoreHistory", { count: moreCount })}
+						</Button>
+					</div>
+				)}
 				{!hasActiveSession && messages.length === 0 ? (
 					<div className="empty-state">
 						<div className="empty-logo">
@@ -423,20 +436,6 @@ export function WebTimeline(props: {
 				</Button>
 			)}
 
-			{/* 分页加载更多 */}
-			{hasMoreHistory && (
-				<div className="flex justify-center py-3">
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={loadingMore}
-						onClick={onLoadMore}
-						className="h-8 px-4 text-caption"
-					>
-						{loadingMore ? t("timeline.loadingMore") : t("timeline.loadMoreHistory", { count: moreCount })}
-					</Button>
-				</div>
-			)}
 		</section>
 	);
 }

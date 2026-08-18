@@ -25,6 +25,8 @@ export type WebSession = {
 	projectPath?: string;
 	model?: { provider: string; modelId: string };
 	thinkingLevel?: string;
+	/** 会话目录里的消息条数；首页失败或游标未到时，用来判断是否还能翻历史。 */
+	messageCount?: number;
 	/** 最近活动时间（毫秒时间戳），Web 端会话列表按此降序展示（最新在上） */
 	updatedAt?: number;
 };
