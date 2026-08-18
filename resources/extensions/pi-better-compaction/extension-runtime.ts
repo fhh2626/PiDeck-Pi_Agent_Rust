@@ -5,11 +5,14 @@ import type {
 	ExtensionContext,
 	SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
-import { executeNativeCompaction } from "./compact-client";
+import {
+	executeNativeCompaction,
+	type NativeCompactionClientResult,
+} from "./compact-client";
 import { loadExtensionConfig } from "./config";
 import { writeDebugArtifact } from "./debug";
 import { resolveLatestNativeCompactionEntry } from "./details-store";
-import { runNativeFallbackCompaction } from "./native-fallback";
+import { runNativeFallbackCompaction, type NativeFallbackResult } from "./native-fallback";
 import {
 	rewriteResponsesPayloadWithNativeReplay,
 	serializeLiveTailToResponsesInput,
@@ -26,6 +29,7 @@ import {
 	createNativeCompactionResult,
 	EXTENSION_ID,
 	isNativeCompactionDetails,
+	MIN_COMPACT_TIMEOUT_MS,
 	type ExtensionConfig,
 	type NativeCompactionDetails,
 	type NativeCompactionRequestMeta,
@@ -74,6 +78,76 @@ function getSessionId(ctx: ExtensionContext): string | undefined {
 function notifyWarning(ctx: ExtensionContext, message: string): void {
 	if (ctx.hasUI) {
 		ctx.ui.notify(`${EXTENSION_ID}: ${message}`, "warning");
+	}
+}
+
+function notify(ctx: ExtensionContext, message: string, level: "info" | "warning" = "warning"): void {
+	if (ctx.hasUI) {
+		ctx.ui.notify(`${EXTENSION_ID}: ${message}`, level);
+	}
+}
+
+function formatNativeFailure(result: {
+	reason: string;
+	status?: number;
+	errorMessage?: string;
+	timeoutMs?: number;
+}): string {
+	if (result.reason === "timeout") {
+		return `timed out after ${Math.round((result.timeoutMs ?? MIN_COMPACT_TIMEOUT_MS) / 1000)}s`;
+	}
+	if (result.reason === "non-2xx") {
+		return `HTTP ${result.status ?? "error"}`;
+	}
+	if (result.reason === "network-error") {
+		return result.errorMessage ?? "network error";
+	}
+	if (result.errorMessage) {
+		return `${result.reason}: ${result.errorMessage}`;
+	}
+	return result.reason;
+}
+
+/** Wait up to ms before retrying; resolves early with "aborted" if the user stops. */
+async function waitRetryDelay(ms: number, signal: AbortSignal): Promise<"aborted" | "ready"> {
+	if (signal.aborted) return "aborted";
+	if (ms <= 0) return "ready";
+	await new Promise<void>((resolve) => {
+		let timer: ReturnType<typeof setTimeout>;
+		const settle = (): void => {
+			clearTimeout(timer);
+			signal.removeEventListener("abort", onAbort);
+			resolve();
+		};
+		const onAbort = (): void => {
+			settle();
+		};
+		timer = setTimeout(settle, ms);
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
+	return signal.aborted ? "aborted" : "ready";
+}
+
+async function raceWithUserAbort<T>(
+	operation: Promise<T>,
+	signal: AbortSignal,
+): Promise<{ aborted: true } | { aborted: false; value: T }> {
+	if (signal.aborted) return { aborted: true };
+
+	let onAbort: (() => void) | undefined;
+	const aborted = new Promise<{ aborted: true }>((resolve) => {
+		onAbort = () => resolve({ aborted: true });
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
+	try {
+		return await Promise.race([
+			operation.then((value) => ({ aborted: false as const, value })),
+			aborted,
+		]);
+	} finally {
+		if (onAbort) {
+			signal.removeEventListener("abort", onAbort);
+		}
 	}
 }
 
@@ -166,27 +240,80 @@ async function runResponsesNativeCompact(
 		request = { ...request, ...extras };
 	}
 
-	const compactResult = await executeNativeCompaction({
-		runtime,
-		request,
-		signal: event.signal,
-		settings: config,
-		context: ctx,
-	});
+	const maxAttempts = Math.max(1, config.compactMaxAttempts);
+	// maxAttempts is always >= 1, so the loop body assigns this on every path.
+	let compactResult!: NativeCompactionClientResult;
+	let attemptsUsed = 0;
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		if (event.signal.aborted) {
+			return { outcome: "aborted" };
+		}
 
-	if (compactResult.ok === false) {
+		attemptsUsed = attempt;
+		compactResult = await executeNativeCompaction({
+			runtime,
+			request,
+			signal: event.signal,
+			settings: config,
+			context: ctx,
+		});
+
+		if (compactResult.ok) {
+			break;
+		}
+
 		writeDebugArtifact(
 			"compaction-event",
 			{
 				event: "session_before_compact.responses-compact-failure",
+				attempt,
+				attempts: maxAttempts,
 				reason: compactResult.reason,
 				status: compactResult.status,
 				errorMessage: compactResult.errorMessage,
+				timeoutMs: compactResult.timeoutMs,
 			},
 			config,
 			ctx,
 		);
-		return compactResult.reason === "aborted" ? { outcome: "aborted" } : { outcome: "failed" };
+
+		if (compactResult.reason === "aborted" || event.signal.aborted) {
+			return { outcome: "aborted" };
+		}
+
+		if (attempt < maxAttempts) {
+			notify(
+				ctx,
+				`original-path compact failed (${formatNativeFailure(compactResult)}); retrying original path (${attempt + 1}/${maxAttempts})…`,
+				"warning",
+			);
+			const delay = await waitRetryDelay(config.compactRetryDelayMs, event.signal);
+			if (delay === "aborted") {
+				return { outcome: "aborted" };
+			}
+		}
+	}
+
+	if (compactResult.ok === false) {
+		notify(
+			ctx,
+			`original path failed after ${maxAttempts} attempts (${formatNativeFailure(compactResult)}); switching to Pi default compaction`,
+			"warning",
+		);
+		writeDebugArtifact(
+			"compaction-event",
+			{
+				event: "session_before_compact.responses-compact-exhausted",
+				attempts: maxAttempts,
+				reason: compactResult.reason,
+				status: compactResult.status,
+				errorMessage: compactResult.errorMessage,
+				timeoutMs: compactResult.timeoutMs,
+			},
+			config,
+			ctx,
+		);
+		return { outcome: "failed" };
 	}
 
 	let details: NativeCompactionDetails;
@@ -215,6 +342,11 @@ async function runResponsesNativeCompact(
 			config,
 			ctx,
 		);
+		notify(
+			ctx,
+			"native compact returned an unusable result; switching to Pi default compaction",
+			"warning",
+		);
 		return { outcome: "failed" };
 	}
 
@@ -224,6 +356,9 @@ async function runResponsesNativeCompact(
 		details,
 		summary: compactResult.summaryText,
 	});
+	if (attemptsUsed > 1) {
+		notify(ctx, "retry succeeded; compaction is complete", "info");
+	}
 
 	writeDebugArtifact(
 		"compaction-event",
@@ -239,6 +374,8 @@ async function runResponsesNativeCompact(
 			compactedItems: compactResult.compactedWindow.length,
 			summaryExtracted: Boolean(compactResult.summaryText),
 			firstKeptEntryId: event.preparation.firstKeptEntryId,
+			attempt: attemptsUsed,
+			attempts: maxAttempts,
 		},
 		config,
 		ctx,
@@ -275,10 +412,17 @@ async function handleSessionBeforeCompact(event: SessionBeforeCompactEvent, ctx:
 	}
 
 	// Branch 1: Responses-family APIs use the native /responses/compact endpoint.
-	const resolution = await resolveNativeCompactionEnvironment(ctx, {
-		enabled: config.enabled,
-		responsesCompactApis: config.responsesCompactApis,
-	});
+	const resolutionRace = await raceWithUserAbort(
+		resolveNativeCompactionEnvironment(ctx, {
+			enabled: config.enabled,
+			responsesCompactApis: config.responsesCompactApis,
+		}),
+		event.signal,
+	);
+	if (resolutionRace.aborted) {
+		return { cancel: true };
+	}
+	const resolution = resolutionRace.value;
 	if (resolution.ok) {
 		const responsesOutcome = await runResponsesNativeCompact(event, ctx, config, resolution.runtime);
 		if (responsesOutcome.outcome === "success") {
@@ -287,7 +431,12 @@ async function handleSessionBeforeCompact(event: SessionBeforeCompactEvent, ctx:
 		if (responsesOutcome.outcome === "aborted") {
 			return { cancel: true };
 		}
-		// failed: fall through to the configured-model fallback below.
+		// failed: the original-path request is exhausted (or the session was skipped) →
+		// hand off to pi's default compaction. By design we do NOT switch to the
+		// configured compactionModel here: if the native endpoint fails, a different
+		// model usually fails for the same reason, and pi's default keeps the
+		// streaming progress UI.
+		return undefined;
 	} else {
 		writeDebugArtifact(
 			"compaction-event",
@@ -302,51 +451,122 @@ async function handleSessionBeforeCompact(event: SessionBeforeCompactEvent, ctx:
 			config,
 			ctx,
 		);
+		// Responses-family models that cannot even form a compact request must not
+		// fall through into compactionModel (that would silently change methods
+		// before the original path was ever attempted).
+		if (
+			resolution.reason === "missing-api-key" ||
+			resolution.reason === "missing-base-url" ||
+			resolution.reason === "missing-model"
+		) {
+			notify(
+				ctx,
+				`native compact unavailable (${resolution.reason}); using pi's default compaction`,
+				"warning",
+			);
+			return undefined;
+		}
 	}
 
-	// Branch 2: run pi's native compaction method with the configured model.
-	const fallback = await runNativeFallbackCompaction({ ctx, event, config });
-	if (fallback.ok) {
-		if (ctx.hasUI) {
-			ctx.ui.notify(
-				`${EXTENSION_ID}: compacted with ${fallback.model.provider}/${fallback.model.id} (native method)`,
+	// Branch 2: run pi's native compaction method with the configured model. Transient
+	// runtime failures are retried on the same model; config failures (no model, bad
+	// spec, auth, ...) are not — retrying them would just repeat the same mistake.
+	const maxAttempts = Math.max(1, config.compactMaxAttempts);
+	const retryableFallbackReasons = new Set<string>(["empty-summary", "compact-failed", "timeout"]);
+	// maxAttempts is always >= 1, so the loop body assigns this on every path.
+	let fallback!: NativeFallbackResult;
+	let attemptsUsed = 0;
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		if (event.signal.aborted) {
+			return { cancel: true };
+		}
+
+		attemptsUsed = attempt;
+		fallback = await runNativeFallbackCompaction({ ctx, event, config });
+
+		if (fallback.ok) {
+			notify(
+				ctx,
+				attempt > 1
+					? `compacted with ${fallback.model.provider}/${fallback.model.id} on retry (native method)`
+					: `compacted with ${fallback.model.provider}/${fallback.model.id} (native method)`,
 				"info",
 			);
+			writeDebugArtifact(
+				"compaction-event",
+				{
+					event: "session_before_compact.fallback-success",
+					model: fallback.model,
+					attempt,
+					attempts: maxAttempts,
+				},
+				config,
+				ctx,
+			);
+			return { compaction: fallback.result };
 		}
+
 		writeDebugArtifact(
 			"compaction-event",
 			{
-				event: "session_before_compact.fallback-success",
-				model: fallback.model,
+				event: "session_before_compact.fallback-failure",
+				attempt,
+				attempts: maxAttempts,
+				reason: fallback.reason,
+				modelSpec: fallback.modelSpec,
+				errorMessage: fallback.errorMessage,
+				timeoutMs: fallback.timeoutMs,
 			},
 			config,
 			ctx,
 		);
-		return { compaction: fallback.result };
+
+		if (fallback.reason === "aborted" || event.signal.aborted) {
+			return { cancel: true };
+		}
+
+		if (attempt < maxAttempts && retryableFallbackReasons.has(fallback.reason)) {
+			notify(
+				ctx,
+				`compaction model failed (${formatNativeFailure(fallback)}); retrying (${attempt + 1}/${maxAttempts})…`,
+				"warning",
+			);
+			const delay = await waitRetryDelay(config.compactRetryDelayMs, event.signal);
+			if (delay === "aborted") {
+				return { cancel: true };
+			}
+			continue;
+		}
+
+		break;
 	}
 
-	if (fallback.reason === "aborted") {
-		return { cancel: true };
-	}
-
+	// The loop only exits without a return when the last result is a failure.
+	const failure = fallback as Extract<NativeFallbackResult, { ok: false }>;
+	const retryableExhausted = retryableFallbackReasons.has(failure.reason);
 	writeDebugArtifact(
 		"compaction-event",
 		{
-			event: "session_before_compact.fallback-skip",
-			reason: fallback.reason,
-			modelSpec: fallback.modelSpec,
-			errorMessage: fallback.errorMessage,
+			event: retryableExhausted
+				? "session_before_compact.fallback-exhausted"
+				: "session_before_compact.fallback-skip",
+			reason: failure.reason,
+			modelSpec: failure.modelSpec,
+			errorMessage: failure.errorMessage,
+			timeoutMs: failure.timeoutMs,
+			attemptsUsed,
+			attempts: maxAttempts,
 		},
 		config,
 		ctx,
 	);
 
 	// Intentional pi-default paths: no configured model, or it matches the current one.
-	if (fallback.reason !== "no-model-configured" && fallback.reason !== "same-as-current-model") {
-		notifyWarning(
-			ctx,
-			`compaction model "${fallback.modelSpec}" unusable (${fallback.reason}${fallback.errorMessage ? `: ${fallback.errorMessage}` : ""}); using pi's default compaction`,
-		);
+	if (failure.reason !== "no-model-configured" && failure.reason !== "same-as-current-model") {
+		const detail = retryableExhausted
+			? `compaction model failed after ${attemptsUsed} attempts; using pi's default compaction`
+			: `compaction model "${failure.modelSpec}" unusable (${failure.reason}${failure.errorMessage ? `: ${failure.errorMessage}` : ""}); using pi's default compaction`;
+		notifyWarning(ctx, detail);
 	}
 
 	// Branch 3: pi's default native compaction with the current model.

@@ -1,7 +1,11 @@
 import { writeDebugArtifact } from "./debug";
 import type { NativeCompactionRuntime } from "./runtime";
 import type { NativeCompactionRequestBody } from "./serializer";
-import type { ArtifactContext, ExtensionConfig } from "./types";
+import {
+	MIN_COMPACT_TIMEOUT_MS,
+	type ArtifactContext,
+	type ExtensionConfig,
+} from "./types";
 
 const JSON_CONTENT_TYPE = "application/json";
 
@@ -14,6 +18,7 @@ type CompactResponseEnvelope = {
 
 export type NativeCompactionClientFailureReason =
 	| "aborted"
+	| "timeout"
 	| "network-error"
 	| "non-2xx"
 	| "empty-body"
@@ -37,6 +42,7 @@ export type NativeCompactionClientFailure = {
 	reason: NativeCompactionClientFailureReason;
 	status?: number;
 	errorMessage?: string;
+	timeoutMs?: number;
 	responseText?: string;
 	responseJson?: unknown;
 };
@@ -204,15 +210,40 @@ export async function executeNativeCompaction(
 		);
 		return aborted;
 	}
+	const timeoutMs = settings?.compactTimeoutMs ?? MIN_COMPACT_TIMEOUT_MS;
+	const controller = new AbortController();
+	const onUserAbort = () => controller.abort();
+	signal?.addEventListener("abort", onUserAbort);
+	let onAttemptAbort: (() => void) | undefined;
+	const attemptAbort = new Promise<never>((_resolve, reject) => {
+		onAttemptAbort = () => reject(new DOMException("Compaction attempt aborted", "AbortError"));
+		controller.signal.addEventListener("abort", onAttemptAbort, { once: true });
+	});
+	let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+	let timedOut = false;
+	if (timeoutMs > 0) {
+		timeoutTimer = setTimeout(() => {
+			timedOut = true;
+			controller.abort();
+		}, timeoutMs);
+	}
 
 	try {
-		const response = await fetch(runtime.compactUrl, {
-			method: "POST",
-			headers,
-			body: JSON.stringify(request),
-			signal,
-		});
-		const responseText = await response.text();
+		// Race the complete response-body read against our attempt signal. Aborting
+		// the underlying fetch is still the primary cancellation mechanism, while
+		// the race guarantees the hook settles even if a non-conforming fetch/proxy
+		// ignores AbortSignal.
+		const responseOperation = (async () => {
+			const response = await fetch(runtime.compactUrl, {
+				method: "POST",
+				headers,
+				body: JSON.stringify(request),
+				signal: controller.signal,
+			});
+			const responseText = await response.text();
+			return { response, responseText };
+		})();
+		const { response, responseText } = await Promise.race([responseOperation, attemptAbort]);
 		const responseHeaders: Record<string, string> = {};
 		response.headers.forEach((value, key) => {
 			responseHeaders[key] = value;
@@ -400,16 +431,28 @@ export async function executeNativeCompaction(
 		);
 		return success;
 	} catch (error) {
-		const failure: NativeCompactionClientFailure = isAbortError(error)
+		const failure: NativeCompactionClientFailure = signal?.aborted
 			? {
 				ok: false,
 				reason: "aborted",
 			}
-			: {
-				ok: false,
-				reason: "network-error",
-				errorMessage: error instanceof Error ? error.message : String(error),
-			};
+			: timedOut
+				? {
+					ok: false,
+					reason: "timeout",
+					timeoutMs,
+				}
+				: isAbortError(error)
+					? {
+						ok: false,
+						reason: "network-error",
+						errorMessage: error instanceof Error ? error.message : String(error),
+					}
+					: {
+						ok: false,
+						reason: "network-error",
+						errorMessage: error instanceof Error ? error.message : String(error),
+					};
 
 		writeCompactArtifact(
 			{
@@ -424,5 +467,13 @@ export async function executeNativeCompaction(
 			context,
 		);
 		return failure;
+	} finally {
+		if (timeoutTimer !== undefined) {
+			clearTimeout(timeoutTimer);
+		}
+		if (onAttemptAbort) {
+			controller.signal.removeEventListener("abort", onAttemptAbort);
+		}
+		signal?.removeEventListener("abort", onUserAbort);
 	}
 }

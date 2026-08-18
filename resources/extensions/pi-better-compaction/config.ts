@@ -5,6 +5,12 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
 	DEFAULT_EXTENSION_CONFIG,
 	EXTENSION_ID,
+	MAX_COMPACT_MAX_ATTEMPTS,
+	MAX_COMPACT_RETRY_DELAY_MS,
+	MAX_COMPACT_TIMEOUT_MS,
+	MIN_COMPACT_MAX_ATTEMPTS,
+	MIN_COMPACT_RETRY_DELAY_MS,
+	MIN_COMPACT_TIMEOUT_MS,
 	RESPONSES_COMPACT_CAPABLE_APIS,
 	THINKING_LEVELS,
 	type ExtensionConfig,
@@ -56,6 +62,26 @@ function toBoolean(value: unknown, fieldPath: string, warnings: string[]): boole
 	if (typeof value === "boolean") return value;
 	warnings.push(`Ignoring ${fieldPath}: expected a boolean.`);
 	return undefined;
+}
+
+function toInteger(value: unknown, fieldPath: string, warnings: string[]): number | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+	warnings.push(`Ignoring ${fieldPath}: expected an integer.`);
+	return undefined;
+}
+
+function clampInteger(
+	value: number,
+	fieldPath: string,
+	min: number,
+	max: number,
+	warnings: string[],
+): number {
+	if (value < min || value > max) {
+		warnings.push(`Clamping ${fieldPath}=${value} to the range [${min}, ${max}].`);
+	}
+	return Math.min(max, Math.max(min, value));
 }
 
 function toModelSpec(value: unknown, fieldPath: string, warnings: string[]): string | null | undefined {
@@ -141,6 +167,43 @@ export function loadExtensionConfig(configPath: string = CONFIG_PATH): LoadedExt
 		const apis = toResponsesCompactApis(raw.responsesCompactApis, "responsesCompactApis", warnings);
 		if (apis !== undefined) {
 			resolved.responsesCompactApis = apis;
+		}
+
+		const timeoutMs = toInteger(raw.compactTimeoutMs, "compactTimeoutMs", warnings);
+		if (timeoutMs !== undefined) {
+			if (timeoutMs === 0) {
+				resolved.compactTimeoutMs = 0;
+			} else {
+				resolved.compactTimeoutMs = clampInteger(
+					timeoutMs,
+					"compactTimeoutMs",
+					MIN_COMPACT_TIMEOUT_MS,
+					MAX_COMPACT_TIMEOUT_MS,
+					warnings,
+				);
+			}
+		}
+
+		const maxAttempts = toInteger(raw.compactMaxAttempts, "compactMaxAttempts", warnings);
+		if (maxAttempts !== undefined) {
+			resolved.compactMaxAttempts = clampInteger(
+				maxAttempts,
+				"compactMaxAttempts",
+				MIN_COMPACT_MAX_ATTEMPTS,
+				MAX_COMPACT_MAX_ATTEMPTS,
+				warnings,
+			);
+		}
+
+		const retryDelayMs = toInteger(raw.compactRetryDelayMs, "compactRetryDelayMs", warnings);
+		if (retryDelayMs !== undefined) {
+			resolved.compactRetryDelayMs = clampInteger(
+				retryDelayMs,
+				"compactRetryDelayMs",
+				MIN_COMPACT_RETRY_DELAY_MS,
+				MAX_COMPACT_RETRY_DELAY_MS,
+				warnings,
+			);
 		}
 
 		if (typeof raw.artifactRoot === "string" && raw.artifactRoot.trim().length > 0) {

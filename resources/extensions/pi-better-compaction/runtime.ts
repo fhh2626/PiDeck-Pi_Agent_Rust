@@ -174,8 +174,8 @@ export async function resolveNativeCompactionEnvironment(
 	}
 
 	// The compact endpoint is selected purely by API family: any provider speaking
-	// openai-responses/openai-codex-responses gets a native compact attempt and fails
-	// open (to the fallback model or pi's default) when the endpoint is missing.
+	// openai-responses/openai-codex-responses gets a native compact attempt. The
+	// session hook decides how an unavailable or exhausted endpoint hands off.
 	const configuredApis = normalizeConfiguredApis(options.responsesCompactApis);
 	if (!configuredApis.has(descriptor.api) || !isSupportedApi(descriptor.api)) {
 		return {

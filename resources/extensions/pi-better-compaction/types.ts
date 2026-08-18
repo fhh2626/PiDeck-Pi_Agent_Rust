@@ -23,6 +23,19 @@ export const THINKING_LEVELS: readonly ThinkingLevel[] = [
 	"max",
 ];
 
+/** Minimum (and default) per-attempt native compact timeout in ms. */
+export const MIN_COMPACT_TIMEOUT_MS = 300_000;
+/** Maximum per-attempt native compact timeout in ms. */
+export const MAX_COMPACT_TIMEOUT_MS = 900_000;
+/** Minimum (and default) attempts for the same original-path compaction call. */
+export const MIN_COMPACT_MAX_ATTEMPTS = 2;
+/** Maximum attempts for the same original-path compaction call. */
+export const MAX_COMPACT_MAX_ATTEMPTS = 3;
+/** Minimum retry delay between compaction attempts in ms. */
+export const MIN_COMPACT_RETRY_DELAY_MS = 0;
+/** Maximum retry delay between compaction attempts in ms. */
+export const MAX_COMPACT_RETRY_DELAY_MS = 10_000;
+
 export type DebugArtifactKind =
 	| "provider-request"
 	| "compact-response"
@@ -37,14 +50,20 @@ export type ExtensionConfig = {
 	 */
 	allowCompactionContinuityBreak: boolean;
 	/**
-	 * "provider/model-id" used for native-method fallback compaction (non-Responses APIs,
-	 * or when the compact endpoint fails). Unset = current model via pi's default path.
+	 * "provider/model-id" used for native-method fallback compaction on non-Responses
+	 * APIs. Unset = current model via pi's default path.
 	 */
 	compactionModel?: string;
 	/** Thinking level passed to pi's native compact() when the fallback model runs. */
 	compactionThinkingLevel: ThinkingLevel;
 	/** Subset of RESPONSES_COMPACT_CAPABLE_APIS that should use the compact endpoint. */
 	responsesCompactApis: string[];
+	/** Per-attempt timeout for native /responses/compact and configured-model compact(). 0 = no timeout. */
+	compactTimeoutMs: number;
+	/** Max attempts for the same original-path compaction call. */
+	compactMaxAttempts: number;
+	/** Delay between attempts. */
+	compactRetryDelayMs: number;
 	notifyOnLoad: boolean;
 	debug: boolean;
 	logProviderPayloads: boolean;
@@ -293,6 +312,9 @@ export const DEFAULT_EXTENSION_CONFIG: ExtensionConfig = {
 	compactionModel: undefined,
 	compactionThinkingLevel: "off",
 	responsesCompactApis: [...RESPONSES_COMPACT_CAPABLE_APIS],
+	compactTimeoutMs: MIN_COMPACT_TIMEOUT_MS,
+	compactMaxAttempts: MIN_COMPACT_MAX_ATTEMPTS,
+	compactRetryDelayMs: 1_500,
 	notifyOnLoad: false,
 	debug: false,
 	logProviderPayloads: false,

@@ -4,7 +4,7 @@ import {
 	type ExtensionContext,
 	type SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
-import type { ExtensionConfig } from "./types";
+import { MIN_COMPACT_TIMEOUT_MS, type ExtensionConfig } from "./types";
 
 export type ParsedModelSpec = {
 	provider: string;
@@ -18,6 +18,7 @@ export type NativeFallbackFailureReason =
 	| "same-as-current-model"
 	| "auth-failed"
 	| "aborted"
+	| "timeout"
 	| "empty-summary"
 	| "compact-failed";
 
@@ -32,6 +33,7 @@ export type NativeFallbackResult =
 			reason: NativeFallbackFailureReason;
 			modelSpec?: string;
 			errorMessage?: string;
+			timeoutMs?: number;
 	  };
 
 /** pi's exported native compact(); injectable for tests. */
@@ -67,6 +69,29 @@ function isAbortError(error: unknown): boolean {
 
 function toErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+async function raceWithUserAbort<T>(
+	operation: Promise<T>,
+	signal: AbortSignal,
+): Promise<{ aborted: true } | { aborted: false; value: T }> {
+	if (signal.aborted) return { aborted: true };
+
+	let onAbort: (() => void) | undefined;
+	const aborted = new Promise<{ aborted: true }>((resolve) => {
+		onAbort = () => resolve({ aborted: true });
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
+	try {
+		return await Promise.race([
+			operation.then((value) => ({ aborted: false as const, value })),
+			aborted,
+		]);
+	} finally {
+		if (onAbort) {
+			signal.removeEventListener("abort", onAbort);
+		}
+	}
 }
 
 /**
@@ -107,7 +132,14 @@ export async function runNativeFallbackCompaction(args: {
 
 	let auth: ResolvedAuth;
 	try {
-		auth = (await ctx.modelRegistry.getApiKeyAndHeaders(model)) as ResolvedAuth;
+		const authRace = await raceWithUserAbort(
+			ctx.modelRegistry.getApiKeyAndHeaders(model) as Promise<ResolvedAuth>,
+			event.signal,
+		);
+		if (authRace.aborted) {
+			return { ok: false, reason: "aborted", modelSpec: spec };
+		}
+		auth = authRace.value;
 	} catch (error) {
 		return { ok: false, reason: "auth-failed", modelSpec: spec, errorMessage: toErrorMessage(error) };
 	}
@@ -115,21 +147,45 @@ export async function runNativeFallbackCompaction(args: {
 		return { ok: false, reason: "auth-failed", modelSpec: spec, errorMessage: auth.error };
 	}
 
+	const timeoutMs = config.compactTimeoutMs ?? MIN_COMPACT_TIMEOUT_MS;
+	const controller = new AbortController();
+	const onUserAbort = () => controller.abort();
+	event.signal?.addEventListener("abort", onUserAbort);
+	let onAttemptAbort: (() => void) | undefined;
+	const attemptAbort = new Promise<never>((_resolve, reject) => {
+		onAttemptAbort = () => reject(new DOMException("Compaction attempt aborted", "AbortError"));
+		controller.signal.addEventListener("abort", onAttemptAbort, { once: true });
+	});
+	let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+	let timedOut = false;
+	if (timeoutMs > 0) {
+		timeoutTimer = setTimeout(() => {
+			timedOut = true;
+			controller.abort();
+		}, timeoutMs);
+	}
+
 	try {
-		const result = await compactFn(
+		const compactOperation = compactFn(
 			event.preparation,
 			model,
 			auth.apiKey,
 			auth.headers,
 			event.customInstructions,
-			event.signal,
+			controller.signal,
 			config.compactionThinkingLevel,
 			undefined,
 			auth.env,
 		);
+		// compact() should honor its signal, but the race also guarantees this
+		// extension attempt settles if a provider implementation ignores it.
+		const result = await Promise.race([compactOperation, attemptAbort]);
 
-		if (event.signal.aborted) {
+		if (event.signal?.aborted) {
 			return { ok: false, reason: "aborted", modelSpec: spec };
+		}
+		if (timedOut) {
+			return { ok: false, reason: "timeout", modelSpec: spec, timeoutMs };
 		}
 		if (!result.summary || result.summary.trim().length === 0) {
 			return { ok: false, reason: "empty-summary", modelSpec: spec };
@@ -141,9 +197,32 @@ export async function runNativeFallbackCompaction(args: {
 			model: { provider: model.provider, id: model.id },
 		};
 	} catch (error) {
-		if (event.signal.aborted || isAbortError(error)) {
+		// Priority mirrors executeNativeCompaction: a genuine user abort wins, then a
+		// timer-driven timeout (compact() rejects with an AbortError once we abort its
+		// signal), then a plain abort error, then any other failure. Keeping the timeout
+		// distinct from an abort lets the caller retry a timeout but stop on a user stop.
+		if (event.signal?.aborted) {
 			return { ok: false, reason: "aborted", modelSpec: spec };
 		}
+		if (timedOut) {
+			return { ok: false, reason: "timeout", modelSpec: spec, timeoutMs };
+		}
+		if (isAbortError(error)) {
+			return {
+				ok: false,
+				reason: "compact-failed",
+				modelSpec: spec,
+				errorMessage: toErrorMessage(error),
+			};
+		}
 		return { ok: false, reason: "compact-failed", modelSpec: spec, errorMessage: toErrorMessage(error) };
+	} finally {
+		if (timeoutTimer !== undefined) {
+			clearTimeout(timeoutTimer);
+		}
+		if (onAttemptAbort) {
+			controller.signal.removeEventListener("abort", onAttemptAbort);
+		}
+		event.signal?.removeEventListener("abort", onUserAbort);
 	}
 }
