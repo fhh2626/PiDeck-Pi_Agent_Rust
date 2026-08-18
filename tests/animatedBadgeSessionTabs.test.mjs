@@ -78,7 +78,7 @@ test("tab dropdown menu: no switch-to item, state-based disable with visible gra
 	// “切换到此会话”已移除（点击 Tab 本体即切换，菜单项冗余）
 	assert.doesNotMatch(source, /tabs\.switchTo/);
 	assert.doesNotMatch(source, /MousePointerClick/);
-	// 停止：仅 running/idle 可点，其余状态（starting/error 等）disabled + 内联置灰
+	// 停止：running/idle/error 可点；starting/closed 等 disabled + 内联置灰
 	assert.match(source, /disabled=\{!props\.canStop\}/);
 	assert.match(source, /style=\{!props\.canStop \? \{ opacity: 0\.4 \} : undefined\}/);
 	// 重启：无 agent 或正在重启时 disabled + 置灰

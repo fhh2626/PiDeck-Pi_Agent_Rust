@@ -6,3 +6,16 @@
 export function canStopBoundAgent(status: string | undefined): boolean {
 	return status === "running" || status === "idle" || status === "error";
 }
+
+/**
+ * Tab 下拉「关闭会话」必须先真正停掉 Agent，再关 Tab。
+ * pending / 无 runtime target 时 closeAgent 以前会静默 return，
+ * 调用方却继续 closeTab，表现为标签没了、进程还在。
+ */
+export function shouldCloseSessionTabAfterStop(input: {
+	pending: boolean;
+	hasRuntimeTarget: boolean;
+	stopSucceeded: boolean;
+}): boolean {
+	return !input.pending && input.hasRuntimeTarget && input.stopSucceeded;
+}

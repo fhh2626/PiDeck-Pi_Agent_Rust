@@ -1855,9 +1855,15 @@ export function App() {
   }
 
   async function closeAgent(agentId: string) {
-    if (isPendingAgentId(agentId)) return;
+    // pending / 无 target 必须抛错：Tab 下拉「关闭会话」成功后才会 closeTab。
+    // 以前这里静默 return，调用方仍关 Tab，标签没了、进程还在。
+    if (isPendingAgentId(agentId)) {
+      throw new Error(t("sessionCommand.runtimeBusy"));
+    }
     const target = getRuntimeTargetForAgent(agentId);
-    if (!target) return;
+    if (!target) {
+      throw new Error(t("sessionCommand.runtimeUnavailable"));
+    }
     requireSessionCommand(await api.sessions.stopRuntime(target));
   }
 
@@ -2711,7 +2717,7 @@ export function App() {
           void (async () => {
             try {
               // 必须 stopRuntime，不能 abort：abort 只取消当前一轮，pi 进程仍占用会话文件。
-              if (isPendingAgentId(activeAgentId)) return;
+              // closeAgent 失败会抛错，这里不得先关 Tab。
               await closeAgent(activeAgentId);
               if (sessionId) workspaceChrome.closeTab(sessionId);
             } catch (error) {
