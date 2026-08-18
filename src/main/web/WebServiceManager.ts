@@ -550,7 +550,10 @@ export class WebServiceManager {
 				this.handleStream(sessionId, request, response);
 				const result = await this.deps.sendSessionPrompt({
 					sessionId,
-					requestId: String(body.id ?? crypto.randomUUID()),
+					// useChat 的 id 是 sessionId，不能当 requestId：
+					// SessionRuntimeCoordinator 会按 sessionId+requestId 缓存 10 分钟，
+					// 第二次发送会被当成同一请求直接吞掉。
+					requestId: crypto.randomUUID(),
 					message,
 				}).catch((error: unknown) => ({
 					accepted: false as const,

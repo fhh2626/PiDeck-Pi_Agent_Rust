@@ -185,8 +185,7 @@ export function WebChatApp() {
 			});
 	}, [activeSessionId, setMessages]);
 
-	// SSE 断线不伪装成可恢复的增量流：先读取已落盘的权威历史，避免旧的
-	// partial UI 覆盖最终消息。下一次发送会建立新的 /api/chat 流。
+	// SSE 异常才回读权威历史。正常 finish+[DONE] 不是失败，不要把侧栏打成断开。
 	useEffect(() => {
 		if (!error || !activeSessionId) return;
 		const sessionId = activeSessionId;

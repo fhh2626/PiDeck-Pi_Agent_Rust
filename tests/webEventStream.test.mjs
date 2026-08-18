@@ -99,8 +99,8 @@ test("tool_execution_start/end produces tool-input-available and tool-output-ava
 		toolCallId: "call_1",
 		isError: false,
 	});
-	assert.equal(end[0].type, "tool-output-available");
-	assert.equal(end[0].toolCallId, "call_1");
+	assert.equal(end.at(-1).type, "tool-output-available");
+	assert.equal(end.at(-1).toolCallId, "call_1");
 });
 
 test("assistant done and agent_end do not close the stream before tools finish", () => {
@@ -134,8 +134,8 @@ test("tool_execution_end with isError emits tool-output-error", () => {
 		toolCallId: "call_err",
 		isError: true,
 	});
-	assert.equal(end[0].type, "tool-output-error");
-	assert.equal(end[0].toolCallId, "call_err");
+	assert.equal(end.at(-1).type, "tool-output-error");
+	assert.equal(end.at(-1).toolCallId, "call_err");
 });
 
 test("agent_end without error does not emit finish; settled does", () => {
@@ -259,4 +259,63 @@ test("handlePiEvent emits each local event once for Web SSE", () => {
 	);
 	const emits = handler.match(/this\.emitLocalEvent\(/g) ?? [];
 	assert.equal(emits.length, 1, "duplicate local emits replay every text_delta twice on Web");
+});
+test("tool_execution_end without a start still opens the same toolCallId", () => {
+	const adapter = new PiEventToUiMessageStream();
+	const frames = adapter.push({
+		type: "tool_execution_end",
+		toolName: "bash",
+		toolCallId: "late-1",
+		isError: false,
+	});
+	assert.equal(frames[0].type, "tool-input-start");
+	assert.equal(frames[0].toolCallId, "late-1");
+	assert.equal(frames[1].type, "tool-input-available");
+	assert.equal(frames[2].type, "tool-output-available");
+	assert.equal(frames[2].toolCallId, "late-1");
+});
+
+test("repeated tool_execution_start keeps a single invocation for the same id", () => {
+	const adapter = new PiEventToUiMessageStream();
+	const first = adapter.push({
+		type: "tool_execution_start",
+		toolName: "bash",
+		toolCallId: "call-dup",
+	});
+	const second = adapter.push({
+		type: "tool_execution_start",
+		toolName: "bash",
+		toolCallId: "call-dup",
+	});
+	assert.equal(first.length, 2);
+	assert.equal(second.length, 0);
+});
+
+test("anonymous tool_execution_end reuses the last started toolCallId", () => {
+	const adapter = new PiEventToUiMessageStream();
+	adapter.push({
+		type: "tool_execution_start",
+		toolName: "bash",
+		toolCallId: "anon-start",
+	});
+	const end = adapter.push({
+		type: "tool_execution_end",
+		toolName: "bash",
+		isError: false,
+	});
+	assert.equal(end.at(-1).type, "tool-output-available");
+	assert.equal(end.at(-1).toolCallId, "anon-start");
+});
+
+test("settled closes leftover tool cards that never received an end", () => {
+	const adapter = new PiEventToUiMessageStream();
+	adapter.push({
+		type: "tool_execution_start",
+		toolName: "bash",
+		toolCallId: "orphan-1",
+	});
+	const settled = adapter.push({ type: "agent_settled" });
+	assert.equal(settled[0].type, "tool-output-available");
+	assert.equal(settled[0].toolCallId, "orphan-1");
+	assert.equal(settled.at(-1).type, "finish");
 });

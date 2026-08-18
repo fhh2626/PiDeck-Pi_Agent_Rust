@@ -137,3 +137,11 @@ test("Web entry wraps the app in TooltipProvider for context-check hints", () =>
 	assert.match(webMain, /TooltipProvider/);
 	assert.match(webMain, /<WebChatApp/);
 });
+test("Web chat stream errors do not flip the connection badge", () => {
+	assert.match(webChatApp, /markWebStateFailure/);
+	assert.match(webChatApp, /setCommandError\(t\("web\.streamFailed"\)\)/);
+	assert.doesNotMatch(
+		webChatApp,
+		/setCommandError\(t\("web\.streamFailed"\)\);\s*setConnected\(false\)/,
+	);
+});

@@ -723,3 +723,37 @@ test("web service dev mode falls back to the legacy page when dev server is down
 		assert.match(await page.text(), /PiDeck(-Q)? Web Service/);
 	}, { devRendererUrl: "http://127.0.0.1:1" });
 });
+test("POST /api/chat uses a unique requestId instead of the session id", async () => {
+	await withServer(async ({ baseUrl, calls }) => {
+		const postChat = async (text, expectedCount) => {
+			const controller = new AbortController();
+			const pending = fetch(baseUrl + "/api/chat", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					id: "session-1",
+					messages: [{ role: "user", content: text }],
+				}),
+				signal: controller.signal,
+			});
+			const started = Date.now();
+			while (calls.send.length < expectedCount && Date.now() - started < 1000) {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			controller.abort();
+			await pending.catch(() => undefined);
+		};
+		await postChat("first", 1);
+		const firstCount = calls.send.length;
+		await postChat("second", 2);
+		assert.equal(firstCount, 1);
+		assert.equal(calls.send.length, 2);
+		assert.equal(calls.send[0].sessionId, "session-1");
+		assert.equal(calls.send[1].sessionId, "session-1");
+		assert.notEqual(calls.send[0].requestId, "session-1");
+		assert.notEqual(calls.send[1].requestId, "session-1");
+		assert.notEqual(calls.send[0].requestId, calls.send[1].requestId);
+		assert.equal(calls.send[0].message, "first");
+		assert.equal(calls.send[1].message, "second");
+	});
+});
