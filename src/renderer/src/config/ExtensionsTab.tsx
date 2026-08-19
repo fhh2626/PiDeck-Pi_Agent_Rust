@@ -140,6 +140,8 @@ const RECOMMENDED_PACKAGES: RecommendedPackage[] = [
 const BUILT_IN_DISPLAY_NAME: Record<string, string> = {
 	"pi-deck-context-controller.ts": "PiDeck-Q-context-controller",
 	"pi-deck-context-controller": "PiDeck-Q-context-controller",
+	"pi-deck-websearch.ts": "PiDeck-Q-WebSearch",
+	"pi-deck-websearch": "PiDeck-Q-WebSearch",
 };
 
 /** 从扩展来源提取简短描述名 */

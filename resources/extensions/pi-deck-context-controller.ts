@@ -197,7 +197,8 @@ export function formatOmittedToolResult(toolName: string, args: unknown): string
 		const command = readStringField(record, ["command", "cmd"]);
 		return command ? `[Command output omitted: ${command}]` : "[Command output omitted]";
 	}
-	if (name === "websearch" || name === "web_search") {
+	// websearch_ 是迁移前的历史工具名，保留识别以正确压缩旧会话。
+	if (name === "websearch" || name === "websearch_" || name === "web_search") {
 		const query = readStringField(record, ["query", "q", "search"]);
 		return query ? `[Web search omitted: "${query}"]` : "[Web search omitted]";
 	}

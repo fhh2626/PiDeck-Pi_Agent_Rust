@@ -185,12 +185,14 @@ test("clearCommandContent stubs non-read results including bash without toolName
 test("websearch and webfetch follow the command-output switch", () => {
 	const { filterContextMessages, formatOmittedToolResult } = loadContextControllerModule();
 	assert.equal(formatOmittedToolResult("websearch", { query: "pi rpc" }), `[Web search omitted: "pi rpc"]`);
+	assert.equal(formatOmittedToolResult("websearch_", { query: "legacy" }), `[Web search omitted: "legacy"]`);
+	assert.equal(formatOmittedToolResult("web_search", { query: "current" }), `[Web search omitted: "current"]`);
 	assert.equal(formatOmittedToolResult("webfetch", { url: "https://example.com" }), "[Web fetch omitted: https://example.com]");
 
 	const messages = [
 		{
 			role: "assistant",
-			content: [{ type: "toolCall", id: "w1", name: "websearch", arguments: { query: "pi rpc" } }],
+			content: [{ type: "toolCall", id: "w1", name: "web_search", arguments: { query: "pi rpc" } }],
 		},
 		{ role: "toolResult", toolCallId: "w1", content: [{ type: "text", text: "lots of search hits" }] },
 	];

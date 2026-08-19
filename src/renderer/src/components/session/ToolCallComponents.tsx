@@ -161,7 +161,7 @@ const BUILT_IN_TOOLS = new Set(["bash", "edit", "find", "grep", "ls", "read", "w
  * 扩展工具中带下划线的名称，会被 MCP-direct 正则误匹配为形如 {server}_{tool}。
  * 在此登记后 getToolKind 将其归为 "extension" 而非 "mcp-direct"。
  */
-const NON_MCP_TOOLS = new Set(["ask_question"]);
+const NON_MCP_TOOLS = new Set(["ask_question", "web_search"]);
 
 /**
  * 识别工具来源类型：

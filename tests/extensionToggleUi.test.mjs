@@ -30,3 +30,11 @@ test("context controller is a default-on built-in shown as PiDeck-Q-context-cont
 	assert.match(tab, /PiDeck-Q-context-controller/);
 	assert.match(tab, /"pi-deck-context-controller\.ts": "PiDeck-Q-context-controller"/);
 });
+
+test("web search is a default-off built-in shown as PiDeck-Q-WebSearch", () => {
+	const tab = readFileSync("src/renderer/src/config/ExtensionsTab.tsx", "utf8");
+	const builtIns = readFileSync("src/main/extensions/builtInExtensions.ts", "utf8");
+	assert.match(builtIns, /DEFAULT_DISABLED_BUILT_IN_EXTENSIONS = \[[\s\S]*?"pi-deck-websearch\.ts"/);
+	assert.match(tab, /"pi-deck-websearch\.ts": "PiDeck-Q-WebSearch"/);
+	assert.match(tab, /"pi-deck-websearch": "PiDeck-Q-WebSearch"/);
+});

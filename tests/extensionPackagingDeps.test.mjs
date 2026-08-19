@@ -67,3 +67,12 @@ test("pi-better-compaction keeps its relative runtime files in extraResources", 
 	assert.ok(existsSync(join("resources", "extensions", "pi-better-compaction", "extension-runtime.ts")));
 	assert.ok(existsSync(join("resources", "extensions", "pi-better-compaction", "LICENSE")));
 });
+
+test("pi-deck-websearch keeps its relative fallback module in extraResources", () => {
+	const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+	const resource = (pkg.build?.extraResources ?? []).find(
+		(entry) => entry.from === "resources/extensions" && entry.to === "extensions",
+	);
+	assert.ok(resource?.filter?.includes("*.ts"));
+	assert.ok(existsSync(join("resources", "extensions", "pi-deck-websearch-fallback.ts")));
+});

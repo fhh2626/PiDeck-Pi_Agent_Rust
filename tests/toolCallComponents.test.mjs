@@ -32,6 +32,10 @@ test("timeline tool rendering and message rows share formatting helpers", () => 
   assert.match(timelineFormat, /export function getToolStatus/);
 });
 
+test("web_search is classified as an extension rather than an MCP direct tool", () => {
+  assert.match(toolCalls, /NON_MCP_TOOLS = new Set\(\["ask_question", "web_search"\]\)/);
+});
+
 test("tool and thinking disclosure icons use right-for-collapsed down-for-expanded semantics", () => {
   assert.match(toolCalls, /\{expanded \? \([\s\S]*<ChevronDown[\s\S]*\) : \([\s\S]*<ChevronRight/);
 });

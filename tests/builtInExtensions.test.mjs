@@ -67,12 +67,19 @@ test("listActiveBuiltInExtensionPaths respects removedBuiltIn and missing files"
 		);
 		assert.equal(paths.length, 1);
 		assert.ok(String(paths[0]).endsWith("pi-deck-ask-question.ts"));
-		// 内置扩展清单随版本增长：ask/context-controller/nul-redirect/plan-mode/security-gate/todo/vision/better-compaction
-		assert.equal(BUILT_IN_EXTENSIONS.length, 8);
+		// 内置扩展清单随版本增长：ask/context-controller/nul-redirect/plan-mode/security-gate/todo/vision/websearch/better-compaction
+		assert.equal(BUILT_IN_EXTENSIONS.length, 9);
 		assert.ok(BUILT_IN_EXTENSIONS.includes("pi-deck-context-controller.ts"));
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
+});
+
+test("pi-deck-websearch is packaged as a default-disabled built-in", () => {
+	const { BUILT_IN_EXTENSIONS, DEFAULT_DISABLED_BUILT_IN_EXTENSIONS } = loadBuiltInExtensionsModule();
+	assert.ok(BUILT_IN_EXTENSIONS.includes("pi-deck-websearch.ts"));
+	assert.ok(DEFAULT_DISABLED_BUILT_IN_EXTENSIONS.includes("pi-deck-websearch.ts"));
+	assert.ok(readFileSync("resources/extensions/pi-deck-websearch.ts", "utf8").includes("name: \"web_search\""));
 });
 
 test("pi-better-compaction is packaged as a built-in and disabled by default", () => {
@@ -94,6 +101,12 @@ test("default-disabled built-in migration is one-time and preserves a later rest
 	const migrated = migrateBuiltInExtensionDefaults(["pi-deck-todo.ts"], undefined);
 	assert.equal(migrated.migrated, true);
 	assert.equal(migrated.removedBuiltInExtensions.includes("pi-better-compaction.ts"), true);
+	assert.equal(migrated.removedBuiltInExtensions.includes("pi-deck-websearch.ts"), true);
+
+	const upgraded = migrateBuiltInExtensionDefaults([], 1);
+	assert.equal(upgraded.migrated, true);
+	assert.equal(upgraded.removedBuiltInExtensions.includes("pi-deck-websearch.ts"), true);
+	assert.equal(upgraded.removedBuiltInExtensions.includes("pi-better-compaction.ts"), false);
 
 	const restored = migrateBuiltInExtensionDefaults([], BUILT_IN_EXTENSION_DEFAULTS_VERSION);
 	assert.equal(restored.migrated, false);

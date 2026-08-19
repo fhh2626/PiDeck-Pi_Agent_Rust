@@ -13,6 +13,7 @@ export const BUILT_IN_EXTENSIONS = [
 	"pi-deck-security-gate.ts",
 	"pi-deck-todo.ts",
 	"pi-deck-vision.ts",
+	"pi-deck-websearch.ts",
 	"pi-better-compaction.ts",
 ] as const;
 
@@ -20,11 +21,21 @@ export type BuiltInExtensionName = (typeof BUILT_IN_EXTENSIONS)[number];
 
 /** 出厂默认关闭的内置扩展；用户可在设置页恢复。 */
 export const DEFAULT_DISABLED_BUILT_IN_EXTENSIONS = [
+	"pi-deck-websearch.ts",
 	"pi-better-compaction.ts",
 ] as const satisfies readonly BuiltInExtensionName[];
 
 /** 每次新增默认关闭的内置扩展时递增，用于老配置的一次性迁移。 */
-export const BUILT_IN_EXTENSION_DEFAULTS_VERSION = 1;
+export const BUILT_IN_EXTENSION_DEFAULTS_VERSION = 2;
+
+/** 每个版本只登记当次新增的默认关闭项，避免升级时重新关闭用户已恢复的旧扩展。 */
+const DEFAULT_DISABLED_MIGRATIONS: ReadonlyArray<{
+	version: number;
+	extensions: readonly BuiltInExtensionName[];
+}> = [
+	{ version: 1, extensions: ["pi-better-compaction.ts"] },
+	{ version: 2, extensions: ["pi-deck-websearch.ts"] },
+];
 
 export function migrateBuiltInExtensionDefaults(
 	removedBuiltInExtensions: readonly string[] | undefined,
@@ -43,8 +54,10 @@ export function migrateBuiltInExtensionDefaults(
 	}
 
 	const next = new Set(removedBuiltInExtensions ?? []);
-	for (const name of DEFAULT_DISABLED_BUILT_IN_EXTENSIONS) {
-		next.add(name);
+	const previousVersion = persistedVersion ?? 0;
+	for (const migration of DEFAULT_DISABLED_MIGRATIONS) {
+		if (migration.version <= previousVersion) continue;
+		for (const name of migration.extensions) next.add(name);
 	}
 	return {
 		removedBuiltInExtensions: [...next],
