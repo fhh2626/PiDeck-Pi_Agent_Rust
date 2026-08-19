@@ -119,3 +119,12 @@ test("AgentManager no longer deploys built-ins via ensurePiDeckExtension", () =>
 	assert.match(processSource, /appendBuiltInExtensionArgs/);
 	assert.match(processSource, /--extension/);
 });
+
+test("main uses the already-eager built-in extension catalog without a fake dynamic import", () => {
+	const index = readFileSync("src/main/index.ts", "utf8");
+	assert.match(
+		index,
+		/import \{ BUILT_IN_EXTENSIONS \} from "\.\/extensions\/builtInExtensions"/,
+	);
+	assert.doesNotMatch(index, /await import\("\.\/extensions\/builtInExtensions"\)/);
+});
