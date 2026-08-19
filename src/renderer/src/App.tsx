@@ -373,7 +373,6 @@ export function App() {
     worktreesByProject,
     branchByProject,
     files,
-    setFiles,
     gitInfo,
     setGitInfo,
     setSessionLoadingByProject,
@@ -382,6 +381,7 @@ export function App() {
     refreshWorktrees,
     refreshProjectSessions,
     refreshFiles,
+    refreshGitInfo,
     refreshProjectTree,
   } = useProjectSync({
     projects,
@@ -1648,11 +1648,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!activeProjectId) {
-      setFiles([]);
-      setGitInfo({ current: null, branches: [] });
-      return;
-    }
+    if (!activeProjectId) return;
 
     // 切换项目时按 catalog load state 判断。空项目成功返回 [] 后也会是 ready，
     // 不能再用列表长度，否则每次选中都会重扫。
@@ -1661,44 +1657,17 @@ export function App() {
     if (expandedProjectsReady && activeProject && expandedProjects.has(activeProjectId) && loadState?.status !== "loading" && loadState?.status !== "ready") {
       void refreshProjectSessions(activeProjectId).catch(() => undefined);
     }
-
-    setExpandedDirs(new Set());
-    void api.files
-      .list(activeProjectId)
-      .then(setFiles)
-      .catch((error) => console.error("[Files] refresh failed", error));
-    void api.git
-      .branches(activeProjectId)
-      .then(setGitInfo)
-      .catch(() => setGitInfo({ current: null, branches: [] }));
   }, [activeProjectId, currentSessionId, displayAgents.length]);
 
   useEffect(() => {
     if (!activeProjectId) return;
-    let stopped = false;
-    const refreshGitInfo = async () => {
-      try {
-        // 轮询分支信息
-        const next = await api.git.branches(activeProjectId);
-        if (stopped) return;
-        // 分支可能在外部终端/IDE 中切换,轮询只在状态真的变化时更新,避免不必要重渲染。
-        setGitInfo((current) =>
-          current.current === next.current &&
-          current.branches.join("\n") === next.branches.join("\n")
-            ? current
-            : next,
-        );
-      } catch {
-        if (!stopped) {
-          setGitInfo({ current: null, branches: [] });
-        }
-      }
-    };
-    const timer = window.setInterval(refreshGitInfo, 4000);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
+    // 请求序号与项目身份校验由 useProjectSync 统一持有；慢请求即使跨过
+    // 下一次轮询或项目切换才结束，也不会把旧分支写回当前工作区。
+    const timer = window.setInterval(
+      () => void refreshGitInfo(activeProjectId).catch(() => undefined),
+      4000,
+    );
+    return () => window.clearInterval(timer);
   }, [activeProjectId]);
 
   /** 统一通知：普通消息默认 1.5 秒，异常由 kind 映射为 3 秒；Ask 使用持久 warning toast。 */
