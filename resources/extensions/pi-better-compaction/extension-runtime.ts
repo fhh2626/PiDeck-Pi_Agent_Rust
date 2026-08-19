@@ -1,10 +1,11 @@
-import type {
-	BeforeProviderRequestEvent,
-	CompactionResult,
-	ExtensionAPI,
-	ExtensionContext,
-	SessionBeforeCompactEvent,
+import {
+	type BeforeProviderRequestEvent,
+	type CompactionResult,
+	type ExtensionAPI,
+	type ExtensionContext,
+	type SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	executeNativeCompaction,
 	executePortableCompactionSummary,
@@ -13,7 +14,17 @@ import {
 import { loadExtensionConfig } from "./config";
 import { writeDebugArtifact } from "./debug";
 import { resolveLatestNativeCompactionEntry } from "./details-store";
-import { runNativeFallbackCompaction, type NativeFallbackResult } from "./native-fallback";
+import {
+	runNativeFallbackCompaction,
+	runPiDefaultSegmentCompaction,
+	type NativeFallbackResult,
+} from "./native-fallback";
+import {
+	createPortableSummaryMessage,
+	type ExistingRecoveryCheckpoint,
+	getNativeOverflow,
+	recoverOversizedCompaction,
+} from "./overflow-recovery";
 import {
 	rewriteResponsesPayloadWithNativeReplay,
 	serializeLiveTailToResponsesInput,
@@ -38,7 +49,7 @@ import {
 } from "./types";
 
 type ResponsesCompactOutcome =
-	| { outcome: "success"; compaction: CompactionResult<NativeCompactionDetails> }
+	| { outcome: "success"; compaction: CompactionResult }
 	| { outcome: "aborted" }
 	| { outcome: "failed" };
 
@@ -169,6 +180,73 @@ function cloneOpaqueWindow(window: readonly unknown[]): unknown[] {
 	return window.map((item) => structuredClone(item));
 }
 
+function entryToPortableMessages(entry: Record<string, unknown>): AgentMessage[] {
+	if (entry.type === "message" && entry.message && typeof entry.message === "object") {
+		return [entry.message as AgentMessage];
+	}
+	const timestamp = new Date(typeof entry.timestamp === "string" ? entry.timestamp : Date.now()).getTime();
+	if (entry.type === "custom_message") {
+		return [{
+			role: "custom",
+			customType: typeof entry.customType === "string" ? entry.customType : "custom",
+			content: (entry.content ?? []) as never,
+			display: entry.display === true,
+			details: entry.details,
+			timestamp,
+		} as AgentMessage];
+	}
+	if (entry.type === "branch_summary" && typeof entry.summary === "string") {
+		return [{
+			role: "branchSummary",
+			summary: entry.summary,
+			fromId: typeof entry.fromId === "string" ? entry.fromId : "",
+			timestamp,
+		} as AgentMessage];
+	}
+	if (entry.type === "compaction" && typeof entry.summary === "string") {
+		return [{
+			...createPortableSummaryMessage(entry.summary),
+			tokensBefore: typeof entry.tokensBefore === "number" ? entry.tokensBefore : 0,
+			timestamp,
+		} as AgentMessage];
+	}
+	return [];
+}
+
+function buildRecoverySegments(event: SessionBeforeCompactEvent, ctx: ExtensionContext): {
+	history: AgentMessage[];
+	turnPrefix?: AgentMessage[];
+	remaining: AgentMessage[];
+} {
+	const history: AgentMessage[] = [];
+	if (event.preparation.previousSummary) {
+		history.push(createPortableSummaryMessage(event.preparation.previousSummary));
+	}
+	history.push(...(event.preparation.messagesToSummarize as AgentMessage[]));
+	const turnPrefix = event.preparation.isSplitTurn
+		? (event.preparation.turnPrefixMessages as AgentMessage[])
+		: undefined;
+
+	const contextMessages = ctx.sessionManager.buildSessionContext().messages as AgentMessage[];
+	const summarizedCount = history.length + (turnPrefix?.length ?? 0);
+	return {
+		history,
+		turnPrefix,
+		remaining: contextMessages.slice(Math.min(summarizedCount, contextMessages.length)),
+	};
+}
+
+function normalizeCompactionDetails(fileOps: SessionBeforeCompactEvent["preparation"]["fileOps"]): {
+	readFiles: string[];
+	modifiedFiles: string[];
+} {
+	const modified = new Set<string>([...fileOps.written, ...fileOps.edited]);
+	return {
+		readFiles: [...fileOps.read].filter((file) => !modified.has(file)).sort(),
+		modifiedFiles: [...modified].sort(),
+	};
+}
+
 function buildCompactionInstructions(systemPrompt: string, customInstructions?: string): string {
 	const guidance = customInstructions?.trim();
 	if (!guidance) {
@@ -199,8 +277,11 @@ async function runResponsesNativeCompact(
 		| "model-switch-session-context"
 		| "latest-native-replay";
 	let request: NativeCompactionRequestBody;
+	let existingRecoveryCheckpoint: ExistingRecoveryCheckpoint | undefined;
 	if (latestNativeCompaction.ok) {
 		const liveTailEntries = branchEntries.slice(latestNativeCompaction.index + 1);
+		const liveTailMessages = liveTailEntries.flatMap((entry) => entryToPortableMessages(entry as Record<string, unknown>));
+		const portableContext = ctx.sessionManager.buildSessionContext().messages as AgentMessage[];
 		requestSource = "latest-native-replay";
 		const input: ResponsesInputItem[] = [
 			...(cloneOpaqueWindow(latestNativeCompaction.entry.details.compactedWindow) as ResponsesInputItem[]),
@@ -210,6 +291,11 @@ async function runResponsesNativeCompact(
 			model: runtime.currentModel.id,
 			input,
 			instructions,
+		};
+		existingRecoveryCheckpoint = {
+			nativePrefix: cloneOpaqueWindow(latestNativeCompaction.entry.details.compactedWindow) as ResponsesInputItem[],
+			portablePrefix: portableContext.slice(0, Math.max(0, portableContext.length - liveTailMessages.length)),
+			remainingMessages: liveTailMessages,
 		};
 	} else if (
 		latestNativeCompaction.reason === "no-compaction" ||
@@ -311,26 +397,131 @@ async function runResponsesNativeCompact(
 	}
 
 	if (compactResult.ok === false) {
-		notify(
-			ctx,
-			`original path failed after ${attemptsUsed} attempt${attemptsUsed === 1 ? "" : "s"} (${formatNativeFailure(compactResult)}); switching to Pi default compaction`,
-			"warning",
-		);
-		writeDebugArtifact(
-			"compaction-event",
-			{
-				event: "session_before_compact.responses-compact-exhausted",
-				attemptsUsed,
-				attempts: maxAttempts,
-				reason: compactResult.reason,
-				status: compactResult.status,
-				errorMessage: compactResult.errorMessage,
-				timeoutMs: compactResult.timeoutMs,
-			},
-			config,
-			ctx,
-		);
-		return { outcome: "failed" };
+		const overflow = getNativeOverflow(compactResult);
+		if (overflow) {
+			notify(
+				ctx,
+				`compact input exceeds the provider context${overflow.promptTokens && overflow.contextLimit ? ` (${overflow.promptTokens}/${overflow.contextLimit} tokens)` : ""}; reducing it in bounded segments…`,
+				"warning",
+			);
+			const recoverySegments = buildRecoverySegments(event, ctx);
+			const recovery = await recoverOversizedCompaction({
+				initialOverflow: overflow,
+				messages: recoverySegments.history,
+				turnPrefixMessages: recoverySegments.turnPrefix,
+				remainingMessages: recoverySegments.remaining,
+				existingCheckpoint: existingRecoveryCheckpoint,
+				serializeMessages: (messages) =>
+					serializeMessagesToCompactRequest({
+						model: runtime.currentModel,
+						messages,
+						instructions,
+					}).input,
+				attemptNative: async (input) => {
+					const recoveryRequest: NativeCompactionRequestBody = { ...request, input };
+					let result: NativeCompactionClientResult = {
+						ok: false,
+						reason: "network-error",
+						errorMessage: "native recovery was not attempted",
+					};
+					for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+						result = await executeNativeCompaction({
+							runtime,
+							request: recoveryRequest,
+							signal: event.signal,
+							settings: config,
+							context: ctx,
+						});
+						if (result.ok || result.reason === "aborted" || !isRetryableNativeCompactionFailure(result)) break;
+						if (attempt < maxAttempts) {
+							const delay = await waitRetryDelay(config.compactRetryDelayMs, event.signal);
+							if (delay === "aborted") return { ok: false, reason: "aborted" };
+						}
+					}
+					return result;
+				},
+				makePortable: (window) =>
+					executePortableCompactionSummary({
+						runtime,
+						compactedWindow: window,
+						signal: event.signal,
+						settings: config,
+						context: ctx,
+					}),
+				attemptPi: (messages, kind) =>
+					runPiDefaultSegmentCompaction({ ctx, event, config, messages, kind }),
+				estimateMessageTokens: (message) => {
+					try {
+						return Math.max(1, Math.ceil(JSON.stringify(message).length / 4));
+					} catch {
+						return 1;
+					}
+				},
+				onEvent: (data) => writeDebugArtifact("compaction-event", data, config, ctx),
+			});
+			if (!recovery.ok) {
+				if (recovery.reason === "aborted" || event.signal.aborted) return { outcome: "aborted" };
+				writeDebugArtifact(
+					"compaction-event",
+					{ event: "session_before_compact.oversize-recovery-failure", errorMessage: recovery.errorMessage },
+					config,
+					ctx,
+				);
+				return { outcome: "failed" };
+			}
+			if (recovery.kind === "pi") {
+				writeDebugArtifact(
+					"compaction-event",
+					{ event: "session_before_compact.oversize-recovery-success", method: "pi-default" },
+					config,
+					ctx,
+				);
+				return {
+					outcome: "success",
+					compaction: {
+						summary: recovery.persistenceSummaryText,
+						firstKeptEntryId: event.preparation.firstKeptEntryId,
+						tokensBefore: event.preparation.tokensBefore,
+						details: normalizeCompactionDetails(event.preparation.fileOps),
+					},
+				};
+			}
+			compactResult = {
+				ok: true,
+				status: 200,
+				compactedWindow: recovery.compactedWindow,
+				summaryText: recovery.persistenceSummaryText,
+				response: { output: recovery.compactedWindow },
+			};
+			attemptsUsed = maxAttempts;
+			writeDebugArtifact(
+				"compaction-event",
+				{ event: "session_before_compact.oversize-recovery-success", method: "openai-native" },
+				config,
+				ctx,
+			);
+		} else {
+			notify(
+				ctx,
+				`original path failed after ${attemptsUsed} attempt${attemptsUsed === 1 ? "" : "s"} (${formatNativeFailure(compactResult)}); switching to Pi default compaction`,
+				"warning",
+			);
+			writeDebugArtifact(
+				"compaction-event",
+				{
+					event: "session_before_compact.responses-compact-exhausted",
+					attemptsUsed,
+					attempts: maxAttempts,
+					reason: compactResult.reason,
+					status: compactResult.status,
+					errorMessage: compactResult.errorMessage,
+					timeoutMs: compactResult.timeoutMs,
+				},
+				config,
+				ctx,
+			);
+			return { outcome: "failed" };
+		}
 	}
 
 	let summaryText = compactResult.summaryText;

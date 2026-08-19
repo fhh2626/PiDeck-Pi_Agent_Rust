@@ -4,6 +4,12 @@ import {
 	type ExtensionContext,
 	type SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import {
+	parseContextOverflow,
+	type PiSegmentResult,
+	type RecoverySegmentKind,
+} from "./overflow-recovery";
 import { MIN_COMPACT_TIMEOUT_MS, type ExtensionConfig } from "./types";
 
 export type ParsedModelSpec = {
@@ -39,6 +45,8 @@ export type NativeFallbackResult =
 /** pi's exported native compact(); injectable for tests. */
 export type NativeCompactFn = typeof compact;
 
+type CompactionPreparation = Parameters<NativeCompactFn>[0];
+
 type ResolvedAuth =
 	| { ok: true; apiKey?: string; headers?: Record<string, string>; env?: Record<string, string> }
 	| { ok: false; error: string };
@@ -69,6 +77,130 @@ function isAbortError(error: unknown): boolean {
 
 function toErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/** Run Pi's native summarizer with the current model for one bounded recovery segment. */
+export async function runPiDefaultSegmentCompaction(args: {
+	ctx: ExtensionContext;
+	event: SessionBeforeCompactEvent;
+	config: ExtensionConfig;
+	messages: AgentMessage[];
+	kind?: RecoverySegmentKind;
+	compactFn?: NativeCompactFn;
+}): Promise<PiSegmentResult> {
+	const { ctx, event, config, messages, kind = "history" } = args;
+	const model = ctx.model;
+	if (!model) return { ok: false, reason: "failed", errorMessage: "current model is unavailable" };
+	if (event.signal.aborted) return { ok: false, reason: "aborted" };
+
+	let auth: ResolvedAuth;
+	try {
+		const authRace = await raceWithUserAbort(
+			ctx.modelRegistry.getApiKeyAndHeaders(model) as Promise<ResolvedAuth>,
+			event.signal,
+		);
+		if (authRace.aborted) return { ok: false, reason: "aborted" };
+		auth = authRace.value;
+	} catch (error) {
+		return { ok: false, reason: "failed", errorMessage: toErrorMessage(error) };
+	}
+	if (!auth.ok) return { ok: false, reason: "failed", errorMessage: auth.error };
+
+	const preparation: CompactionPreparation = {
+		firstKeptEntryId: event.preparation.firstKeptEntryId,
+		messagesToSummarize: kind === "turn-prefix" ? [] : messages,
+		turnPrefixMessages: kind === "turn-prefix" ? messages : [],
+		isSplitTurn: kind === "turn-prefix",
+		tokensBefore: messages.length,
+		fileOps: { readFiles: [], modifiedFiles: [] },
+		settings: event.preparation.settings,
+	};
+	const compactFn = args.compactFn ?? compact;
+	const maxAttempts = Math.max(1, config.compactMaxAttempts);
+	let lastError = "Pi segment compaction failed";
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		if (event.signal.aborted) return { ok: false, reason: "aborted" };
+		const controller = new AbortController();
+		const onUserAbort = () => controller.abort();
+		event.signal.addEventListener("abort", onUserAbort, { once: true });
+		let timedOut = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		if (config.compactTimeoutMs > 0) {
+			timer = setTimeout(() => {
+				timedOut = true;
+				controller.abort();
+			}, config.compactTimeoutMs);
+		}
+		let onAttemptAbort: (() => void) | undefined;
+		const attemptAbort = new Promise<never>((_resolve, reject) => {
+			onAttemptAbort = () => reject(new DOMException("Pi segment compaction attempt aborted", "AbortError"));
+			controller.signal.addEventListener("abort", onAttemptAbort, { once: true });
+		});
+
+		try {
+			const operation = compactFn(
+				preparation,
+				model,
+				auth.apiKey,
+				auth.headers,
+				event.customInstructions,
+				controller.signal,
+				ctx.getThinkingLevel(),
+				undefined,
+				auth.env,
+			);
+			const result = await Promise.race([operation, attemptAbort]);
+			if (!result.summary?.trim()) {
+				lastError = "Pi returned an empty summary";
+			} else {
+				const summary = normalizeSegmentSummary(result.summary, kind);
+				if (summary) return { ok: true, summary };
+				lastError = "Pi returned an empty segment summary";
+			}
+		} catch (error) {
+			if (event.signal.aborted) return { ok: false, reason: "aborted" };
+			const errorMessage = timedOut
+				? `Pi segment compaction timed out after ${config.compactTimeoutMs}ms`
+				: toErrorMessage(error);
+			const overflow = parseContextOverflow(errorMessage);
+			if (overflow) return { ok: false, reason: "context-overflow", errorMessage, overflow };
+			// Provider-side AbortError is a retryable attempt failure, not a user cancel.
+			lastError = timedOut ? errorMessage : isAbortError(error) ? toErrorMessage(error) : errorMessage;
+		} finally {
+			if (timer !== undefined) clearTimeout(timer);
+			if (onAttemptAbort) controller.signal.removeEventListener("abort", onAttemptAbort);
+			event.signal.removeEventListener("abort", onUserAbort);
+		}
+
+		if (attempt < maxAttempts) {
+			const delay = await waitForSegmentRetry(config.compactRetryDelayMs, event.signal);
+			if (delay === "aborted") return { ok: false, reason: "aborted" };
+		}
+	}
+	return { ok: false, reason: "failed", errorMessage: lastError };
+}
+
+function normalizeSegmentSummary(summary: string, kind: RecoverySegmentKind): string {
+	const trimmed = summary.trim();
+	if (kind !== "turn-prefix") return trimmed;
+	const marker = "**Turn Context (split turn):**";
+	const markerIndex = trimmed.indexOf(marker);
+	return markerIndex >= 0 ? trimmed.slice(markerIndex + marker.length).trim() : trimmed;
+}
+
+async function waitForSegmentRetry(ms: number, signal: AbortSignal): Promise<"ready" | "aborted"> {
+	if (signal.aborted) return "aborted";
+	if (ms <= 0) return "ready";
+	await new Promise<void>((resolve) => {
+		const timer = setTimeout(settle, ms);
+		function settle() {
+			clearTimeout(timer);
+			signal.removeEventListener("abort", settle);
+			resolve();
+		}
+		signal.addEventListener("abort", settle, { once: true });
+	});
+	return signal.aborted ? "aborted" : "ready";
 }
 
 async function raceWithUserAbort<T>(
