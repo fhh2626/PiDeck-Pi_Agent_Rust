@@ -57,22 +57,24 @@ test("extension runtime deps are packaged next to extensions", () => {
 	}
 });
 
-test("pi-better-compaction keeps its relative runtime files in extraResources", () => {
+test("pideck-q-better-compaction keeps its relative runtime files in extraResources", () => {
 	const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 	const resource = (pkg.build?.extraResources ?? []).find(
-		(entry) => entry.from === "resources/extensions/pi-better-compaction",
+		(entry) => entry.from === "resources/extensions/pideck-q-better-compaction",
 	);
 	assert.deepEqual(resource?.filter, ["**/*.ts", "LICENSE"]);
-	assert.equal(resource?.to, "extensions/pi-better-compaction");
-	assert.ok(existsSync(join("resources", "extensions", "pi-better-compaction", "extension-runtime.ts")));
-	assert.ok(existsSync(join("resources", "extensions", "pi-better-compaction", "LICENSE")));
+	assert.equal(resource?.to, "extensions/pideck-q-better-compaction");
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-better-compaction", "extension-runtime.ts")));
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-better-compaction", "LICENSE")));
 });
 
-test("pi-deck-websearch keeps its relative fallback module in extraResources", () => {
+test("pideck-q-websearch keeps its relative fallback module in extraResources", () => {
 	const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 	const resource = (pkg.build?.extraResources ?? []).find(
-		(entry) => entry.from === "resources/extensions" && entry.to === "extensions",
+		(entry) => entry.from === "resources/extensions/pideck-q-websearch",
 	);
-	assert.ok(resource?.filter?.includes("*.ts"));
-	assert.ok(existsSync(join("resources", "extensions", "pi-deck-websearch-fallback.ts")));
+	assert.deepEqual(resource?.filter, ["**/*.ts"]);
+	assert.equal(resource?.to, "extensions/pideck-q-websearch");
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-websearch", "extension-runtime.ts")));
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-websearch", "fallback.ts")));
 });

@@ -6,7 +6,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createSequentialWebSearchFallback } from "./pi-deck-websearch-fallback";
+import { createSequentialWebSearchFallback } from "./fallback";
 
 const SUPPORTED_APIS = new Set(["openai-responses", "openai-codex-responses"]);
 const MAX_SSE_TEXT_CHARS = 4_000_000;

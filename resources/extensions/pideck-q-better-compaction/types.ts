@@ -1,8 +1,10 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-export const EXTENSION_ID = "pi-better-compaction";
-export const DEFAULT_ARTIFACT_ROOT = "~/.pi/agent/artifacts/pi-better-compaction";
+export const EXTENSION_ID = "PiDeck-Q-Better-Compaction";
+export const EXTENSION_STORAGE_ID = "pideck-q-better-compaction";
+export const LEGACY_EXTENSION_STORAGE_ID = "pi-better-compaction";
+export const DEFAULT_ARTIFACT_ROOT = "~/.pi/agent/artifacts/pideck-q-better-compaction";
 export const REDACTED_VALUE = "[REDACTED]";
 /**
  * APIs the extension can summarize through a regular Responses request.

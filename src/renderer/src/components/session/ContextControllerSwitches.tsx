@@ -237,7 +237,7 @@ export function ContextControllerSwitches(props: { sessionId: string }) {
 
 	const isPluginDisabled =
 		extSettings.piRpcNoExtensions ||
-		extSettings.removedBuiltInExtensions.includes("pi-deck-context-controller.ts");
+		extSettings.removedBuiltInExtensions.includes("pideck-q-context-controller.ts");
 
 	const isBusy = runtime?.status === "running" || isUserFacingSessionStart(sendState?.status);
 

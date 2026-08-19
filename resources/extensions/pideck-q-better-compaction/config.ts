@@ -4,7 +4,8 @@ import * as path from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
 	DEFAULT_EXTENSION_CONFIG,
-	EXTENSION_ID,
+	EXTENSION_STORAGE_ID,
+	LEGACY_EXTENSION_STORAGE_ID,
 	MAX_COMPACT_MAX_ATTEMPTS,
 	MAX_COMPACT_RETRY_DELAY_MS,
 	MAX_COMPACT_TIMEOUT_MS,
@@ -17,8 +18,28 @@ import {
 	type LoadedExtensionConfig,
 } from "./types";
 
-export const CONFIG_DIR = path.join(os.homedir(), ".pi", "agent", "extensions", EXTENSION_ID);
+export const CONFIG_DIR = path.join(os.homedir(), ".pi", "agent", "extensions", EXTENSION_STORAGE_ID);
 export const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+export const LEGACY_CONFIG_PATH = path.join(
+	os.homedir(),
+	".pi",
+	"agent",
+	"extensions",
+	LEGACY_EXTENSION_STORAGE_ID,
+	"config.json",
+);
+
+/** Prefer the renamed config path while retaining a read-only legacy fallback. */
+export function resolveConfigReadPath(
+	requestedPath: string,
+	defaultPath: string = CONFIG_PATH,
+	legacyPath: string = LEGACY_CONFIG_PATH,
+	fileExists: (filePath: string) => boolean = isFile,
+): string {
+	return requestedPath === defaultPath && !fileExists(defaultPath) && fileExists(legacyPath)
+		? legacyPath
+		: requestedPath;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === "object" && !Array.isArray(value);
@@ -127,8 +148,8 @@ function toResponsesCompactApis(value: unknown, fieldPath: string, warnings: str
 }
 
 /**
- * Load extension config. Single source: `~/.pi/agent/extensions/pi-better-compaction/config.json`
- * merged over code defaults. A missing file silently yields the defaults.
+ * Load extension config from the renamed directory. When the new default path
+ * is absent, the legacy path remains readable so existing users keep their settings.
  */
 export function loadExtensionConfig(configPath: string = CONFIG_PATH): LoadedExtensionConfig {
 	const warnings: string[] = [];
@@ -138,9 +159,10 @@ export function loadExtensionConfig(configPath: string = CONFIG_PATH): LoadedExt
 	};
 	let source: string | undefined;
 
-	const raw = readJsonObject(configPath, warnings);
+	const effectiveConfigPath = resolveConfigReadPath(configPath);
+	const raw = readJsonObject(effectiveConfigPath, warnings);
 	if (raw) {
-		source = configPath;
+		source = effectiveConfigPath;
 
 		resolved.enabled = toBoolean(raw.enabled, "enabled", warnings) ?? resolved.enabled;
 		resolved.notifyOnLoad = toBoolean(raw.notifyOnLoad, "notifyOnLoad", warnings) ?? resolved.notifyOnLoad;
@@ -208,7 +230,7 @@ export function loadExtensionConfig(configPath: string = CONFIG_PATH): LoadedExt
 		}
 	}
 
-	resolved.artifactRoot = resolveConfiguredPath(resolved.artifactRoot, path.dirname(configPath));
+	resolved.artifactRoot = resolveConfiguredPath(resolved.artifactRoot, path.dirname(effectiveConfigPath));
 
 	return {
 		config: resolved,

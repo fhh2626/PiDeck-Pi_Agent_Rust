@@ -3,7 +3,7 @@ import type {
 	WebSearchFallback,
 	WebSearchFallbackRequest,
 	WebSearchResult,
-} from "./pi-deck-websearch";
+} from "./extension-runtime";
 
 const MAX_RESULTS = 5;
 const MAX_BODY_CHARS = 2_000_000;

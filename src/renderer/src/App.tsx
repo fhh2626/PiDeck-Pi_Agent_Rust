@@ -562,7 +562,7 @@ export function App() {
     fontFamilyBaseCustom: "",
     fontFamilyMono: "system-mono",
     fontFamilyMonoCustom: "",
-    removedBuiltInExtensions: ["pi-better-compaction.ts"],
+    removedBuiltInExtensions: ["pideck-q-better-compaction.ts"],
     hiddenBuiltinPromptNames: [],
     disableUpdateCheck: false,
     piRpcOffline: true,

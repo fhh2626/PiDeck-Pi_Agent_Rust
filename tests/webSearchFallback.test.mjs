@@ -4,7 +4,7 @@ import test from "node:test";
 import ts from "typescript";
 import vm from "node:vm";
 
-const FALLBACK_PATH = "resources/extensions/pi-deck-websearch-fallback.ts";
+const FALLBACK_PATH = "resources/extensions/pideck-q-websearch/fallback.ts";
 
 function loadFallback() {
 	const source = readFileSync(FALLBACK_PATH, "utf8");

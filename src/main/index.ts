@@ -201,7 +201,10 @@ import { PromptManager } from "./prompts/PromptManager";
 import { XuePromptManager } from "./prompts/XuePromptManager";
 import { SkillManager } from "./skills/SkillManager";
 import { ExtensionManager } from "./extensions/ExtensionManager";
-import { BUILT_IN_EXTENSIONS } from "./extensions/builtInExtensions";
+import {
+	BUILT_IN_EXTENSIONS,
+	LEGACY_BUILT_IN_EXTENSION_NAMES,
+} from "./extensions/builtInExtensions";
 import { ProjectResourceManager } from "./projects/ProjectResourceManager";
 import { listVisibleProjects, registerProjectsIpc } from "./ipc/projectsIpc";
 import { registerUsageStatsIpc } from "./ipc/usageStatsIpc";
@@ -1871,6 +1874,7 @@ async function removeStalePiDeckExtension(extensionName: string, homeDir?: strin
 async function migrateLegacyBuiltInExtensions(): Promise<void> {
 	const legacyNames = [
 		...BUILT_IN_EXTENSIONS,
+		...LEGACY_BUILT_IN_EXTENSION_NAMES,
 		"pi-deck-project-trust.ts",
 		"pi-deck-file-capture.ts",
 	];

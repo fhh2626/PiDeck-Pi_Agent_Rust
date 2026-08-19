@@ -7,22 +7,22 @@ import { basename, join } from "node:path";
  */
 export const BUILT_IN_EXTENSIONS = [
 	"pi-deck-ask-question.ts",
-	"pi-deck-context-controller.ts",
+	"pideck-q-context-controller.ts",
 	"pi-deck-nul-redirect-fix.ts",
 	"pi-deck-plan-mode.ts",
 	"pi-deck-security-gate.ts",
 	"pi-deck-todo.ts",
 	"pi-deck-vision.ts",
-	"pi-deck-websearch.ts",
-	"pi-better-compaction.ts",
+	"pideck-q-websearch.ts",
+	"pideck-q-better-compaction.ts",
 ] as const;
 
 export type BuiltInExtensionName = (typeof BUILT_IN_EXTENSIONS)[number];
 
 /** 出厂默认关闭的内置扩展；用户可在设置页恢复。 */
 export const DEFAULT_DISABLED_BUILT_IN_EXTENSIONS = [
-	"pi-deck-websearch.ts",
-	"pi-better-compaction.ts",
+	"pideck-q-websearch.ts",
+	"pideck-q-better-compaction.ts",
 ] as const satisfies readonly BuiltInExtensionName[];
 
 /** 每次新增默认关闭的内置扩展时递增，用于老配置的一次性迁移。 */
@@ -33,9 +33,21 @@ const DEFAULT_DISABLED_MIGRATIONS: ReadonlyArray<{
 	version: number;
 	extensions: readonly BuiltInExtensionName[];
 }> = [
-	{ version: 1, extensions: ["pi-better-compaction.ts"] },
-	{ version: 2, extensions: ["pi-deck-websearch.ts"] },
+	{ version: 1, extensions: ["pideck-q-better-compaction.ts"] },
+	{ version: 2, extensions: ["pideck-q-websearch.ts"] },
 ];
+
+/** 文件更名只迁移持久化身份，不改变用户此前的启用/禁用选择。 */
+const BUILT_IN_EXTENSION_ALIASES: Readonly<Record<string, BuiltInExtensionName>> = {
+	"pi-deck-context-controller.ts": "pideck-q-context-controller.ts",
+	"pi-deck-websearch.ts": "pideck-q-websearch.ts",
+	"pi-better-compaction.ts": "pideck-q-better-compaction.ts",
+};
+
+/** 升级后必须从 pi 自动发现目录清掉的旧入口，避免与重命名后的 -e 入口重复加载。 */
+export const LEGACY_BUILT_IN_EXTENSION_NAMES = Object.freeze(
+	Object.keys(BUILT_IN_EXTENSION_ALIASES),
+);
 
 export function migrateBuiltInExtensionDefaults(
 	removedBuiltInExtensions: readonly string[] | undefined,
@@ -45,15 +57,21 @@ export function migrateBuiltInExtensionDefaults(
 	version: number;
 	migrated: boolean;
 } {
-	if (persistedVersion === BUILT_IN_EXTENSION_DEFAULTS_VERSION) {
+	const normalizedRemoved = (removedBuiltInExtensions ?? []).map(
+		(name) => BUILT_IN_EXTENSION_ALIASES[name] ?? name,
+	);
+	const renamed = normalizedRemoved.some(
+		(name, index) => name !== (removedBuiltInExtensions ?? [])[index],
+	);
+	if (persistedVersion === BUILT_IN_EXTENSION_DEFAULTS_VERSION && !renamed) {
 		return {
-			removedBuiltInExtensions: [...(removedBuiltInExtensions ?? [])],
+			removedBuiltInExtensions: normalizedRemoved,
 			version: persistedVersion,
 			migrated: false,
 		};
 	}
 
-	const next = new Set(removedBuiltInExtensions ?? []);
+	const next = new Set(normalizedRemoved);
 	const previousVersion = persistedVersion ?? 0;
 	for (const migration of DEFAULT_DISABLED_MIGRATIONS) {
 		if (migration.version <= previousVersion) continue;

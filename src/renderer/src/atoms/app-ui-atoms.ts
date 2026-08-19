@@ -48,6 +48,5 @@ export type ContextControllerSettings = {
 
 export const contextControllerSettingsAtom = atom<ContextControllerSettings>({
 	piRpcNoExtensions: false,
-	removedBuiltInExtensions: ["pi-better-compaction.ts"],
+	removedBuiltInExtensions: ["pideck-q-better-compaction.ts"],
 });
-

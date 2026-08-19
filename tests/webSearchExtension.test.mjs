@@ -6,7 +6,7 @@ import ts from "typescript";
 import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
-const EXTENSION_PATH = "resources/extensions/pi-deck-websearch.ts";
+const EXTENSION_PATH = "resources/extensions/pideck-q-websearch/extension-runtime.ts";
 
 function loadExtension() {
 	const source = readFileSync(EXTENSION_PATH, "utf8");
@@ -23,7 +23,7 @@ function loadExtension() {
 		if (specifier === "typebox") {
 			return { Type: { Object: (shape) => shape, String: (options) => options } };
 		}
-		if (specifier === "./pi-deck-websearch-fallback") {
+		if (specifier === "./fallback") {
 			return { createSequentialWebSearchFallback: () => ({ async search() { throw new Error("unused default fallback"); } }) };
 		}
 		return require(specifier);

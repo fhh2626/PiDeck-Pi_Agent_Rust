@@ -37,8 +37,8 @@ const PIDEK_BUILTIN_SOURCE: Record<string, string> = {
 	"pi-deck-plan-mode": "pi-deck-plan-mode.ts",
 	"pi-deck-ask-question": "pi-deck-ask-question.ts",
 	"pi-deck-nul-redirect-fix": "pi-deck-nul-redirect-fix.ts",
-	"pi-deck-context-controller": "pi-deck-context-controller.ts",
-	"PiDeck-Q-context-controller": "pi-deck-context-controller.ts",
+	"pi-deck-context-controller": "pideck-q-context-controller.ts",
+	"PiDeck-Q-context-controller": "pideck-q-context-controller.ts",
 };
 
 /** 推荐扩展包：描述走 i18n（descriptionKey），不在组件里硬编码中英文案。 */
@@ -136,12 +136,14 @@ const RECOMMENDED_PACKAGES: RecommendedPackage[] = [
 	},
 ];
 
-/** 内置扩展的用户可见产品名；source 仍是 pi-deck-*.ts，供 -e 注入。 */
+/** 内置扩展的用户可见产品名；source basename 供 -e 注入。 */
 const BUILT_IN_DISPLAY_NAME: Record<string, string> = {
-	"pi-deck-context-controller.ts": "PiDeck-Q-context-controller",
-	"pi-deck-context-controller": "PiDeck-Q-context-controller",
-	"pi-deck-websearch.ts": "PiDeck-Q-WebSearch",
-	"pi-deck-websearch": "PiDeck-Q-WebSearch",
+	"pideck-q-context-controller.ts": "PiDeck-Q-context-controller",
+	"pideck-q-context-controller": "PiDeck-Q-context-controller",
+	"pideck-q-websearch.ts": "PiDeck-Q-WebSearch",
+	"pideck-q-websearch": "PiDeck-Q-WebSearch",
+	"pideck-q-better-compaction.ts": "PiDeck-Q-Better-Compaction",
+	"pideck-q-better-compaction": "PiDeck-Q-Better-Compaction",
 };
 
 /** 从扩展来源提取简短描述名 */

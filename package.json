@@ -126,11 +126,18 @@
         ]
       },
       {
-        "from": "resources/extensions/pi-better-compaction",
-        "to": "extensions/pi-better-compaction",
+        "from": "resources/extensions/pideck-q-better-compaction",
+        "to": "extensions/pideck-q-better-compaction",
         "filter": [
           "**/*.ts",
           "LICENSE"
+        ]
+      },
+      {
+        "from": "resources/extensions/pideck-q-websearch",
+        "to": "extensions/pideck-q-websearch",
+        "filter": [
+          "**/*.ts"
         ]
       },
       {

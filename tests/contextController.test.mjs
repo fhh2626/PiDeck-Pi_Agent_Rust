@@ -12,14 +12,14 @@ function sameJson(actual, expected) {
 }
 
 function loadContextControllerModule() {
-	const source = readFileSync("resources/extensions/pi-deck-context-controller.ts", "utf8");
+	const source = readFileSync("resources/extensions/pideck-q-context-controller.ts", "utf8");
 	const { outputText } = ts.transpileModule(source, {
 		compilerOptions: {
 			module: ts.ModuleKind.CommonJS,
 			target: ts.ScriptTarget.ES2022,
 			esModuleInterop: true,
 		},
-		fileName: "pi-deck-context-controller.ts",
+		fileName: "pideck-q-context-controller.ts",
 	});
 	const sandbox = {
 		exports: {},
@@ -30,7 +30,7 @@ function loadContextControllerModule() {
 		Buffer,
 	};
 	sandbox.module.exports = sandbox.exports;
-	vm.runInNewContext(outputText, sandbox, { filename: "pi-deck-context-controller.ts" });
+	vm.runInNewContext(outputText, sandbox, { filename: "pideck-q-context-controller.ts" });
 	return sandbox.module.exports;
 }
 
@@ -299,7 +299,7 @@ test("status helper reports include flags for the current chat", () => {
 });
 
 test("slash commands include context-keep, files, commands, and tools", () => {
-	const source = readFileSync("resources/extensions/pi-deck-context-controller.ts", "utf8");
+	const source = readFileSync("resources/extensions/pideck-q-context-controller.ts", "utf8");
 	assert.match(source, /registerCommand\("context-keep"/);
 	assert.match(source, /registerCommand\("context-tools"/);
 	assert.match(source, /registerCommand\("context-files"/);
