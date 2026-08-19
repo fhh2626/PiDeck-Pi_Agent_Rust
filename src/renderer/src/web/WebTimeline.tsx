@@ -349,7 +349,13 @@ export function WebTimeline(props: {
 							variant="outline"
 							size="sm"
 							disabled={loadingMore}
-							onClick={onLoadMore}
+							onClick={() => {
+								stickToBottomRef.current = false;
+								// A short transcript can still count as "at bottom". Suspend live-edge
+								// following before prepending history so the new page stays visible.
+								setShowScrollToBottom(messages.length > 0);
+								onLoadMore();
+							}}
 							className="h-8 px-4 text-caption"
 						>
 							{loadingMore ? t("timeline.loadingMore") : t("timeline.loadMoreHistory", { count: moreCount })}

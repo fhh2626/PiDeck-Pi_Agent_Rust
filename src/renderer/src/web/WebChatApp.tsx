@@ -204,7 +204,14 @@ export function WebChatApp() {
 					activeSessionIdRef.current !== sessionId
 				) return;
 				const authoritative = chatMessagesToUiMessages(page.messages);
-				messagesBySessionRef.current[sessionId] = authoritative;
+				// Recovery only fetches the authoritative tail page. Merge it into the
+				// cached transcript so a stream error cannot discard older loaded pages.
+				const merged = mergeAuthoritativeUiMessages(
+					messagesBySessionRef.current[sessionId] ?? [],
+					authoritative,
+					{ dropUnmatchedTrailingPlaceholders: true },
+				);
+				messagesBySessionRef.current[sessionId] = merged;
 				historyMetaRef.current[sessionId] = {
 					total: page.total,
 					nextBefore: page.nextBefore,
@@ -214,7 +221,7 @@ export function WebChatApp() {
 				};
 				loadedSessionsRef.current.add(sessionId);
 				bumpHistory();
-				if (!streamingRef.current) setMessages(authoritative);
+				if (!streamingRef.current) setMessages(merged);
 				setCommandError(t("web.streamFailed"));
 			})
 			.catch(() => {
@@ -229,13 +236,17 @@ export function WebChatApp() {
 		syncRuntimeMessages(state, activeSessionId);
 	}, [activeSessionId, state, streaming, syncRuntimeMessages]);
 
-	// 流式期间同步缓存：仅 streaming 时回写（空闲时 setMessages 来自历史恢复/分页，
-	// 对应逻辑已各自写缓存；这里若无条件覆盖会把刚恢复的历史再次清空）。
+	// 流式期间同步缓存：仅 streaming 时合并（空闲时 setMessages 来自历史恢复/分页，
+	// 对应逻辑已各自写缓存）。运行时 useChat 可能只保留尾部窗口，不能直接覆盖缓存，
+	// 否则用户已经「加载更多」prepend 的旧页会在下一次发送后全部丢失。
 	// 不要把会话标成 loaded：那是「首页已经成功」的语义。流式先标 loaded
 	// 会让 handleLoadMore 在还没拿到 nextBefore 时直接 return，点按钮没反应。
 	useEffect(() => {
 		if (!activeSessionId || !streaming) return;
-		messagesBySessionRef.current[activeSessionId] = messages;
+		messagesBySessionRef.current[activeSessionId] = mergeAuthoritativeUiMessages(
+			messagesBySessionRef.current[activeSessionId] ?? [],
+			messages,
+		);
 	}, [messages, activeSessionId, streaming]);
 
 	// 首页直发：useChat 随 activeSessionId 切换在渲染期重建实例（@ai-sdk/react 在 render 中
@@ -514,7 +525,7 @@ export function WebChatApp() {
 	};
 
 	const handleLoadMore = async () => {
-		if (!activeSessionId || streaming || loadingMore) return;
+		if (!activeSessionId || loadingMore) return;
 		const sessionId = activeSessionId;
 		const meta = historyMetaRef.current[sessionId];
 		const alreadyLoaded = loadedSessionsRef.current.has(sessionId);
@@ -546,8 +557,9 @@ export function WebChatApp() {
 			messagesBySessionRef.current[sessionId] = merged;
 			loadedSessionsRef.current.add(sessionId);
 			bumpHistory();
-			// 流式中只更新缓存，等空闲后再由 runtime 快照/切回会话注入，避免冲掉正在输出的回复。
-			if (!streamingRef.current) setMessages(merged);
+			// merged 基于每个流式增量都会更新的 per-session 缓存，既含当前回复也含旧页；
+			// 因此可以直接注入 useChat，让思考/回答期间点击「加载更多」立即可见。
+			setMessages(merged);
 		} catch {
 			if (historyRequestSequenceRef.current[sessionId] !== requestSequence) return;
 			historyMetaRef.current[sessionId] = {
@@ -574,7 +586,7 @@ export function WebChatApp() {
 
 	void historyEpoch;
 	const activeMeta = activeSessionId ? historyMetaRef.current[activeSessionId] : undefined;
-	const hasMoreHistory = Boolean(activeSessionId) && !streaming && hasMoreWebHistory({
+	const hasMoreHistory = Boolean(activeSessionId) && hasMoreWebHistory({
 		meta: activeMeta,
 		loaded: loadedSessionsRef.current.has(activeSessionId),
 		catalogMessageCount: activeSession?.messageCount,

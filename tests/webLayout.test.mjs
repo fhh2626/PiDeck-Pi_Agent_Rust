@@ -101,6 +101,42 @@ test("Web history load control stays at the top and can recover from a missing c
 	assert.ok(messageMap > loadButton, "load more must sit above the message list, not after it");
 });
 
+test("Web history remains interactive and cached while an answer streams", () => {
+	assert.doesNotMatch(
+		webChatApp,
+		/if \(!activeSessionId \|\| streaming \|\| loadingMore\) return/,
+		"streaming must not silently discard a load-more click",
+	);
+	assert.doesNotMatch(
+		webChatApp,
+		/Boolean\(activeSessionId\) && !streaming && hasMoreWebHistory/,
+		"the history control must stay visible while the model is answering",
+	);
+	assert.match(
+		webChatApp,
+		/messagesBySessionRef\.current\[activeSessionId\] = mergeAuthoritativeUiMessages\(/,
+		"streaming updates must merge into prepended history instead of replacing it with the runtime tail",
+	);
+	assert.match(
+		webTimeline,
+		/onClick=\{\(\) => \{\s*stickToBottomRef\.current = false;[\s\S]*?onLoadMore\(\);\s*\}\}/,
+		"loading older messages must suspend bottom-follow so the prepended page stays visible",
+	);
+});
+
+test("Web stream-error recovery preserves pages that were already loaded", () => {
+	assert.doesNotMatch(
+		webChatApp,
+		/messagesBySessionRef\.current\[sessionId\] = authoritative;/,
+		"a tail-page recovery response must not replace the complete per-session cache",
+	);
+	assert.doesNotMatch(
+		webChatApp,
+		/setMessages\(authoritative\)/,
+		"error recovery must render the merged cache rather than only the recovered tail page",
+	);
+});
+
 test("Web tool cards stay compact and keep a visible settled status", () => {
 	assert.match(webTimeline, /tool-card inline-flex w-fit max-w-full/);
 	assert.match(webTimeline, /t\("tool\.statusDone"\)/);
