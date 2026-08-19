@@ -118,7 +118,7 @@ function toResponsesCompactApis(value: unknown, fieldPath: string, warnings: str
 			accepted.push(item);
 		} else {
 			warnings.push(
-				`Ignoring ${fieldPath} entry "${item}": only ${[...RESPONSES_COMPACT_CAPABLE_APIS].join(", ")} support the compact endpoint.`,
+				`Ignoring ${fieldPath} entry "${item}": only ${[...RESPONSES_COMPACT_CAPABLE_APIS].join(", ")} support direct Responses summarization.`,
 			);
 		}
 	}
@@ -143,13 +143,8 @@ export function loadExtensionConfig(configPath: string = CONFIG_PATH): LoadedExt
 		source = configPath;
 
 		resolved.enabled = toBoolean(raw.enabled, "enabled", warnings) ?? resolved.enabled;
-		resolved.allowCompactionContinuityBreak =
-			toBoolean(raw.allowCompactionContinuityBreak, "allowCompactionContinuityBreak", warnings) ??
-			resolved.allowCompactionContinuityBreak;
 		resolved.notifyOnLoad = toBoolean(raw.notifyOnLoad, "notifyOnLoad", warnings) ?? resolved.notifyOnLoad;
 		resolved.debug = toBoolean(raw.debug, "debug", warnings) ?? resolved.debug;
-		resolved.logProviderPayloads =
-			toBoolean(raw.logProviderPayloads, "logProviderPayloads", warnings) ?? resolved.logProviderPayloads;
 		resolved.logCompactResponses =
 			toBoolean(raw.logCompactResponses, "logCompactResponses", warnings) ?? resolved.logCompactResponses;
 		resolved.redactSensitiveData =

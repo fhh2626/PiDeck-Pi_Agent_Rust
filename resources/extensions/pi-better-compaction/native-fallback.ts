@@ -8,7 +8,6 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	parseContextOverflow,
 	type PiSegmentResult,
-	type RecoverySegmentKind,
 } from "./overflow-recovery";
 import { MIN_COMPACT_TIMEOUT_MS, type ExtensionConfig } from "./types";
 
@@ -85,10 +84,9 @@ export async function runPiDefaultSegmentCompaction(args: {
 	event: SessionBeforeCompactEvent;
 	config: ExtensionConfig;
 	messages: AgentMessage[];
-	kind?: RecoverySegmentKind;
 	compactFn?: NativeCompactFn;
 }): Promise<PiSegmentResult> {
-	const { ctx, event, config, messages, kind = "history" } = args;
+	const { ctx, event, config, messages } = args;
 	const model = ctx.model;
 	if (!model) return { ok: false, reason: "failed", errorMessage: "current model is unavailable" };
 	if (event.signal.aborted) return { ok: false, reason: "aborted" };
@@ -108,9 +106,9 @@ export async function runPiDefaultSegmentCompaction(args: {
 
 	const preparation: CompactionPreparation = {
 		firstKeptEntryId: event.preparation.firstKeptEntryId,
-		messagesToSummarize: kind === "turn-prefix" ? [] : messages,
-		turnPrefixMessages: kind === "turn-prefix" ? messages : [],
-		isSplitTurn: kind === "turn-prefix",
+		messagesToSummarize: messages,
+		turnPrefixMessages: [],
+		isSplitTurn: false,
 		tokensBefore: messages.length,
 		fileOps: { readFiles: [], modifiedFiles: [] },
 		settings: event.preparation.settings,
@@ -153,7 +151,7 @@ export async function runPiDefaultSegmentCompaction(args: {
 			if (!result.summary?.trim()) {
 				lastError = "Pi returned an empty summary";
 			} else {
-				const summary = normalizeSegmentSummary(result.summary, kind);
+				const summary = result.summary.trim();
 				if (summary) return { ok: true, summary };
 				lastError = "Pi returned an empty segment summary";
 			}
@@ -162,7 +160,7 @@ export async function runPiDefaultSegmentCompaction(args: {
 			const errorMessage = timedOut
 				? `Pi segment compaction timed out after ${config.compactTimeoutMs}ms`
 				: toErrorMessage(error);
-			const overflow = parseContextOverflow(errorMessage);
+			const overflow = parseContextOverflow(error, errorMessage);
 			if (overflow) return { ok: false, reason: "context-overflow", errorMessage, overflow };
 			// Provider-side AbortError is a retryable attempt failure, not a user cancel.
 			lastError = timedOut ? errorMessage : isAbortError(error) ? toErrorMessage(error) : errorMessage;
@@ -178,14 +176,6 @@ export async function runPiDefaultSegmentCompaction(args: {
 		}
 	}
 	return { ok: false, reason: "failed", errorMessage: lastError };
-}
-
-function normalizeSegmentSummary(summary: string, kind: RecoverySegmentKind): string {
-	const trimmed = summary.trim();
-	if (kind !== "turn-prefix") return trimmed;
-	const marker = "**Turn Context (split turn):**";
-	const markerIndex = trimmed.indexOf(marker);
-	return markerIndex >= 0 ? trimmed.slice(markerIndex + marker.length).trim() : trimmed;
 }
 
 async function waitForSegmentRetry(ms: number, signal: AbortSignal): Promise<"ready" | "aborted"> {
@@ -329,7 +319,7 @@ export async function runNativeFallbackCompaction(args: {
 			model: { provider: model.provider, id: model.id },
 		};
 	} catch (error) {
-		// Priority mirrors executeNativeCompaction: a genuine user abort wins, then a
+		// A genuine user abort wins over timeout/provider errors, then a
 		// timer-driven timeout (compact() rejects with an AbortError once we abort its
 		// signal), then a plain abort error, then any other failure. Keeping the timeout
 		// distinct from an abort lets the caller retry a timeout but stop on a user stop.

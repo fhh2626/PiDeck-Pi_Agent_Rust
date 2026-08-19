@@ -2,245 +2,97 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { RESPONSES_COMPACT_CAPABLE_APIS } from "./types";
 
-const OPENAI_COMPACT_PATH = "responses/compact";
-const CODEX_COMPACT_PATH = "codex/responses/compact";
-
-type ResponsesCompactApi = (typeof RESPONSES_COMPACT_CAPABLE_APIS)[number];
-
+type ResponsesApi = (typeof RESPONSES_COMPACT_CAPABLE_APIS)[number];
 type RuntimeModel = Model<Api>;
 
-type NativeCompactionFailureReason =
-	| "disabled"
-	| "missing-model"
-	| "unsupported-api"
-	| "missing-base-url"
-	| "missing-api-key"
-	| "unsupported-payload"
-	| "payload-model-mismatch";
-
-export type NativeCompactionSupportOptions = {
+export type ResponsesSummarySupportOptions = {
 	enabled?: boolean;
-	/** Which Responses APIs should use the compact endpoint; defaults to all capable APIs. */
+	/** Responses APIs that should use direct prompt-based summarization. */
 	responsesCompactApis?: readonly string[];
 };
 
-export type ResponsesCompatibleRequestPayload = {
-	model: string;
-	input: unknown[];
-	instructions?: unknown;
-	[key: string]: unknown;
-};
-
-export type NativeCompactionRuntime = {
+export type ResponsesSummaryRuntime = {
 	provider: string;
-	api: ResponsesCompactApi;
+	api: ResponsesApi;
 	model: string;
 	baseUrl: string;
-	payload?: ResponsesCompatibleRequestPayload;
 	currentModel: RuntimeModel;
 	apiKey: string;
 	headers?: Record<string, string>;
-	compactPath: string;
-	compactUrl: string;
 };
 
-export type NativeReplayRuntime = {
-	provider: string;
-	api: ResponsesCompactApi;
-	model: string;
-	baseUrl: string;
-	payload?: ResponsesCompatibleRequestPayload;
-	currentModel: RuntimeModel;
-};
-
-export type NativeCompactionEnvironmentFailure = {
-	ok: false;
-	reason: NativeCompactionFailureReason;
-	provider?: string;
-	api?: string;
-	model?: string;
-	baseUrl?: string;
-};
-
-export type NativeCompactionEnvironmentSuccess = {
-	ok: true;
-	runtime: NativeCompactionRuntime;
-};
-
-export type NativeCompactionEnvironmentResolution =
-	| NativeCompactionEnvironmentFailure
-	| NativeCompactionEnvironmentSuccess;
-
-export type NativeReplayEnvironmentResolution =
-	| NativeCompactionEnvironmentFailure
-	| { ok: true; runtime: NativeReplayRuntime };
+export type ResponsesSummaryEnvironmentResolution =
+	| { ok: true; runtime: ResponsesSummaryRuntime }
+	| {
+		ok: false;
+		reason: "disabled" | "missing-model" | "unsupported-api" | "missing-base-url" | "missing-api-key";
+		provider?: string;
+		api?: string;
+		model?: string;
+		baseUrl?: string;
+	};
 
 function normalizeConfiguredApis(values: readonly string[] | undefined): Set<string> {
-	if (values === undefined) {
-		return new Set(RESPONSES_COMPACT_CAPABLE_APIS);
-	}
-	return new Set(values.map((value) => value.trim()).filter((value) => value.length > 0));
+	return new Set((values ?? RESPONSES_COMPACT_CAPABLE_APIS).map((value) => value.trim()).filter(Boolean));
 }
 
 export function normalizeBaseUrl(baseUrl: string | undefined | null): string | undefined {
 	const normalized = baseUrl?.trim().replace(/\/+$/, "");
-	return normalized ? normalized : undefined;
+	return normalized || undefined;
 }
 
-function buildOpenAICompactUrl(baseUrl: string): string {
-	const normalized = normalizeBaseUrl(baseUrl) ?? baseUrl;
-	if (normalized.endsWith("/responses")) {
-		return `${normalized}/compact`;
-	}
-	return `${normalized}/${OPENAI_COMPACT_PATH}`;
-}
-
-function buildCodexCompactUrl(baseUrl: string): string {
-	const normalized = normalizeBaseUrl(baseUrl) ?? baseUrl;
-	if (normalized.endsWith("/codex/responses")) {
-		return `${normalized}/compact`;
-	}
-	if (normalized.endsWith("/codex")) {
-		return `${normalized}/responses/compact`;
-	}
-	return `${normalized}/${CODEX_COMPACT_PATH}`;
-}
-
-export function buildResponsesUrl(baseUrl: string, api: ResponsesCompactApi): string {
+export function buildResponsesUrl(baseUrl: string, api: ResponsesApi): string {
 	const normalized = normalizeBaseUrl(baseUrl) ?? baseUrl;
 	if (api === "openai-codex-responses") {
-		if (normalized.endsWith("/codex/responses")) {
-			return normalized;
-		}
-		if (normalized.endsWith("/codex")) {
-			return `${normalized}/responses`;
-		}
+		if (normalized.endsWith("/codex/responses")) return normalized;
+		if (normalized.endsWith("/codex")) return `${normalized}/responses`;
 		return `${normalized}/codex/responses`;
 	}
-
 	return normalized.endsWith("/responses") ? normalized : `${normalized}/responses`;
 }
 
-export function buildCompactUrl(baseUrl: string, api: ResponsesCompactApi): string {
-	return api === "openai-codex-responses" ? buildCodexCompactUrl(baseUrl) : buildOpenAICompactUrl(baseUrl);
-}
-
-export function buildCompactPath(api: ResponsesCompactApi): string {
-	return api === "openai-codex-responses" ? CODEX_COMPACT_PATH : OPENAI_COMPACT_PATH;
+export function isSupportedApi(api: string): api is ResponsesApi {
+	return (RESPONSES_COMPACT_CAPABLE_APIS as readonly string[]).includes(api);
 }
 
 async function resolveRequestAuth(
 	ctx: ExtensionContext,
 	model: RuntimeModel,
 ): Promise<{ apiKey?: string; headers?: Record<string, string> }> {
-	const modelRegistry = ctx.modelRegistry as {
+	const registry = ctx.modelRegistry as {
 		getApiKeyAndHeaders?: (currentModel: RuntimeModel) => Promise<
 			| { ok: true; apiKey?: string; headers?: Record<string, string> }
 			| { ok: false; error: string }
 		>;
 	};
-
-	if (typeof modelRegistry.getApiKeyAndHeaders !== "function") {
-		return {};
-	}
-
-	const auth = await modelRegistry.getApiKeyAndHeaders(model);
+	if (typeof registry.getApiKeyAndHeaders !== "function") return {};
+	const auth = await registry.getApiKeyAndHeaders(model);
 	return auth.ok ? { apiKey: auth.apiKey, headers: auth.headers } : {};
 }
 
-export function isSupportedApi(api: string): api is ResponsesCompactApi {
-	return (RESPONSES_COMPACT_CAPABLE_APIS as readonly string[]).includes(api);
-}
-
-export function isResponsesCompatiblePayload(payload: unknown): payload is ResponsesCompatibleRequestPayload {
-	if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-		return false;
-	}
-
-	const candidate = payload as Record<string, unknown>;
-	return typeof candidate.model === "string" && Array.isArray(candidate.input);
-}
-
-export function getRuntimeModelDescriptor(model: RuntimeModel | undefined): {
-	provider?: string;
-	api?: string;
-	model?: string;
-	baseUrl?: string;
-} {
-	if (!model) {
-		return {};
-	}
-
-	return {
-		provider: model.provider,
-		api: model.api,
-		model: model.id,
-		baseUrl: normalizeBaseUrl(model.baseUrl),
-	};
-}
-
-export function resolveNativeReplayEnvironment(
+export async function resolveResponsesSummaryEnvironment(
 	ctx: ExtensionContext,
-	options: NativeCompactionSupportOptions = {},
-	payload?: unknown,
-): NativeReplayEnvironmentResolution {
-	if (options.enabled === false) {
-		return {
-			ok: false,
-			reason: "disabled",
-		};
-	}
+	options: ResponsesSummarySupportOptions = {},
+): Promise<ResponsesSummaryEnvironmentResolution> {
+	if (options.enabled === false) return { ok: false, reason: "disabled" };
 
 	const currentModel = ctx.model;
-	const descriptor = getRuntimeModelDescriptor(currentModel);
+	const descriptor = {
+		provider: currentModel?.provider,
+		api: currentModel?.api,
+		model: currentModel?.id,
+		baseUrl: normalizeBaseUrl(currentModel?.baseUrl),
+	};
 	if (!currentModel || !descriptor.provider || !descriptor.api || !descriptor.model) {
-		return {
-			ok: false,
-			reason: "missing-model",
-			...descriptor,
-		};
+		return { ok: false, reason: "missing-model", ...descriptor };
 	}
-
-	// The compact endpoint is selected purely by API family: any provider speaking
-	// openai-responses/openai-codex-responses gets a native compact attempt. The
-	// session hook decides how an unavailable or exhausted endpoint hands off.
-	const configuredApis = normalizeConfiguredApis(options.responsesCompactApis);
-	if (!configuredApis.has(descriptor.api) || !isSupportedApi(descriptor.api)) {
-		return {
-			ok: false,
-			reason: "unsupported-api",
-			...descriptor,
-		};
+	if (!normalizeConfiguredApis(options.responsesCompactApis).has(descriptor.api) || !isSupportedApi(descriptor.api)) {
+		return { ok: false, reason: "unsupported-api", ...descriptor };
 	}
+	if (!descriptor.baseUrl) return { ok: false, reason: "missing-base-url", ...descriptor };
 
-	if (!descriptor.baseUrl) {
-		return {
-			ok: false,
-			reason: "missing-base-url",
-			...descriptor,
-		};
-	}
-
-	let requestPayload: ResponsesCompatibleRequestPayload | undefined;
-	if (payload !== undefined) {
-		if (!isResponsesCompatiblePayload(payload)) {
-			return {
-				ok: false,
-				reason: "unsupported-payload",
-				...descriptor,
-			};
-		}
-
-		if (payload.model !== descriptor.model) {
-			return {
-				ok: false,
-				reason: "payload-model-mismatch",
-				...descriptor,
-			};
-		}
-
-		requestPayload = payload;
-	}
+	const { apiKey, headers } = await resolveRequestAuth(ctx, currentModel);
+	if (!apiKey) return { ok: false, reason: "missing-api-key", ...descriptor };
 
 	return {
 		ok: true,
@@ -249,52 +101,9 @@ export function resolveNativeReplayEnvironment(
 			api: descriptor.api,
 			model: descriptor.model,
 			baseUrl: descriptor.baseUrl,
-			payload: requestPayload,
 			currentModel,
-		},
-	};
-}
-
-export async function resolveNativeCompactionEnvironment(
-	ctx: ExtensionContext,
-	options: NativeCompactionSupportOptions = {},
-	payload?: unknown,
-): Promise<NativeCompactionEnvironmentResolution> {
-	const replayResolution = resolveNativeReplayEnvironment(ctx, options, payload);
-	if (!replayResolution.ok) {
-		return replayResolution;
-	}
-
-	const replayRuntime = replayResolution.runtime;
-	const { apiKey, headers } = await resolveRequestAuth(ctx, replayRuntime.currentModel);
-	if (!apiKey) {
-		return {
-			ok: false,
-			reason: "missing-api-key",
-			provider: replayRuntime.provider,
-			api: replayRuntime.api,
-			model: replayRuntime.model,
-			baseUrl: replayRuntime.baseUrl,
-		};
-	}
-
-	return {
-		ok: true,
-		runtime: {
-			...replayRuntime,
 			apiKey,
 			headers,
-			compactPath: buildCompactPath(replayRuntime.api),
-			compactUrl: buildCompactUrl(replayRuntime.baseUrl, replayRuntime.api),
 		},
 	};
-}
-
-export async function getNativeCompactionRuntime(
-	ctx: ExtensionContext,
-	options: NativeCompactionSupportOptions = {},
-	payload?: unknown,
-): Promise<NativeCompactionRuntime | undefined> {
-	const resolution = await resolveNativeCompactionEnvironment(ctx, options, payload);
-	return resolution.ok ? resolution.runtime : undefined;
 }

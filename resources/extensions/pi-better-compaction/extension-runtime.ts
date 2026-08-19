@@ -1,5 +1,4 @@
 import {
-	type BeforeProviderRequestEvent,
 	type CompactionResult,
 	type ExtensionAPI,
 	type ExtensionContext,
@@ -7,58 +6,36 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
-	executeNativeCompaction,
-	executePortableCompactionSummary,
-	type NativeCompactionClientResult,
+	CODEX_PORTABLE_SUMMARY_PROMPT,
+	executeResponsesSummary,
+	type ResponsesSummaryResult,
 } from "./compact-client";
 import { loadExtensionConfig } from "./config";
 import { writeDebugArtifact } from "./debug";
-import { resolveLatestNativeCompactionEntry } from "./details-store";
 import {
 	runNativeFallbackCompaction,
 	runPiDefaultSegmentCompaction,
 	type NativeFallbackResult,
 } from "./native-fallback";
 import {
-	createPortableSummaryMessage,
-	type ExistingRecoveryCheckpoint,
-	getNativeOverflow,
+	getResponsesOverflow,
 	recoverOversizedCompaction,
 } from "./overflow-recovery";
 import {
-	rewriteResponsesPayloadWithNativeReplay,
-	serializeLiveTailToResponsesInput,
-} from "./payload-rewrite";
-import { getCompactionRequestExtras, rememberRequestContext } from "./request-context-cache";
-import {
-	isResponsesCompatiblePayload,
-	resolveNativeCompactionEnvironment,
-	resolveNativeReplayEnvironment,
-	type NativeCompactionRuntime,
+	resolveResponsesSummaryEnvironment,
+	type ResponsesSummaryRuntime,
 } from "./runtime";
-import { serializeMessagesToCompactRequest, type NativeCompactionRequestBody, type ResponsesInputItem } from "./serializer";
+import { serializeMessagesToResponsesInput } from "./serializer";
 import {
-	createNativeCompactionDetails,
-	createNativeCompactionResult,
 	EXTENSION_ID,
-	isNativeCompactionDetails,
 	MIN_COMPACT_TIMEOUT_MS,
 	type ExtensionConfig,
-	type NativeCompactionDetails,
-	type NativeCompactionRequestMeta,
 } from "./types";
 
 type ResponsesCompactOutcome =
 	| { outcome: "success"; compaction: CompactionResult }
 	| { outcome: "aborted" }
 	| { outcome: "failed" };
-
-function buildCompactionRequestMeta(event: SessionBeforeCompactEvent): NativeCompactionRequestMeta {
-	return {
-		tokensBefore: event.preparation.tokensBefore,
-		previousSummaryPresent: Boolean(event.preparation.previousSummary),
-	};
-}
 
 function getCurrentModelDebugInfo(ctx: ExtensionContext) {
 	return ctx.model
@@ -67,25 +44,6 @@ function getCurrentModelDebugInfo(ctx: ExtensionContext) {
 			id: ctx.model.id,
 		}
 		: undefined;
-}
-
-function getCompactionIdentityDebugInfo(entry: { details?: unknown } | undefined) {
-	return isNativeCompactionDetails(entry?.details)
-		? {
-			provider: entry.details.provider,
-			api: entry.details.api,
-			model: entry.details.model,
-			baseUrl: entry.details.baseUrl,
-		}
-		: undefined;
-}
-
-function getSessionId(ctx: ExtensionContext): string | undefined {
-	try {
-		return ctx.sessionManager.getSessionId();
-	} catch {
-		return undefined;
-	}
 }
 
 function notifyWarning(ctx: ExtensionContext, message: string): void {
@@ -121,8 +79,8 @@ function formatNativeFailure(result: {
 	return result.reason;
 }
 
-function isRetryableNativeCompactionFailure(
-	result: Extract<NativeCompactionClientResult, { ok: false }>,
+function isRetryableResponsesSummaryFailure(
+	result: Extract<ResponsesSummaryResult, { ok: false }>,
 ): boolean {
 	if (result.reason === "network-error" || result.reason === "timeout") {
 		return true;
@@ -176,173 +134,50 @@ async function raceWithUserAbort<T>(
 	}
 }
 
-function cloneOpaqueWindow(window: readonly unknown[]): unknown[] {
-	return window.map((item) => structuredClone(item));
-}
-
-function entryToPortableMessages(entry: Record<string, unknown>): AgentMessage[] {
-	if (entry.type === "message" && entry.message && typeof entry.message === "object") {
-		return [entry.message as AgentMessage];
-	}
-	const timestamp = new Date(typeof entry.timestamp === "string" ? entry.timestamp : Date.now()).getTime();
-	if (entry.type === "custom_message") {
-		return [{
-			role: "custom",
-			customType: typeof entry.customType === "string" ? entry.customType : "custom",
-			content: (entry.content ?? []) as never,
-			display: entry.display === true,
-			details: entry.details,
-			timestamp,
-		} as AgentMessage];
-	}
-	if (entry.type === "branch_summary" && typeof entry.summary === "string") {
-		return [{
-			role: "branchSummary",
-			summary: entry.summary,
-			fromId: typeof entry.fromId === "string" ? entry.fromId : "",
-			timestamp,
-		} as AgentMessage];
-	}
-	if (entry.type === "compaction" && typeof entry.summary === "string") {
-		return [{
-			...createPortableSummaryMessage(entry.summary),
-			tokensBefore: typeof entry.tokensBefore === "number" ? entry.tokensBefore : 0,
-			timestamp,
-		} as AgentMessage];
-	}
-	return [];
-}
-
-function buildRecoverySegments(event: SessionBeforeCompactEvent, ctx: ExtensionContext): {
-	history: AgentMessage[];
-	turnPrefix?: AgentMessage[];
-	remaining: AgentMessage[];
-} {
-	const history: AgentMessage[] = [];
-	if (event.preparation.previousSummary) {
-		history.push(createPortableSummaryMessage(event.preparation.previousSummary));
-	}
-	history.push(...(event.preparation.messagesToSummarize as AgentMessage[]));
-	const turnPrefix = event.preparation.isSplitTurn
-		? (event.preparation.turnPrefixMessages as AgentMessage[])
-		: undefined;
-
-	const contextMessages = ctx.sessionManager.buildSessionContext().messages as AgentMessage[];
-	const summarizedCount = history.length + (turnPrefix?.length ?? 0);
-	return {
-		history,
-		turnPrefix,
-		remaining: contextMessages.slice(Math.min(summarizedCount, contextMessages.length)),
-	};
-}
-
 function normalizeCompactionDetails(fileOps: SessionBeforeCompactEvent["preparation"]["fileOps"]): {
 	readFiles: string[];
 	modifiedFiles: string[];
 } {
-	const modified = new Set<string>([...fileOps.written, ...fileOps.edited]);
+	const value = (fileOps ?? {}) as unknown as {
+		read?: Iterable<string>;
+		written?: Iterable<string>;
+		edited?: Iterable<string>;
+		readFiles?: Iterable<string>;
+		modifiedFiles?: Iterable<string>;
+	};
+	const modified = new Set<string>([
+		...(value.written ?? []),
+		...(value.edited ?? []),
+		...(value.modifiedFiles ?? []),
+	]);
 	return {
-		readFiles: [...fileOps.read].filter((file) => !modified.has(file)).sort(),
+		readFiles: [...(value.read ?? value.readFiles ?? [])].filter((file) => !modified.has(file)).sort(),
 		modifiedFiles: [...modified].sort(),
 	};
 }
 
-function buildCompactionInstructions(systemPrompt: string, customInstructions?: string): string {
+function buildCompactionInstructions(customInstructions?: string): string {
 	const guidance = customInstructions?.trim();
 	if (!guidance) {
-		return systemPrompt;
+		return CODEX_PORTABLE_SUMMARY_PROMPT;
 	}
 
-	return `${systemPrompt}\n\nAdditional user guidance for this manual /compact request:\n${guidance}`;
+	return `${CODEX_PORTABLE_SUMMARY_PROMPT}\n\nAdditional user guidance for this manual /compact request:\n${guidance}`;
 }
 
-async function runResponsesNativeCompact(
+async function runResponsesSummary(
 	event: SessionBeforeCompactEvent,
 	ctx: ExtensionContext,
 	config: ExtensionConfig,
-	runtime: NativeCompactionRuntime,
+	runtime: ResponsesSummaryRuntime,
 ): Promise<ResponsesCompactOutcome> {
-	const instructions = buildCompactionInstructions(ctx.getSystemPrompt(), event.customInstructions);
-	const branchEntries = ctx.sessionManager.getBranch();
-	const latestNativeCompaction = resolveLatestNativeCompactionEntry(branchEntries, {
-		provider: runtime.provider,
-		api: runtime.api,
-		model: runtime.model,
-		baseUrl: runtime.baseUrl,
-	});
-
-	let requestSource:
-		| "session-context"
-		| "non-native-session-context"
-		| "model-switch-session-context"
-		| "latest-native-replay";
-	let request: NativeCompactionRequestBody;
-	let existingRecoveryCheckpoint: ExistingRecoveryCheckpoint | undefined;
-	if (latestNativeCompaction.ok) {
-		const liveTailEntries = branchEntries.slice(latestNativeCompaction.index + 1);
-		const liveTailMessages = liveTailEntries.flatMap((entry) => entryToPortableMessages(entry as Record<string, unknown>));
-		const portableContext = ctx.sessionManager.buildSessionContext().messages as AgentMessage[];
-		requestSource = "latest-native-replay";
-		const input: ResponsesInputItem[] = [
-			...(cloneOpaqueWindow(latestNativeCompaction.entry.details.compactedWindow) as ResponsesInputItem[]),
-			...serializeLiveTailToResponsesInput({ model: runtime.currentModel, entries: liveTailEntries }),
-		];
-		request = {
-			model: runtime.currentModel.id,
-			input,
-			instructions,
-		};
-		existingRecoveryCheckpoint = {
-			nativePrefix: cloneOpaqueWindow(latestNativeCompaction.entry.details.compactedWindow) as ResponsesInputItem[],
-			portablePrefix: portableContext.slice(0, Math.max(0, portableContext.length - liveTailMessages.length)),
-			remainingMessages: liveTailMessages,
-		};
-	} else if (
-		latestNativeCompaction.reason === "no-compaction" ||
-		latestNativeCompaction.reason === "latest-native-compaction-mismatch" ||
-		(latestNativeCompaction.reason === "latest-compaction-not-native" &&
-			config.allowCompactionContinuityBreak)
-	) {
-		requestSource =
-			latestNativeCompaction.reason === "no-compaction"
-				? "session-context"
-				: latestNativeCompaction.reason === "latest-native-compaction-mismatch"
-					? "model-switch-session-context"
-					: "non-native-session-context";
-		request = serializeMessagesToCompactRequest({
-			model: runtime.currentModel,
-			messages: ctx.sessionManager.buildSessionContext().messages,
-			instructions,
-		});
-	} else {
-		writeDebugArtifact(
-			"compaction-event",
-			{
-				event: "session_before_compact.responses-compact-skip",
-				reason: latestNativeCompaction.reason,
-				provider: runtime.provider,
-				api: runtime.api,
-				model: runtime.model,
-				baseUrl: runtime.baseUrl,
-				latestCompactionIndex: latestNativeCompaction.latestCompactionIndex,
-				latestCompactionIdentity: getCompactionIdentityDebugInfo(latestNativeCompaction.latestCompaction),
-			},
-			config,
-			ctx,
-		);
-		return { outcome: "failed" };
-	}
-
-	// Mirror the latest codex_rs CompactionInput fields captured from the most
-	// recent live provider request for this model (tools, reasoning, etc.).
-	const extras = getCompactionRequestExtras(runtime.model, getSessionId(ctx));
-	if (extras) {
-		request = { ...request, ...extras };
-	}
+	const prompt = buildCompactionInstructions(event.customInstructions);
+	const contextMessages = ctx.sessionManager.buildSessionContext().messages as AgentMessage[];
+	const input = serializeMessagesToResponsesInput(runtime.currentModel, contextMessages);
 
 	const maxAttempts = Math.max(1, config.compactMaxAttempts);
 	// maxAttempts is always >= 1, so the loop body assigns this on every path.
-	let compactResult!: NativeCompactionClientResult;
+	let compactResult!: ResponsesSummaryResult;
 	let attemptsUsed = 0;
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		if (event.signal.aborted) {
@@ -350,9 +185,10 @@ async function runResponsesNativeCompact(
 		}
 
 		attemptsUsed = attempt;
-		compactResult = await executeNativeCompaction({
+		compactResult = await executeResponsesSummary({
 			runtime,
-			request,
+			input,
+			prompt,
 			signal: event.signal,
 			settings: config,
 			context: ctx,
@@ -365,7 +201,7 @@ async function runResponsesNativeCompact(
 		writeDebugArtifact(
 			"compaction-event",
 			{
-				event: "session_before_compact.responses-compact-failure",
+				event: "session_before_compact.responses-summary-failure",
 				attempt,
 				attempts: maxAttempts,
 				reason: compactResult.reason,
@@ -381,13 +217,13 @@ async function runResponsesNativeCompact(
 			return { outcome: "aborted" };
 		}
 
-		if (attempt >= maxAttempts || !isRetryableNativeCompactionFailure(compactResult)) {
+		if (attempt >= maxAttempts || !isRetryableResponsesSummaryFailure(compactResult)) {
 			break;
 		}
 
 		notify(
 			ctx,
-			`original-path compact failed (${formatNativeFailure(compactResult)}); retrying original path (${attempt + 1}/${maxAttempts})…`,
+			`Responses summary failed (${formatNativeFailure(compactResult)}); retrying (${attempt + 1}/${maxAttempts})…`,
 			"warning",
 		);
 		const delay = await waitRetryDelay(config.compactRetryDelayMs, event.signal);
@@ -397,42 +233,33 @@ async function runResponsesNativeCompact(
 	}
 
 	if (compactResult.ok === false) {
-		const overflow = getNativeOverflow(compactResult);
+		const overflow = getResponsesOverflow(compactResult);
 		if (overflow) {
 			notify(
 				ctx,
-				`compact input exceeds the provider context${overflow.promptTokens && overflow.contextLimit ? ` (${overflow.promptTokens}/${overflow.contextLimit} tokens)` : ""}; reducing it in bounded segments…`,
+				`summary input exceeds the provider context${overflow.promptTokens && overflow.contextLimit ? ` (${overflow.promptTokens}/${overflow.contextLimit} tokens)` : ""}; reducing it in bounded segments…`,
 				"warning",
 			);
-			const recoverySegments = buildRecoverySegments(event, ctx);
 			const recovery = await recoverOversizedCompaction({
 				initialOverflow: overflow,
-				messages: recoverySegments.history,
-				turnPrefixMessages: recoverySegments.turnPrefix,
-				remainingMessages: recoverySegments.remaining,
-				existingCheckpoint: existingRecoveryCheckpoint,
-				serializeMessages: (messages) =>
-					serializeMessagesToCompactRequest({
-						model: runtime.currentModel,
-						messages,
-						instructions,
-					}).input,
-				attemptNative: async (input) => {
-					const recoveryRequest: NativeCompactionRequestBody = { ...request, input };
-					let result: NativeCompactionClientResult = {
+				messages: contextMessages,
+				serializeMessages: (messages) => serializeMessagesToResponsesInput(runtime.currentModel, messages),
+				attemptSummary: async (segmentInput) => {
+					let result: ResponsesSummaryResult = {
 						ok: false,
 						reason: "network-error",
-						errorMessage: "native recovery was not attempted",
+						errorMessage: "summary recovery was not attempted",
 					};
 					for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-						result = await executeNativeCompaction({
+						result = await executeResponsesSummary({
 							runtime,
-							request: recoveryRequest,
+							input: segmentInput,
+							prompt,
 							signal: event.signal,
 							settings: config,
 							context: ctx,
 						});
-						if (result.ok || result.reason === "aborted" || !isRetryableNativeCompactionFailure(result)) break;
+						if (result.ok || result.reason === "aborted" || !isRetryableResponsesSummaryFailure(result)) break;
 						if (attempt < maxAttempts) {
 							const delay = await waitRetryDelay(config.compactRetryDelayMs, event.signal);
 							if (delay === "aborted") return { ok: false, reason: "aborted" };
@@ -440,16 +267,8 @@ async function runResponsesNativeCompact(
 					}
 					return result;
 				},
-				makePortable: (window) =>
-					executePortableCompactionSummary({
-						runtime,
-						compactedWindow: window,
-						signal: event.signal,
-						settings: config,
-						context: ctx,
-					}),
-				attemptPi: (messages, kind) =>
-					runPiDefaultSegmentCompaction({ ctx, event, config, messages, kind }),
+				attemptPi: (messages) =>
+					runPiDefaultSegmentCompaction({ ctx, event, config, messages }),
 				estimateMessageTokens: (message) => {
 					try {
 						return Math.max(1, Math.ceil(JSON.stringify(message).length / 4));
@@ -469,37 +288,21 @@ async function runResponsesNativeCompact(
 				);
 				return { outcome: "failed" };
 			}
-			if (recovery.kind === "pi") {
-				writeDebugArtifact(
-					"compaction-event",
-					{ event: "session_before_compact.oversize-recovery-success", method: "pi-default" },
-					config,
-					ctx,
-				);
-				return {
-					outcome: "success",
-					compaction: {
-						summary: recovery.persistenceSummaryText,
-						firstKeptEntryId: event.preparation.firstKeptEntryId,
-						tokensBefore: event.preparation.tokensBefore,
-						details: normalizeCompactionDetails(event.preparation.fileOps),
-					},
-				};
-			}
-			compactResult = {
-				ok: true,
-				status: 200,
-				compactedWindow: recovery.compactedWindow,
-				summaryText: recovery.persistenceSummaryText,
-				response: { output: recovery.compactedWindow },
-			};
-			attemptsUsed = maxAttempts;
 			writeDebugArtifact(
 				"compaction-event",
-				{ event: "session_before_compact.oversize-recovery-success", method: "openai-native" },
+				{ event: "session_before_compact.oversize-recovery-success", method: "direct-responses-summary" },
 				config,
 				ctx,
 			);
+			return {
+				outcome: "success",
+				compaction: {
+					summary: recovery.summaryText,
+					firstKeptEntryId: event.preparation.firstKeptEntryId,
+					tokensBefore: event.preparation.tokensBefore,
+					details: normalizeCompactionDetails(event.preparation.fileOps),
+				},
+			};
 		} else {
 			notify(
 				ctx,
@@ -509,7 +312,7 @@ async function runResponsesNativeCompact(
 			writeDebugArtifact(
 				"compaction-event",
 				{
-					event: "session_before_compact.responses-compact-exhausted",
+					event: "session_before_compact.responses-summary-exhausted",
 					attemptsUsed,
 					attempts: maxAttempts,
 					reason: compactResult.reason,
@@ -524,81 +327,12 @@ async function runResponsesNativeCompact(
 		}
 	}
 
-	let summaryText = compactResult.summaryText;
-	if (!summaryText) {
-		const portableSummary = await executePortableCompactionSummary({
-			runtime,
-			compactedWindow: compactResult.compactedWindow,
-			signal: event.signal,
-			settings: config,
-			context: ctx,
-		});
-		if (!portableSummary.ok) {
-			writeDebugArtifact(
-				"compaction-event",
-				{
-					event: "session_before_compact.portable-summary-failure",
-					reason: portableSummary.reason,
-					status: portableSummary.status,
-					errorMessage: portableSummary.errorMessage,
-					timeoutMs: portableSummary.timeoutMs,
-				},
-				config,
-				ctx,
-			);
-			if (portableSummary.reason === "aborted" || event.signal.aborted) {
-				return { outcome: "aborted" };
-			}
-			notify(
-				ctx,
-				`native compact succeeded but its portable summary failed (${formatNativeFailure(portableSummary)}); switching to Pi default compaction`,
-				"warning",
-			);
-			return { outcome: "failed" };
-		}
-		summaryText = portableSummary.summaryText;
-	}
-
-	let details: NativeCompactionDetails;
-	try {
-		details = createNativeCompactionDetails({
-			provider: runtime.provider,
-			api: runtime.api,
-			model: runtime.model,
-			baseUrl: runtime.baseUrl,
-			compactedWindow: compactResult.compactedWindow,
-			compactResponseId: compactResult.compactResponseId,
-			createdAt: compactResult.createdAt,
-			requestMeta: buildCompactionRequestMeta(event),
-		});
-	} catch (error) {
-		writeDebugArtifact(
-			"compaction-event",
-			{
-				event: "session_before_compact.invalid-native-details",
-				reason: error instanceof Error ? error.message : String(error),
-				provider: runtime.provider,
-				api: runtime.api,
-				model: runtime.model,
-				baseUrl: runtime.baseUrl,
-			},
-			config,
-			ctx,
-		);
-		notify(
-			ctx,
-			"native compact returned an unusable result; switching to Pi default compaction",
-			"warning",
-		);
-		return { outcome: "failed" };
-	}
-
-	const compaction = createNativeCompactionResult({
+	const compaction: CompactionResult = {
+		summary: compactResult.summaryText,
 		firstKeptEntryId: event.preparation.firstKeptEntryId,
 		tokensBefore: event.preparation.tokensBefore,
-		details,
-		summary: summaryText,
-	});
+		details: normalizeCompactionDetails(event.preparation.fileOps),
+	};
 	if (attemptsUsed > 1) {
 		notify(ctx, "retry succeeded; compaction is complete", "info");
 	}
@@ -606,17 +340,13 @@ async function runResponsesNativeCompact(
 	writeDebugArtifact(
 		"compaction-event",
 		{
-			event: "session_before_compact.responses-compact-success",
+			event: "session_before_compact.responses-summary-success",
 			provider: runtime.provider,
 			api: runtime.api,
 			model: runtime.model,
-			requestSource,
-			requestInputItems: request.input.length,
-			requestExtras: extras ? Object.keys(extras) : [],
-			compactResponseId: compactResult.compactResponseId,
-			compactedItems: compactResult.compactedWindow.length,
-			summaryExtracted: Boolean(summaryText),
-			summarySource: compactResult.summaryText ? "compact-response" : "post-compact-current-model",
+			requestSource: "session-context",
+			requestInputItems: input.length,
+			summarySource: "direct-responses-summary",
 			firstKeptEntryId: event.preparation.firstKeptEntryId,
 			attempt: attemptsUsed,
 			attempts: maxAttempts,
@@ -658,9 +388,9 @@ async function handleSessionBeforeCompact(
 		return { cancel: true };
 	}
 
-	// Branch 1: Responses-family APIs use the native /responses/compact endpoint.
+	// Branch 1: Responses-family APIs summarize Pi's portable session context directly.
 	const resolutionRace = await raceWithUserAbort(
-		resolveNativeCompactionEnvironment(ctx, {
+		resolveResponsesSummaryEnvironment(ctx, {
 			enabled: config.enabled,
 			responsesCompactApis: config.responsesCompactApis,
 		}),
@@ -671,7 +401,7 @@ async function handleSessionBeforeCompact(
 	}
 	const resolution = resolutionRace.value;
 	if (resolution.ok) {
-		const responsesOutcome = await runResponsesNativeCompact(event, ctx, config, resolution.runtime);
+		const responsesOutcome = await runResponsesSummary(event, ctx, config, resolution.runtime);
 		if (responsesOutcome.outcome === "success") {
 			return { compaction: responsesOutcome.compaction };
 		}
@@ -680,7 +410,7 @@ async function handleSessionBeforeCompact(
 		}
 		// failed: the original-path request is exhausted (or the session was skipped) →
 		// hand off to pi's default compaction. By design we do NOT switch to the
-		// configured compactionModel here: if the native endpoint fails, a different
+		// configured compactionModel here: if the direct summary fails, a different
 		// model usually fails for the same reason, and pi's default keeps the
 		// streaming progress UI.
 		return undefined;
@@ -688,7 +418,7 @@ async function handleSessionBeforeCompact(
 		writeDebugArtifact(
 			"compaction-event",
 			{
-				event: "session_before_compact.responses-compact-unavailable",
+				event: "session_before_compact.responses-summary-unavailable",
 				reason: resolution.reason,
 				provider: resolution.provider,
 				api: resolution.api,
@@ -708,7 +438,7 @@ async function handleSessionBeforeCompact(
 		) {
 			notify(
 				ctx,
-				`native compact unavailable (${resolution.reason}); using pi's default compaction`,
+				`Responses summary unavailable (${resolution.reason}); using pi's default compaction`,
 				"warning",
 			);
 			return undefined;
@@ -820,133 +550,6 @@ async function handleSessionBeforeCompact(
 	return undefined;
 }
 
-async function handleBeforeProviderRequest(
-	event: BeforeProviderRequestEvent,
-	ctx: ExtensionContext,
-	config: ExtensionConfig,
-) {
-	if (!config.enabled) {
-		return undefined;
-	}
-
-	// Capture compact-relevant request fields (tools, reasoning, ...) for the next
-	// /responses/compact call, regardless of whether this request gets rewritten.
-	if (isResponsesCompatiblePayload(event.payload)) {
-		rememberRequestContext(event.payload, getSessionId(ctx));
-	}
-
-	const resolution = resolveNativeReplayEnvironment(
-		ctx,
-		{
-			enabled: config.enabled,
-			responsesCompactApis: config.responsesCompactApis,
-		},
-		event.payload,
-	);
-	if (resolution.ok === false) {
-		writeDebugArtifact(
-			"provider-request",
-			{
-				event: "before_provider_request.skip",
-				reason: resolution.reason,
-				provider: resolution.provider,
-				api: resolution.api,
-				model: resolution.model,
-				baseUrl: resolution.baseUrl,
-				currentModel: getCurrentModelDebugInfo(ctx),
-				payload: event.payload,
-			},
-			config,
-			ctx,
-		);
-		return undefined;
-	}
-
-	const runtime = resolution.runtime;
-	const branchEntries = ctx.sessionManager.getBranch();
-	const latestNativeCompaction = resolveLatestNativeCompactionEntry(branchEntries, {
-		provider: runtime.provider,
-		api: runtime.api,
-		model: runtime.model,
-		baseUrl: runtime.baseUrl,
-	});
-	if (!latestNativeCompaction.ok) {
-		writeDebugArtifact(
-			"provider-request",
-			{
-				event: "before_provider_request.no-native-compaction",
-				reason: latestNativeCompaction.reason,
-				provider: runtime.provider,
-				api: runtime.api,
-				model: runtime.model,
-				baseUrl: runtime.baseUrl,
-				branchEntries: branchEntries.length,
-				latestCompactionIndex: latestNativeCompaction.latestCompactionIndex,
-				latestCompactionIdentity: getCompactionIdentityDebugInfo(latestNativeCompaction.latestCompaction),
-				payload: runtime.payload,
-			},
-			config,
-			ctx,
-		);
-		return undefined;
-	}
-
-	const latestNativeCompactionEntry = latestNativeCompaction.entry;
-	const rewrite = rewriteResponsesPayloadWithNativeReplay({
-		model: runtime.currentModel,
-		payload: runtime.payload,
-		branchEntries,
-		compactionEntry: latestNativeCompactionEntry,
-	});
-	if (!rewrite.ok) {
-		writeDebugArtifact(
-			"provider-request",
-			{
-				event: "before_provider_request.rewrite-failed",
-				reason: rewrite.reason,
-				provider: runtime.provider,
-				api: runtime.api,
-				model: runtime.model,
-				baseUrl: runtime.baseUrl,
-				compactionEntryId: latestNativeCompactionEntry.id,
-				parity: rewrite.parity,
-				payload: runtime.payload,
-			},
-			config,
-			ctx,
-		);
-		return undefined;
-	}
-
-	writeDebugArtifact(
-		"provider-request",
-		{
-			event: "before_provider_request.native-rewrite",
-			provider: runtime.provider,
-			api: runtime.api,
-			model: runtime.model,
-			baseUrl: runtime.baseUrl,
-			compactionEntryId: latestNativeCompactionEntry.id,
-			boundaryIndex: rewrite.segments.boundaryIndex,
-			firstKeptEntryIndex: rewrite.segments.firstKeptEntryIndex,
-			originalInputItems: runtime.payload.input.length,
-			rewrittenInputItems: rewrite.rewrittenPayload.input.length,
-			freshPreambleItems: rewrite.segments.freshPreamble.length,
-			trailingPreambleItems: rewrite.segments.trailingPreamble.length,
-			compactionSummaryItems: rewrite.segments.compactionSummary.length,
-			preCompactionKeptItems: rewrite.segments.preCompactionKeptWindow.input.length,
-			compactedItems: rewrite.segments.compactedWindow.length,
-			postCompactionTailItems: rewrite.segments.postCompactionTail.input.length,
-			payload: rewrite.rewrittenPayload,
-			originalPayload: runtime.payload,
-		},
-		config,
-		ctx,
-	);
-
-	return rewrite.rewrittenPayload;
-}
-
 export default function (pi: ExtensionAPI) {
 	// Pi reloads the extension to apply config changes. Keep parsed config in this
 	// extension instance so provider requests never perform synchronous file I/O.
@@ -982,5 +585,4 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_before_compact", (event, ctx) => handleSessionBeforeCompact(event, ctx, config));
-	pi.on("before_provider_request", (event, ctx) => handleBeforeProviderRequest(event, ctx, config));
 }

@@ -93,7 +93,6 @@ export function resolveArtifactPaths(settings: ExtensionConfig, context: Artifac
 	return {
 		rootDir,
 		sessionDir,
-		providerRequestsDir: path.join(sessionDir, "provider-requests"),
 		compactResponsesDir: path.join(sessionDir, "compact-responses"),
 		compactionDir: path.join(sessionDir, "compaction-events"),
 		lifecycleDir: path.join(sessionDir, "lifecycle"),
@@ -102,8 +101,6 @@ export function resolveArtifactPaths(settings: ExtensionConfig, context: Artifac
 
 function selectArtifactDirectory(paths: ArtifactPaths, kind: DebugArtifactKind): string {
 	switch (kind) {
-		case "provider-request":
-			return paths.providerRequestsDir;
 		case "compact-response":
 			return paths.compactResponsesDir;
 		case "compaction-event":
@@ -116,8 +113,6 @@ function selectArtifactDirectory(paths: ArtifactPaths, kind: DebugArtifactKind):
 
 function shouldWriteArtifact(kind: DebugArtifactKind, settings: ExtensionConfig): boolean {
 	switch (kind) {
-		case "provider-request":
-			return settings.logProviderPayloads;
 		case "compact-response":
 			return settings.logCompactResponses;
 		case "compaction-event":

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { compact, convertToLlm } from "@earendil-works/pi-coding-agent";
+import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import type {
 	Api,
 	AssistantMessage,
@@ -13,14 +13,6 @@ import type {
 	ToolResultMessage,
 	UserMessage,
 } from "@earendil-works/pi-ai";
-import type { ResponsesCompatibleRequestPayload } from "./runtime";
-
-/**
- * pi stopped exporting the CompactionPreparation type name in 0.80.x, but it is still
- * structurally the first argument of the exported compact(). Derive it from there so we
- * track pi's shape without depending on a private export.
- */
-type CompactionPreparation = Parameters<typeof compact>[0];
 
 /**
  * Decision for T4: keep a narrow local serializer instead of importing Pi internals.
@@ -33,8 +25,7 @@ type CompactionPreparation = Parameters<typeof compact>[0];
  *   would require a brittle install-path-specific wrapper
  *
  * The helpers below intentionally mirror Pi's same-model Responses serialization
- * rules closely so later tasks can compare their output against captured
- * before_provider_request payload artifacts.
+ * rules closely so the direct summary request preserves the conversation shape.
  */
 export const COMPACTION_SERIALIZER_STRATEGY = "local-same-model-responses-serializer" as const;
 
@@ -95,23 +86,6 @@ export type ResponsesInputItem =
 	| ResponsesFunctionCallOutputItem
 	| ResponsesReasoningItem;
 
-export type NativeCompactionRequestBody = {
-	model: string;
-	input: ResponsesInputItem[];
-	instructions: string;
-	/**
-	 * Optional passthrough fields mirroring the latest codex_rs CompactionInput.
-	 * Sourced from the most recent provider request payload when available;
-	 * undefined fields are omitted from the serialized JSON body.
-	 */
-	tools?: unknown[];
-	parallel_tool_calls?: boolean;
-	reasoning?: Record<string, unknown>;
-	service_tier?: string;
-	prompt_cache_key?: string;
-	text?: Record<string, unknown>;
-};
-
 export type SerializeResponsesMessagesOptions = {
 	instructions?: string;
 	includeInstructionsInInput?: boolean;
@@ -135,34 +109,6 @@ const NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not s
 
 function sanitizeSurrogates(text: string): string {
 	return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
-}
-
-export function collectCompactionWindowMessages(preparation: CompactionPreparation): AgentMessage[] {
-	return [...preparation.messagesToSummarize, ...preparation.turnPrefixMessages];
-}
-
-export function serializeCompactionPreparationToRequest<TApi extends Api>(args: {
-	model: Model<TApi>;
-	preparation: CompactionPreparation;
-	instructions: string;
-}): NativeCompactionRequestBody {
-	return serializeMessagesToCompactRequest({
-		model: args.model,
-		messages: collectCompactionWindowMessages(args.preparation),
-		instructions: args.instructions,
-	});
-}
-
-export function serializeMessagesToCompactRequest<TApi extends Api>(args: {
-	model: Model<TApi>;
-	messages: AgentMessage[];
-	instructions: string;
-}): NativeCompactionRequestBody {
-	return {
-		model: args.model.id,
-		input: serializeMessagesToResponsesInput(args.model, args.messages),
-		instructions: sanitizeSurrogates(args.instructions),
-	};
 }
 
 export function serializeMessagesToResponsesInput<TApi extends Api>(
@@ -230,29 +176,6 @@ export function compareResponsesInputParity(actual: readonly unknown[], expected
 		ok: mismatches.length === 0,
 		actual: actualSignature,
 		expected: expectedSignature,
-		mismatches,
-	};
-}
-
-export function compareCompactRequestToPayload(
-	request: NativeCompactionRequestBody,
-	payload: Pick<ResponsesCompatibleRequestPayload, "model" | "input" | "instructions">,
-): ResponsesParityReport {
-	const parity = compareResponsesInputParity(request.input, payload.input);
-	const mismatches = [...parity.mismatches];
-
-	if (payload.model !== request.model) {
-		mismatches.unshift(`model: expected ${payload.model}, got ${request.model}`);
-	}
-
-	if ((payload.instructions ?? "") !== request.instructions) {
-		mismatches.unshift("instructions: expected serialized instructions to match payload instructions");
-	}
-
-	return {
-		ok: mismatches.length === 0,
-		actual: parity.actual,
-		expected: parity.expected,
 		mismatches,
 	};
 }
