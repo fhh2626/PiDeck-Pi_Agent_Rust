@@ -12,10 +12,10 @@ import {
 	type PointerEvent as ReactPointerEvent,
 	type ReactNode,
 } from "react";
-import { toBlob } from "html-to-image";
 import { MarkdownStream } from "./MarkdownStream";
 import { useAtomValue } from "jotai";
 import "katex/dist/katex.min.css";
+import { loadHtmlToImage } from "../../utils/htmlToImage";
 
 /**
  * 消息图片按需解码：base64 data URL 的字符串已在消息对象中（无法省字符串），
@@ -523,6 +523,7 @@ export function EmptyState(props: {
 async function copyElementAsPng(element: HTMLElement) {
 	// 截图复制依赖浏览器 ClipboardItem PNG 支持；失败时由调用方提示/回退，不影响文本复制。
 	// 使用 toBlob 而非 toPng+fetch 避免 CSP 拒绝连接 data: URL。
+	const { toBlob } = await loadHtmlToImage();
 	// 克隆节点 + 内边距 + 临时注入 body 的方式与分享为图片（handleMultiSelectCopy）保持一致，
 	// 避免直接截图导致图片紧贴内容边缘、缺少留白。
 	const clone = element.cloneNode(true) as HTMLElement;

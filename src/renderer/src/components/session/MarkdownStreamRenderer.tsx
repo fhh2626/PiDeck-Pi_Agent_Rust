@@ -9,27 +9,9 @@ import {
 import { code } from "@streamdown/code";
 import { mermaid } from "@streamdown/mermaid";
 import { createMathPlugin } from "@streamdown/math";
-import remarkBreaks from "remark-breaks";
 import { MarkdownLink, remarkLinkifyPaths } from "./MarkdownLink";
 import { markdownUrlTransform } from "./MarkdownLinkCore";
-
-/** MarkdownStream 对外共享的 props；类型导入不会把 Streamdown 拉进入口 chunk。 */
-export type MarkdownStreamProps = {
-	text: string;
-	isStreaming?: boolean;
-	onOpenExternal: (url: string, forceSystem?: boolean) => void;
-	onOpenFile?: (path: string) => void;
-	/** 静态场景可追加 remark 插件；GFM 与 codeMeta 由统一管线始终提供。 */
-	remarkPlugins?: StreamdownProps["remarkPlugins"];
-	/** 草稿本等纯文本预览需要把单换行保留为换行时开启。 */
-	breaks?: boolean;
-	/** 静态场景可追加 rehype 插件；raw HTML 由统一管线始终提供。 */
-	rehypePlugins?: StreamdownProps["rehypePlugins"];
-	urlTransform?: (url: string) => string;
-	components?: StreamdownProps["components"];
-	/** 是否禁用图表/代码高亮等重型渲染（静态小场景如更新日志可关以省内存） */
-	light?: boolean;
-};
+import type { MarkdownStreamProps } from "./MarkdownStreamProps";
 
 /**
  * 数学公式插件（KaTeX）。@streamdown/math 默认 singleDollarTextMath: false，
@@ -49,16 +31,13 @@ export const MarkdownStreamRenderer = memo(function MarkdownStreamRenderer(
 	const isDark = typeof document !== "undefined" &&
 		document.documentElement.dataset.theme === "dark";
 	const effectiveLight = Boolean(props.light);
-	const resolvedRemarkPlugins = [
+	// 显式传入插件时沿用旧契约（替换默认集合），避免静态预览行为随懒加载改动。
+	const resolvedRemarkPlugins = props.remarkPlugins ?? [
 		defaultRemarkPlugins.gfm,
 		defaultRemarkPlugins.codeMeta,
-		...(props.breaks ? [remarkBreaks] : []),
-		...(props.remarkPlugins ?? [remarkLinkifyPaths]),
+		remarkLinkifyPaths,
 	];
-	const resolvedRehypePlugins = [
-		defaultRehypePlugins.raw,
-		...(props.rehypePlugins ?? []),
-	];
+	const resolvedRehypePlugins = props.rehypePlugins ?? [defaultRehypePlugins.raw];
 
 	// useMemo 依赖回调 props：回调引用变化时 components 重建，避免链接处理闭包捕获旧值。
 	const components: Components = useMemo(

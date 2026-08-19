@@ -40,6 +40,7 @@ import { t, translateI18nDescriptor } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Loader2 } from "lucide-react";
 import { showNotice } from "../../utils/notice";
+import { loadHtmlToImage } from "../../utils/htmlToImage";
 import { stripAnsi } from "./TimelineFormat";
 import { SessionStartSurface } from "./SessionStartSurface";
 import { MessageScroller } from "../agents/message-scroller";
@@ -447,7 +448,7 @@ export function SessionMessageTimeline(props: SessionMessageTimelineProps) {
   ) {
     if (kind === "image") {
       try {
-        const { toBlob } = await import("html-to-image");
+        const { toBlob } = await loadHtmlToImage();
         const source = timelineRef.current?.querySelector(
           ".message-list",
         ) as HTMLElement | null;
