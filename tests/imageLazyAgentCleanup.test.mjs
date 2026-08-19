@@ -3,10 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 // 第二批内存优化契约：消息图片按需解码 + agentId 维度 atomFamily 随退出释放
-const surface = readFileSync(
-  "src/renderer/src/components/session/SurfaceComponents.tsx",
-  "utf8",
-);
+const surface = [
+	readFileSync("src/renderer/src/components/session/MessageImage.tsx", "utf8"),
+	readFileSync("src/renderer/src/components/session/SurfaceComponents.tsx", "utf8"),
+].join("\n");
 const runtimeAtoms = readFileSync(
   "src/renderer/src/atoms/runtime-atoms.ts",
   "utf8",

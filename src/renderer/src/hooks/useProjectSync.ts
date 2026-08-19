@@ -285,6 +285,7 @@ export function useProjectSync(input: UseProjectSyncInput) {
         activeProjectIdRef.current === projectId
       ) {
         setGitInfo({ current: null, branches: [] });
+        setBranchByProject((current) => ({ ...current, [projectId]: null }));
       }
       throw error;
     }
@@ -298,6 +299,11 @@ export function useProjectSync(input: UseProjectSyncInput) {
         ? current
         : next,
     );
+    setBranchByProject((current) => ({ ...current, [projectId]: next.current }));
+  }
+
+  function setProjectBranch(projectId: string, branch: string | null) {
+    setBranchByProject((current) => ({ ...current, [projectId]: branch }));
   }
 
   useEffect(() => {
@@ -312,5 +318,5 @@ export function useProjectSync(input: UseProjectSyncInput) {
     void refreshGitInfo(activeProjectId).catch(() => undefined);
   }, [activeProjectId]);
 
-  return { worktreesByProject, branchByProject, files, gitInfo, setGitInfo, sessionLoadingByProject, setSessionLoadingByProject, visibleProjectChildCountByProject, setVisibleProjectChildCountByProject, refreshProjects, refreshWorktrees, refreshSessions, refreshProjectSessions, refreshFiles, refreshGitInfo, refreshProjectTree };
+  return { worktreesByProject, branchByProject, files, gitInfo, setGitInfo, setProjectBranch, sessionLoadingByProject, setSessionLoadingByProject, visibleProjectChildCountByProject, setVisibleProjectChildCountByProject, refreshProjects, refreshWorktrees, refreshSessions, refreshProjectSessions, refreshFiles, refreshGitInfo, refreshProjectTree };
 }

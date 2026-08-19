@@ -430,17 +430,8 @@ export {
   SessionStatus,
   LogoMark,
   AgentAvatar,
-  EmptyState,
-  ToolCard,
-  ToolGroupCard,
-  CompactionCard,
-  DiagnosticMessageCard,
-  AskQuestionCard,
-  ThinkingBlock,
-  RespondingIndicator,
   AssistantText,
   UserBubble,
-  ImagePreviewModal,
   stripMarkdown,
   MultiSelectModal,
   ConversationOutline,
@@ -450,6 +441,16 @@ export {
   PromptSuggestions,
   FileContextMenu,
 } from "../session/SurfaceComponents";
+export { EmptyState } from "../session/EmptyState";
+export { ImagePreviewModal } from "../session/MessageImage";
+export { ToolCard, ToolGroupCard } from "../session/ToolCallComponents";
+export {
+  CompactionCard,
+  DiagnosticMessageCard,
+  AskQuestionCard,
+  ThinkingBlock,
+  RespondingIndicator,
+} from "../session/TimelineEventCards";
 export { TurnRow } from "../session/turn";
 
 // PiLogoCanvas — canvas-based animated pi logo (from upstream dev)
@@ -465,4 +466,3 @@ export function BrandLockup(props: { replayToken?: number } = {}) {
 		</div>
 	);
 }
-

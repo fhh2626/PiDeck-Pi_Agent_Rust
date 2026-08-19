@@ -33,8 +33,10 @@ test("SessionView keeps directory settings out of the header actions slot", () =
 
 test("App extracts changeChatPath once and injects it into the sidebar action", () => {
 	const source = readFileSync("src/renderer/src/App.tsx", "utf8");
-	// 独立函数（含注释说明两处共用，避免逻辑漂移）
-	assert.match(source, /async function changeChatPath\(project: Project\)/);
+	const projectCommands = readFileSync("src/renderer/src/hooks/useProjectCommands.ts", "utf8");
+	// 项目命令 hook 只实现一次，App 同时注入侧栏与会话服务。
+	assert.match(projectCommands, /async function changeChatPath\(project: Project\)/);
+	assert.match(source, /changeChatPath,[\s\S]*= useProjectCommands\(/);
 	// 侧边栏 projects action 引用同一实现
 	assert.match(source, /changeChatPath,\n    \},/);
 	// sessionPaneServices 注入 + 依赖数组包含（闭包不陈旧）

@@ -1,10 +1,13 @@
-// Re-export Surface-owned symbols from SurfaceComponents.
+// Keep this compatibility facade while forwarding extracted domains directly.
 export { SessionStatus, UserBubble, stripMarkdown } from "./SurfaceComponents";
 export { TurnRow } from "./turn";
-export { ConversationOutline, EmptyState } from "./SurfaceComponents";
+export { ConversationOutline } from "./SurfaceComponents";
+export { EmptyState } from "./EmptyState";
 export { LogoMark, AgentAvatar } from "./SurfaceComponents";
-export { AskQuestionCard, CompactionCard, DiagnosticMessageCard } from "./SurfaceComponents";
-export { MultiSelectModal, RespondingIndicator, ThinkingBlock } from "./SurfaceComponents";
-export { AssistantText, ToolCard, ToolGroupCard } from "./SurfaceComponents";
-export { ImagePreviewModal, PromptSuggestions } from "./SurfaceComponents";
+export { AskQuestionCard, CompactionCard, DiagnosticMessageCard, RespondingIndicator, ThinkingBlock } from "./TimelineEventCards";
+export { MultiSelectModal } from "./SurfaceComponents";
+export { AssistantText } from "./SurfaceComponents";
+export { ToolCard, ToolGroupCard } from "./ToolCallComponents";
+export { ImagePreviewModal } from "./MessageImage";
+export { PromptSuggestions } from "./SurfaceComponents";
 export { DrawerContent, SessionFileSummary, FileContextMenu } from "./SurfaceComponents";
