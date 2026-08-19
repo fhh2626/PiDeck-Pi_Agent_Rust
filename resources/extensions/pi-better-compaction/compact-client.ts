@@ -1,5 +1,5 @@
 import { writeDebugArtifact } from "./debug";
-import type { NativeCompactionRuntime } from "./runtime";
+import { buildResponsesUrl, type NativeCompactionRuntime } from "./runtime";
 import type { NativeCompactionRequestBody } from "./serializer";
 import {
 	MIN_COMPACT_TIMEOUT_MS,
@@ -24,7 +24,9 @@ export type NativeCompactionClientFailureReason =
 	| "empty-body"
 	| "invalid-json"
 	| "malformed-response"
-	| "empty-output";
+	| "empty-output"
+	| "incomplete-response"
+	| "empty-summary";
 
 export type NativeCompactionClientSuccess = {
 	ok: true;
@@ -32,7 +34,7 @@ export type NativeCompactionClientSuccess = {
 	compactedWindow: unknown[];
 	compactResponseId?: string;
 	createdAt?: string;
-	/** Assistant summary text extracted from the compact output, for CompactionEntry.summary. */
+	/** Portable summary text extracted from the compact output, for CompactionEntry.summary. */
 	summaryText?: string;
 	response: CompactResponseEnvelope;
 };
@@ -49,6 +51,15 @@ export type NativeCompactionClientFailure = {
 
 export type NativeCompactionClientResult = NativeCompactionClientSuccess | NativeCompactionClientFailure;
 
+export type PortableCompactionSummarySuccess = {
+	ok: true;
+	status: number;
+	summaryText: string;
+	response: unknown;
+};
+
+export type PortableCompactionSummaryResult = PortableCompactionSummarySuccess | NativeCompactionClientFailure;
+
 export type ExecuteNativeCompactionOptions = {
 	runtime: NativeCompactionRuntime;
 	request: NativeCompactionRequestBody;
@@ -56,6 +67,27 @@ export type ExecuteNativeCompactionOptions = {
 	settings?: ExtensionConfig;
 	context?: ArtifactContext;
 };
+
+export type ExecutePortableCompactionSummaryOptions = {
+	runtime: NativeCompactionRuntime;
+	compactedWindow: readonly unknown[];
+	signal?: AbortSignal;
+	settings?: ExtensionConfig;
+	context?: ArtifactContext;
+};
+
+/** Mirrors Codex's open-source local compaction prompt, with a narrow output contract for Pi. */
+export const CODEX_PORTABLE_SUMMARY_PROMPT = `You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
+
+Include:
+- Current progress and key decisions made
+- Important context, constraints, or user preferences
+- What remains to be done (clear next steps)
+- Any critical data, examples, or references needed to continue
+
+Be concise, structured, and focused on helping the next LLM seamlessly continue the work.
+
+Return only the plaintext summary body. Do not continue the task or call tools.`;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === "object" && !Array.isArray(value);
@@ -95,12 +127,45 @@ function isCompactResponseEnvelope(value: unknown): value is CompactResponseEnve
 	return isRecord(value) && Array.isArray(value.output) && value.output.every(isCompactOutputItem);
 }
 
-/**
- * Extract the assistant-authored summary text from the compacted window so the
- * persisted CompactionEntry.summary carries real context. Without this, switching
- * models later would replay a meaningless placeholder.
- */
-export function extractCompactedSummaryText(output: readonly unknown[]): string | undefined {
+// OpenCodex's routed-model /responses/compact implementation returns its handoff
+// summary as the final user/input_text item with this exact prefix.
+const OPENCODEX_HANDOFF_SUMMARY_PREFIX =
+	"Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:";
+
+function extractOpenCodexHandoffSummary(item: unknown): string | undefined {
+	if (!isRecord(item) || item.type !== "message" || item.role !== "user") {
+		return undefined;
+	}
+
+	const content = item.content;
+	const text =
+		typeof content === "string"
+			? content
+			: Array.isArray(content)
+				? content
+						.filter(
+							(block): block is Record<string, unknown> & { text: string } =>
+								isRecord(block) &&
+								(block.type === "input_text" || block.type === "text") &&
+								typeof block.text === "string",
+						)
+						.map((block) => block.text)
+						.join("")
+				: undefined;
+	if (!text) {
+		return undefined;
+	}
+
+	const framedPrefix = `${OPENCODEX_HANDOFF_SUMMARY_PREFIX}\n`;
+	if (!text.startsWith(framedPrefix)) {
+		return undefined;
+	}
+
+	const summary = text.slice(framedPrefix.length).trim();
+	return summary.length > 0 ? summary : undefined;
+}
+
+function extractAssistantOutputText(output: readonly unknown[]): string | undefined {
 	const texts: string[] = [];
 	for (const item of output) {
 		if (!isRecord(item) || item.type !== "message" || item.role !== "assistant" || !Array.isArray(item.content)) {
@@ -115,6 +180,18 @@ export function extractCompactedSummaryText(output: readonly unknown[]): string 
 
 	const joined = texts.join("\n\n").trim();
 	return joined.length > 0 ? joined : undefined;
+}
+
+/**
+ * Extract a portable summary from the compacted window so the persisted
+ * CompactionEntry.summary carries real context. Some compatible compact endpoints
+ * expose it as assistant output_text, while OpenCodex routed-model responses expose
+ * it as a specially framed user/input_text handoff message.
+ */
+export function extractCompactedSummaryText(output: readonly unknown[]): string | undefined {
+	const assistantSummary = extractAssistantOutputText(output);
+	const finalItem = output.length > 0 ? output[output.length - 1] : undefined;
+	return assistantSummary ?? extractOpenCodexHandoffSummary(finalItem);
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> | undefined {
@@ -183,6 +260,264 @@ function writeCompactArtifact(
 	}
 
 	writeDebugArtifact("compact-response", data, settings, context);
+}
+
+type PortableSummaryParseResult =
+	| { ok: true; summaryText: string; response: unknown }
+	| {
+		ok: false;
+		reason: "invalid-json" | "malformed-response" | "incomplete-response" | "empty-summary";
+		errorMessage?: string;
+		responseJson?: unknown;
+	};
+
+function parsePortableSummaryResponse(responseText: string): PortableSummaryParseResult {
+	let jsonResponse: unknown;
+	try {
+		jsonResponse = JSON.parse(responseText);
+	} catch {
+		jsonResponse = undefined;
+	}
+
+	if (jsonResponse !== undefined) {
+		if (!isRecord(jsonResponse) || !Array.isArray(jsonResponse.output)) {
+			return { ok: false, reason: "malformed-response", responseJson: jsonResponse };
+		}
+		if (typeof jsonResponse.status === "string" && jsonResponse.status !== "completed") {
+			return {
+				ok: false,
+				reason: "incomplete-response",
+				errorMessage: `response status was ${jsonResponse.status}`,
+				responseJson: jsonResponse,
+			};
+		}
+		const summaryText = extractAssistantOutputText(jsonResponse.output);
+		return summaryText
+			? { ok: true, summaryText, response: jsonResponse }
+			: { ok: false, reason: "empty-summary", responseJson: jsonResponse };
+	}
+
+	const deltas: string[] = [];
+	let doneText: string | undefined;
+	let terminalResponse: unknown;
+	let sawTerminal = false;
+	let sawData = false;
+	for (const line of responseText.split(/\r?\n/)) {
+		if (!line.startsWith("data:")) {
+			continue;
+		}
+		const data = line.slice("data:".length).trimStart();
+		if (!data) {
+			continue;
+		}
+		sawData = true;
+		if (data === "[DONE]") {
+			sawTerminal = true;
+			continue;
+		}
+
+		let event: unknown;
+		try {
+			event = JSON.parse(data);
+		} catch (error) {
+			return {
+				ok: false,
+				reason: "invalid-json",
+				errorMessage: error instanceof Error ? error.message : String(error),
+			};
+		}
+		if (!isRecord(event)) {
+			continue;
+		}
+
+		if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+			deltas.push(event.delta);
+		} else if (event.type === "response.output_text.done" && typeof event.text === "string") {
+			doneText = event.text;
+		} else if (event.type === "response.completed" || event.type === "response.done") {
+			terminalResponse = event.response;
+			if (
+				isRecord(terminalResponse) &&
+				typeof terminalResponse.status === "string" &&
+				terminalResponse.status !== "completed"
+			) {
+				return {
+					ok: false,
+					reason: "incomplete-response",
+					errorMessage: `response status was ${terminalResponse.status}`,
+					responseJson: terminalResponse,
+				};
+			}
+			sawTerminal = true;
+		} else if (event.type === "response.incomplete" || event.type === "response.failed" || event.type === "error") {
+			const responseError = isRecord(event.response) && isRecord(event.response.error) ? event.response.error : undefined;
+			const nestedError = isRecord(event.error) ? event.error.message : responseError?.message;
+			return {
+				ok: false,
+				reason: "incomplete-response",
+				errorMessage:
+					typeof nestedError === "string"
+						? nestedError
+						: typeof event.message === "string"
+							? event.message
+							: String(event.type),
+				responseJson: event,
+			};
+		}
+	}
+
+	if (!sawData) {
+		return { ok: false, reason: "invalid-json", errorMessage: "response was neither JSON nor Responses SSE" };
+	}
+	if (!sawTerminal) {
+		return { ok: false, reason: "incomplete-response", errorMessage: "Responses stream ended without completion" };
+	}
+
+	const terminalSummary =
+		isRecord(terminalResponse) && Array.isArray(terminalResponse.output)
+			? extractAssistantOutputText(terminalResponse.output)
+			: undefined;
+	const summaryText = (terminalSummary ?? deltas.join("").trim()) || doneText?.trim();
+	return summaryText
+		? { ok: true, summaryText, response: terminalResponse ?? { type: "response.completed" } }
+		: { ok: false, reason: "empty-summary", responseJson: terminalResponse };
+}
+
+export async function executePortableCompactionSummary(
+	options: ExecutePortableCompactionSummaryOptions,
+): Promise<PortableCompactionSummaryResult> {
+	const { runtime, compactedWindow, signal, settings, context } = options;
+	const url = buildResponsesUrl(runtime.baseUrl, runtime.api);
+	const headers = toHeaders(runtime);
+	headers.accept = "text/event-stream";
+	const request = {
+		model: runtime.model,
+		instructions: CODEX_PORTABLE_SUMMARY_PROMPT,
+		input: compactedWindow,
+		stream: true,
+		store: false,
+	};
+
+	if (signal?.aborted) {
+		return { ok: false, reason: "aborted" };
+	}
+
+	const timeoutMs = settings?.compactTimeoutMs ?? MIN_COMPACT_TIMEOUT_MS;
+	const controller = new AbortController();
+	const onUserAbort = () => controller.abort();
+	signal?.addEventListener("abort", onUserAbort);
+	let onAttemptAbort: (() => void) | undefined;
+	const attemptAbort = new Promise<never>((_resolve, reject) => {
+		onAttemptAbort = () => reject(new DOMException("Portable summary attempt aborted", "AbortError"));
+		controller.signal.addEventListener("abort", onAttemptAbort, { once: true });
+	});
+	let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+	let timedOut = false;
+	if (timeoutMs > 0) {
+		timeoutTimer = setTimeout(() => {
+			timedOut = true;
+			controller.abort();
+		}, timeoutMs);
+	}
+
+	try {
+		const responseOperation = (async () => {
+			const response = await fetch(url, {
+				method: "POST",
+				headers,
+				body: JSON.stringify(request),
+				signal: controller.signal,
+			});
+			const responseText = await response.text();
+			return { response, responseText };
+		})();
+		const { response, responseText } = await Promise.race([responseOperation, attemptAbort]);
+
+		if (!response.ok) {
+			const failure: NativeCompactionClientFailure = {
+				ok: false,
+				reason: "non-2xx",
+				status: response.status,
+				responseText: responseText || undefined,
+			};
+			writeCompactArtifact(
+				{
+					stage: "portable-summary",
+					request: { url, headers, body: request },
+					response: { status: response.status, body: responseText },
+					outcome: failure,
+				},
+				settings,
+				context,
+			);
+			return failure;
+		}
+		if (!responseText.trim()) {
+			const failure: NativeCompactionClientFailure = {
+				ok: false,
+				reason: "empty-body",
+				status: response.status,
+			};
+			writeCompactArtifact(
+				{
+					stage: "portable-summary",
+					request: { url, headers, body: request },
+					response: { status: response.status, body: responseText },
+					outcome: failure,
+				},
+				settings,
+				context,
+			);
+			return failure;
+		}
+
+		const parsed = parsePortableSummaryResponse(responseText);
+		const result: PortableCompactionSummaryResult = parsed.ok
+			? { ok: true, status: response.status, summaryText: parsed.summaryText, response: parsed.response }
+			: {
+				ok: false,
+				reason: parsed.reason,
+				status: response.status,
+				errorMessage: parsed.errorMessage,
+				responseJson: parsed.responseJson,
+				responseText,
+			};
+		writeCompactArtifact(
+			{
+				stage: "portable-summary",
+				request: { url, headers, body: request },
+				response: { status: response.status, body: parsed.ok ? parsed.response : parsed.responseJson ?? responseText },
+				outcome: result,
+			},
+			settings,
+			context,
+		);
+		return result;
+	} catch (error) {
+		const failure: NativeCompactionClientFailure = signal?.aborted
+			? { ok: false, reason: "aborted" }
+			: timedOut
+				? { ok: false, reason: "timeout", timeoutMs }
+				: {
+					ok: false,
+					reason: "network-error",
+					errorMessage: error instanceof Error ? error.message : String(error),
+				};
+		writeCompactArtifact(
+			{ stage: "portable-summary", request: { url, headers, body: request }, outcome: failure },
+			settings,
+			context,
+		);
+		return failure;
+	} finally {
+		if (timeoutTimer !== undefined) {
+			clearTimeout(timeoutTimer);
+		}
+		if (onAttemptAbort) {
+			controller.signal.removeEventListener("abort", onAttemptAbort);
+		}
+		signal?.removeEventListener("abort", onUserAbort);
+	}
 }
 
 export async function executeNativeCompaction(

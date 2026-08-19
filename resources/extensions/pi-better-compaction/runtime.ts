@@ -36,10 +36,19 @@ export type NativeCompactionRuntime = {
 	api: ResponsesCompactApi;
 	model: string;
 	baseUrl: string;
+	payload?: ResponsesCompatibleRequestPayload;
+	currentModel: RuntimeModel;
 	apiKey: string;
 	headers?: Record<string, string>;
 	compactPath: string;
 	compactUrl: string;
+};
+
+export type NativeReplayRuntime = {
+	provider: string;
+	api: ResponsesCompactApi;
+	model: string;
+	baseUrl: string;
 	payload?: ResponsesCompatibleRequestPayload;
 	currentModel: RuntimeModel;
 };
@@ -61,6 +70,10 @@ export type NativeCompactionEnvironmentSuccess = {
 export type NativeCompactionEnvironmentResolution =
 	| NativeCompactionEnvironmentFailure
 	| NativeCompactionEnvironmentSuccess;
+
+export type NativeReplayEnvironmentResolution =
+	| NativeCompactionEnvironmentFailure
+	| { ok: true; runtime: NativeReplayRuntime };
 
 function normalizeConfiguredApis(values: readonly string[] | undefined): Set<string> {
 	if (values === undefined) {
@@ -91,6 +104,21 @@ function buildCodexCompactUrl(baseUrl: string): string {
 		return `${normalized}/responses/compact`;
 	}
 	return `${normalized}/${CODEX_COMPACT_PATH}`;
+}
+
+export function buildResponsesUrl(baseUrl: string, api: ResponsesCompactApi): string {
+	const normalized = normalizeBaseUrl(baseUrl) ?? baseUrl;
+	if (api === "openai-codex-responses") {
+		if (normalized.endsWith("/codex/responses")) {
+			return normalized;
+		}
+		if (normalized.endsWith("/codex")) {
+			return `${normalized}/responses`;
+		}
+		return `${normalized}/codex/responses`;
+	}
+
+	return normalized.endsWith("/responses") ? normalized : `${normalized}/responses`;
 }
 
 export function buildCompactUrl(baseUrl: string, api: ResponsesCompactApi): string {
@@ -151,11 +179,11 @@ export function getRuntimeModelDescriptor(model: RuntimeModel | undefined): {
 	};
 }
 
-export async function resolveNativeCompactionEnvironment(
+export function resolveNativeReplayEnvironment(
 	ctx: ExtensionContext,
 	options: NativeCompactionSupportOptions = {},
 	payload?: unknown,
-): Promise<NativeCompactionEnvironmentResolution> {
+): NativeReplayEnvironmentResolution {
 	if (options.enabled === false) {
 		return {
 			ok: false,
@@ -214,15 +242,6 @@ export async function resolveNativeCompactionEnvironment(
 		requestPayload = payload;
 	}
 
-	const { apiKey, headers } = await resolveRequestAuth(ctx, currentModel);
-	if (!apiKey) {
-		return {
-			ok: false,
-			reason: "missing-api-key",
-			...descriptor,
-		};
-	}
-
 	return {
 		ok: true,
 		runtime: {
@@ -230,12 +249,43 @@ export async function resolveNativeCompactionEnvironment(
 			api: descriptor.api,
 			model: descriptor.model,
 			baseUrl: descriptor.baseUrl,
-			apiKey,
-			headers,
-			compactPath: buildCompactPath(descriptor.api),
-			compactUrl: buildCompactUrl(descriptor.baseUrl, descriptor.api),
 			payload: requestPayload,
 			currentModel,
+		},
+	};
+}
+
+export async function resolveNativeCompactionEnvironment(
+	ctx: ExtensionContext,
+	options: NativeCompactionSupportOptions = {},
+	payload?: unknown,
+): Promise<NativeCompactionEnvironmentResolution> {
+	const replayResolution = resolveNativeReplayEnvironment(ctx, options, payload);
+	if (!replayResolution.ok) {
+		return replayResolution;
+	}
+
+	const replayRuntime = replayResolution.runtime;
+	const { apiKey, headers } = await resolveRequestAuth(ctx, replayRuntime.currentModel);
+	if (!apiKey) {
+		return {
+			ok: false,
+			reason: "missing-api-key",
+			provider: replayRuntime.provider,
+			api: replayRuntime.api,
+			model: replayRuntime.model,
+			baseUrl: replayRuntime.baseUrl,
+		};
+	}
+
+	return {
+		ok: true,
+		runtime: {
+			...replayRuntime,
+			apiKey,
+			headers,
+			compactPath: buildCompactPath(replayRuntime.api),
+			compactUrl: buildCompactUrl(replayRuntime.baseUrl, replayRuntime.api),
 		},
 	};
 }

@@ -58,7 +58,7 @@ export type ExtensionConfig = {
 	compactionThinkingLevel: ThinkingLevel;
 	/** Subset of RESPONSES_COMPACT_CAPABLE_APIS that should use the compact endpoint. */
 	responsesCompactApis: string[];
-	/** Per-attempt timeout for native /responses/compact and configured-model compact(). 0 = no timeout. */
+	/** Per-attempt timeout for native compact, portable summary, and configured-model compact(). 0 = none. */
 	compactTimeoutMs: number;
 	/** Max attempts for the same original-path compaction call. */
 	compactMaxAttempts: number;

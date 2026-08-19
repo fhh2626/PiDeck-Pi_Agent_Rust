@@ -7,6 +7,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
 	executeNativeCompaction,
+	executePortableCompactionSummary,
 	type NativeCompactionClientResult,
 } from "./compact-client";
 import { loadExtensionConfig } from "./config";
@@ -21,6 +22,7 @@ import { getCompactionRequestExtras, rememberRequestContext } from "./request-co
 import {
 	isResponsesCompatiblePayload,
 	resolveNativeCompactionEnvironment,
+	resolveNativeReplayEnvironment,
 	type NativeCompactionRuntime,
 } from "./runtime";
 import { serializeMessagesToCompactRequest, type NativeCompactionRequestBody, type ResponsesInputItem } from "./serializer";
@@ -106,6 +108,18 @@ function formatNativeFailure(result: {
 		return `${result.reason}: ${result.errorMessage}`;
 	}
 	return result.reason;
+}
+
+function isRetryableNativeCompactionFailure(
+	result: Extract<NativeCompactionClientResult, { ok: false }>,
+): boolean {
+	if (result.reason === "network-error" || result.reason === "timeout") {
+		return true;
+	}
+	if (result.reason !== "non-2xx" || result.status === undefined) {
+		return false;
+	}
+	return result.status === 408 || result.status === 429 || (result.status >= 500 && result.status <= 599);
 }
 
 /** Wait up to ms before retrying; resolves early with "aborted" if the user stops. */
@@ -281,29 +295,32 @@ async function runResponsesNativeCompact(
 			return { outcome: "aborted" };
 		}
 
-		if (attempt < maxAttempts) {
-			notify(
-				ctx,
-				`original-path compact failed (${formatNativeFailure(compactResult)}); retrying original path (${attempt + 1}/${maxAttempts})…`,
-				"warning",
-			);
-			const delay = await waitRetryDelay(config.compactRetryDelayMs, event.signal);
-			if (delay === "aborted") {
-				return { outcome: "aborted" };
-			}
+		if (attempt >= maxAttempts || !isRetryableNativeCompactionFailure(compactResult)) {
+			break;
+		}
+
+		notify(
+			ctx,
+			`original-path compact failed (${formatNativeFailure(compactResult)}); retrying original path (${attempt + 1}/${maxAttempts})…`,
+			"warning",
+		);
+		const delay = await waitRetryDelay(config.compactRetryDelayMs, event.signal);
+		if (delay === "aborted") {
+			return { outcome: "aborted" };
 		}
 	}
 
 	if (compactResult.ok === false) {
 		notify(
 			ctx,
-			`original path failed after ${maxAttempts} attempts (${formatNativeFailure(compactResult)}); switching to Pi default compaction`,
+			`original path failed after ${attemptsUsed} attempt${attemptsUsed === 1 ? "" : "s"} (${formatNativeFailure(compactResult)}); switching to Pi default compaction`,
 			"warning",
 		);
 		writeDebugArtifact(
 			"compaction-event",
 			{
 				event: "session_before_compact.responses-compact-exhausted",
+				attemptsUsed,
 				attempts: maxAttempts,
 				reason: compactResult.reason,
 				status: compactResult.status,
@@ -314,6 +331,41 @@ async function runResponsesNativeCompact(
 			ctx,
 		);
 		return { outcome: "failed" };
+	}
+
+	let summaryText = compactResult.summaryText;
+	if (!summaryText) {
+		const portableSummary = await executePortableCompactionSummary({
+			runtime,
+			compactedWindow: compactResult.compactedWindow,
+			signal: event.signal,
+			settings: config,
+			context: ctx,
+		});
+		if (!portableSummary.ok) {
+			writeDebugArtifact(
+				"compaction-event",
+				{
+					event: "session_before_compact.portable-summary-failure",
+					reason: portableSummary.reason,
+					status: portableSummary.status,
+					errorMessage: portableSummary.errorMessage,
+					timeoutMs: portableSummary.timeoutMs,
+				},
+				config,
+				ctx,
+			);
+			if (portableSummary.reason === "aborted" || event.signal.aborted) {
+				return { outcome: "aborted" };
+			}
+			notify(
+				ctx,
+				`native compact succeeded but its portable summary failed (${formatNativeFailure(portableSummary)}); switching to Pi default compaction`,
+				"warning",
+			);
+			return { outcome: "failed" };
+		}
+		summaryText = portableSummary.summaryText;
 	}
 
 	let details: NativeCompactionDetails;
@@ -354,7 +406,7 @@ async function runResponsesNativeCompact(
 		firstKeptEntryId: event.preparation.firstKeptEntryId,
 		tokensBefore: event.preparation.tokensBefore,
 		details,
-		summary: compactResult.summaryText,
+		summary: summaryText,
 	});
 	if (attemptsUsed > 1) {
 		notify(ctx, "retry succeeded; compaction is complete", "info");
@@ -372,7 +424,8 @@ async function runResponsesNativeCompact(
 			requestExtras: extras ? Object.keys(extras) : [],
 			compactResponseId: compactResult.compactResponseId,
 			compactedItems: compactResult.compactedWindow.length,
-			summaryExtracted: Boolean(compactResult.summaryText),
+			summaryExtracted: Boolean(summaryText),
+			summarySource: compactResult.summaryText ? "compact-response" : "post-compact-current-model",
 			firstKeptEntryId: event.preparation.firstKeptEntryId,
 			attempt: attemptsUsed,
 			attempts: maxAttempts,
@@ -384,8 +437,11 @@ async function runResponsesNativeCompact(
 	return { outcome: "success", compaction };
 }
 
-async function handleSessionBeforeCompact(event: SessionBeforeCompactEvent, ctx: ExtensionContext) {
-	const { config } = loadExtensionConfig();
+async function handleSessionBeforeCompact(
+	event: SessionBeforeCompactEvent,
+	ctx: ExtensionContext,
+	config: ExtensionConfig,
+) {
 	if (!config.enabled) {
 		return undefined;
 	}
@@ -573,8 +629,11 @@ async function handleSessionBeforeCompact(event: SessionBeforeCompactEvent, ctx:
 	return undefined;
 }
 
-async function handleBeforeProviderRequest(event: BeforeProviderRequestEvent, ctx: ExtensionContext) {
-	const { config } = loadExtensionConfig();
+async function handleBeforeProviderRequest(
+	event: BeforeProviderRequestEvent,
+	ctx: ExtensionContext,
+	config: ExtensionConfig,
+) {
 	if (!config.enabled) {
 		return undefined;
 	}
@@ -585,7 +644,7 @@ async function handleBeforeProviderRequest(event: BeforeProviderRequestEvent, ct
 		rememberRequestContext(event.payload, getSessionId(ctx));
 	}
 
-	const resolution = await resolveNativeCompactionEnvironment(
+	const resolution = resolveNativeReplayEnvironment(
 		ctx,
 		{
 			enabled: config.enabled,
@@ -698,8 +757,11 @@ async function handleBeforeProviderRequest(event: BeforeProviderRequestEvent, ct
 }
 
 export default function (pi: ExtensionAPI) {
+	// Pi reloads the extension to apply config changes. Keep parsed config in this
+	// extension instance so provider requests never perform synchronous file I/O.
+	const { config, source, warnings } = loadExtensionConfig();
+
 	pi.on("session_start", (_event, ctx) => {
-		const { config, source, warnings } = loadExtensionConfig();
 		if (!config.enabled) return;
 
 		if (warnings.length > 0 && ctx.hasUI && config.debug) {
@@ -728,6 +790,6 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("session_before_compact", handleSessionBeforeCompact);
-	pi.on("before_provider_request", handleBeforeProviderRequest);
+	pi.on("session_before_compact", (event, ctx) => handleSessionBeforeCompact(event, ctx, config));
+	pi.on("before_provider_request", (event, ctx) => handleBeforeProviderRequest(event, ctx, config));
 }

@@ -130,6 +130,8 @@ type ParsedTextSignature = {
 };
 
 const SYNTHETIC_TOOL_RESULT_TEXT = "No result provided";
+const NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)";
+const NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)";
 
 function sanitizeSurrogates(text: string): string {
 	return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
@@ -309,6 +311,12 @@ function transformMessagesForResponses(messages: Message[]): Message[] {
 		transformed.push(message);
 	}
 
+	// Pi closes an unfinished tool-use turn even when the conversation ends
+	// before another assistant or user message triggers the normal flush.
+	if (pendingToolCalls.length > 0) {
+		transformed.push(...createSyntheticToolResults(pendingToolCalls, existingToolResultIds));
+	}
+
 	return transformed;
 }
 
@@ -340,7 +348,11 @@ function serializeUserMessage<TApi extends Api>(
 	message: UserMessage,
 	model: Model<TApi>,
 ): ResponsesInputMessageItem | undefined {
-	const contentItems = normalizeUserContent(message.content).flatMap((item) => serializeUserContentItem(item, model));
+	const normalizedContent = normalizeUserContent(message.content);
+	const compatibleContent = model.input.includes("image")
+		? normalizedContent
+		: replaceImagesWithPlaceholder(normalizedContent, NON_VISION_USER_IMAGE_PLACEHOLDER);
+	const contentItems = compatibleContent.flatMap(serializeUserContentItem);
 	if (contentItems.length === 0) {
 		return undefined;
 	}
@@ -351,16 +363,9 @@ function serializeUserMessage<TApi extends Api>(
 	};
 }
 
-function serializeUserContentItem<TApi extends Api>(
-	item: TextContent | ImageContent,
-	model: Model<TApi>,
-): ResponsesInputContentItem[] {
+function serializeUserContentItem(item: TextContent | ImageContent): ResponsesInputContentItem[] {
 	if (item.type === "text") {
 		return [{ type: "input_text", text: sanitizeSurrogates(item.text) }];
-	}
-
-	if (!model.input.includes("image")) {
-		return [];
 	}
 
 	return [
@@ -415,11 +420,14 @@ function serializeToolResultMessage<TApi extends Api>(
 	model: Model<TApi>,
 ): ResponsesFunctionCallOutputItem {
 	const [callId] = message.toolCallId.split("|");
-	const textOutput = message.content
+	const compatibleContent = model.input.includes("image")
+		? message.content
+		: replaceImagesWithPlaceholder(message.content, NON_VISION_TOOL_IMAGE_PLACEHOLDER);
+	const textOutput = compatibleContent
 		.filter((item): item is TextContent => item.type === "text")
 		.map((item) => sanitizeSurrogates(item.text))
 		.join("\n");
-	const hasImages = message.content.some((item) => item.type === "image");
+	const hasImages = compatibleContent.some((item) => item.type === "image");
 	const hasText = textOutput.length > 0;
 
 	if (hasImages && model.input.includes("image")) {
@@ -427,7 +435,7 @@ function serializeToolResultMessage<TApi extends Api>(
 		if (hasText) {
 			output.push({ type: "input_text", text: textOutput });
 		}
-		for (const item of message.content) {
+		for (const item of compatibleContent) {
 			if (item.type !== "image") {
 				continue;
 			}
@@ -447,12 +455,35 @@ function serializeToolResultMessage<TApi extends Api>(
 	return {
 		type: "function_call_output",
 		call_id: callId,
-		output: hasText ? textOutput : "(see attached image)",
+		output: hasText ? textOutput : "(no tool output)",
 	};
 }
 
 function normalizeUserContent(content: UserMessage["content"]): Array<TextContent | ImageContent> {
 	return typeof content === "string" ? [{ type: "text", text: content }] : content;
+}
+
+function replaceImagesWithPlaceholder(
+	content: readonly (TextContent | ImageContent)[],
+	placeholder: string,
+): Array<TextContent | ImageContent> {
+	const result: Array<TextContent | ImageContent> = [];
+	let previousWasPlaceholder = false;
+
+	for (const item of content) {
+		if (item.type === "image") {
+			if (!previousWasPlaceholder) {
+				result.push({ type: "text", text: placeholder });
+			}
+			previousWasPlaceholder = true;
+			continue;
+		}
+
+		result.push(item);
+		previousWasPlaceholder = item.text === placeholder;
+	}
+
+	return result;
 }
 
 function parseReasoningItem(block: ThinkingContent): ResponsesReasoningItem | undefined {
