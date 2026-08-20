@@ -22,6 +22,7 @@ import type {
 } from "../timeline/types";
 import { sameAgentRunForRender } from "../../app/AppUtils";
 import { FinalAnswer } from "./FinalAnswer";
+import { AskQuestionResultCard } from "../AskQuestionResultCard";
 import { InterimAnswer } from "./InterimAnswer";
 import { ProcessSummaryToggle } from "./ProcessSummaryToggle";
 import { ThinkingStep } from "./ThinkingStep";
@@ -223,13 +224,21 @@ export const TurnRow = memo(
 
 	// 中间内容（思考/工具/中间回答）与最终回答分组：
 	// 中间内容统一收进执行过程折叠容器（stepsVisible 整体控制显隐），
-	// 最终回答留在容器外常驻、永不折叠。
+	// 最终回答与已完成 ask_question（ask-result）留在容器外常驻、永不折叠。
 	const foldableItems = useMemo(
-		() => displayItems.filter((item) => item.kind !== "final-answer"),
+		() =>
+			displayItems.filter(
+				(item) => item.kind === "process-entry" || item.kind === "interim-answer",
+			),
 		[displayItems],
 	);
-	const finalItems = useMemo(
-		() => displayItems.filter((item) => item.kind === "final-answer"),
+	// 常驻内容（final-answer + ask-result）：按 displayItems 原顺序过滤，
+	// 不重排，保证「回答 → 提问 → 回答」这类时序在折叠栏外也保持。
+	const persistentItems = useMemo(
+		() =>
+			displayItems.filter(
+				(item) => item.kind === "final-answer" || item.kind === "ask-result",
+			),
 		[displayItems],
 	);
 	// 收集本轮所有 assistant 消息（按 run.items 的时序保持原始顺序）
@@ -378,27 +387,34 @@ export const TurnRow = memo(
 					/>
 				)}
 
-				{/* 最终回答：本轮最后一条 assistant 文本，常驻、永不折叠 */}
-				{finalItems.map((item) => (
-					<div key={item.id} data-final-answer={run.id} data-message-id={item.id}>
-						<FinalAnswer
-							message={item.message}
-							images={allImages}
-							isStreaming={props.isStreaming ?? false}
-							settle={settleId === item.id}
-							editing={editing}
-							editText={editText}
-							editAreaRef={editAreaRef}
-							onEditTextChange={setEditText}
-							onStartEdit={startEditing}
-							onCancelEdit={() => setEditing(false)}
-							onSaveEdit={saveEdit}
-							onPreviewImage={props.onPreviewImage}
-							onOpenExternal={props.onOpenExternal}
-							onOpenFile={props.onOpenFile}
-						/>
-					</div>
-				))}
+				{/* 常驻内容：最终回答（assistant 文本）+ 已完成 ask_question 问答卡，
+				    都在执行过程折叠容器外、永不折叠，按 displayItems 原顺序渲染。 */}
+				{persistentItems.map((item) =>
+					item.kind === "ask-result" ? (
+						<div key={item.id} data-ask-result={run.id}>
+							<AskQuestionResultCard result={item.result} messageId={item.id} />
+						</div>
+					) : (
+						<div key={item.id} data-final-answer={run.id} data-message-id={item.id}>
+							<FinalAnswer
+								message={item.message}
+								images={allImages}
+								isStreaming={props.isStreaming ?? false}
+								settle={settleId === item.id}
+								editing={editing}
+								editText={editText}
+								editAreaRef={editAreaRef}
+								onEditTextChange={setEditText}
+								onStartEdit={startEditing}
+								onCancelEdit={() => setEditing(false)}
+								onSaveEdit={saveEdit}
+								onPreviewImage={props.onPreviewImage}
+								onOpenExternal={props.onOpenExternal}
+								onOpenFile={props.onOpenFile}
+							/>
+						</div>
+					),
+				)}
 
 				{/* 操作栏 */}
 				{mergedText && !editing && (

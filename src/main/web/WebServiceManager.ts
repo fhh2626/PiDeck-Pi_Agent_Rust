@@ -14,6 +14,7 @@ import type {
 	CreateAnonymousSessionResult,
 	CreateSessionDraftInput,
 	ImageContent,
+	PendingUiRequestSnapshot,
 	PiCommand,
 	Project,
 	SendSessionPromptInput,
@@ -29,7 +30,6 @@ import type {
 	SessionUiResponseInput,
 	UpdateSessionRecordInput,
 } from "../../shared/types";
-import type { PendingUiRequestSnapshot } from "../sessions/SessionRuntimeCoordinator";
 import { serializeWebClientDictionaries, webEnUS } from "./WebI18n";
 import {
 	WebEventStreamRouter,

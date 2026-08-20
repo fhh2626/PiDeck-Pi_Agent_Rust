@@ -158,3 +158,60 @@ export type ThinkingUpdate = {
 
 /** 输入框发送模式，决定消息直接执行还是以只读方式触发生成计划。 */
 export type ComposerAgentMode = "normal" | "plan";
+
+/* ────────────────────────────────────────────────────────────────
+ * ask_question 已完成问答的结果契约（跨主进程/桌面/Web 共享）
+ *
+ * 数据来源：主进程在实时（AgentManager）与历史（AgentMessageProjector）
+ * 两条投影路径上，把 pi 的 ask_question 工具结果规范化为
+ * AskQuestionResultSummary，挂在 ChatMessage.meta._askCard 上。
+ * 渲染层（桌面 TurnRow / Web WebTimeline）据此渲染「常驻问答卡」，
+ * 而不是普通可折叠工具详情。
+ * ──────────────────────────────────────────────────────────────── */
+
+/** 提问选项：历史数据是纯字符串，新数据是带描述的对象，两者都要兼容。 */
+export type AskQuestionResultOption =
+	| string
+	| {
+			label: string;
+			value?: unknown;
+			description?: string;
+	  };
+
+/** 单个问题的问答结果。 */
+export type AskQuestionResultItem = {
+	question: string;
+	type?: "select" | "confirm" | "input" | "editor";
+	answered: boolean;
+	answer: unknown;
+	/** 用户可见的展示文案（自定义输入时为原始文本；选项时为选项 label）。 */
+	answerLabel?: string;
+	options?: AskQuestionResultOption[];
+};
+
+/** 一次 ask_question 调用的完整结果（单题 = 根对象即 item；批量 = questions 数组）。 */
+export type AskQuestionResultSummary = AskQuestionResultItem & {
+	cancelled: boolean;
+	/** 批量提问的完整问答列表（单题可缺省）。 */
+	questions?: AskQuestionResultItem[];
+};
+
+/**
+ * 待回答的 UI 请求快照（Web/飞书轮询用）。
+ * 由 SessionRuntimeCoordinator 记录，跨主进程与 Web 渲染层共享，
+ * 避免两侧各维护一份不同契约。
+ */
+export type PendingUiRequestSnapshot = {
+	sessionId: string;
+	agentId: string;
+	runtimeGeneration: number;
+	requestId: string;
+	method: string;
+	title: string;
+	options?: string[];
+	placeholder?: string;
+	prefill?: string;
+	allowOther?: boolean;
+	batchQuestions?: AgentUiBatchQuestion[];
+	batchReview?: boolean;
+};

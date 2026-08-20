@@ -12,7 +12,7 @@ import type { AgentUiResponse } from '../../../shared/types';
  * UI 层与桌面端对齐：WebSidebar / WebHeader / WebTimeline / WebComposer，
  * 复用桌面设计 token、shadcn 组件、lucide 图标与 timeline/surfaces 样式类。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
@@ -37,7 +37,7 @@ import {
 	setRuntimeThinking,
 	updateSessionRecord,
 } from "./webApi";
-import type { WebProject, WebState } from "./webTypes";
+import type { WebPendingUiRequest, WebProject, WebState } from "./webTypes";
 import {
 	markWebStateFailure,
 	markWebStateSuccess,
@@ -309,9 +309,22 @@ export function WebChatApp() {
 
 	const [uiResponding, setUiResponding] = useState(false);
 
-	const handleRespondUi = async (response: AgentUiResponse) => {
-		const request = (state.pendingUiRequests ?? []).find((item) => item.sessionId === activeSessionId);
-		if (!request || uiResponding) return;
+	// 当前会话的 pending 提问：取最后一条（最新到达的），与桌面 pickActiveAskRequest
+	// 的「展示最新」语义一致——否则挂着旧 select 时会遮蔽真正要回答的那条。
+	const activePendingUiRequest = useMemo(() => {
+		const list = (state.pendingUiRequests ?? []).filter(
+			(item) => item.sessionId === activeSessionId,
+		);
+		return list.length > 0 ? list[list.length - 1] : undefined;
+	}, [state.pendingUiRequests, activeSessionId]);
+
+	// 提交 pending 卡回答。responder 把「当前这条 request」随响应带回，
+	// 避免轮询快照过期后答错请求。
+	const handleRespondUi = async (
+		request: WebPendingUiRequest,
+		response: AgentUiResponse,
+	): Promise<boolean> => {
+		if (uiResponding) return false;
 		setUiResponding(true);
 		setCommandError(null);
 		try {
@@ -323,8 +336,10 @@ export function WebChatApp() {
 				response,
 			});
 			await refreshNow();
+			return true;
 		} catch (error) {
 			setCommandError(error instanceof Error ? error.message : String(error));
+			return false;
 		} finally {
 			setUiResponding(false);
 		}
@@ -632,6 +647,8 @@ export function WebChatApp() {
 					loadingMore={loadingMore}
 					streaming={streaming}
 					error={error?.message ?? commandError}
+					pendingUiRequest={activePendingUiRequest}
+					onRespondUi={handleRespondUi}
 					onLoadMore={() => void handleLoadMore()}
 				/>
 				<WebComposer

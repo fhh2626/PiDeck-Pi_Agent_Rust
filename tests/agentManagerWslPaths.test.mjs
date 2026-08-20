@@ -129,6 +129,11 @@ function loadAgentManager() {
 					buildActiveBranchEntryIds: () => [],
 				};
 			}
+			// Phase B 起 AgentManager 引入 askQuestionResult（ask_question 结果规范化）；
+			// WSL 路径测试不涉及 ask 投影，返回最小桩即可。
+			if (id === "./askQuestionResult") {
+				return { buildAskQuestionResultSummary: () => undefined };
+			}
 			if (id === "./sessionEntryIds") return sessionEntryIds;
 			if (id === "./agentUtils") {
 				return {

@@ -31,8 +31,12 @@ function compileModule(filePath, imports = {}) {
 
 function loadCoordinator() {
   const identity = compileModule("src/shared/sessionIdentity.ts");
+  // shared/askQuestion 是值导入（batch 表单 normalizer），同样走 TS 编译；
+  // 它自己的 import 全部是 import type（transpile 后擦除），无需再映射。
+  const askQuestion = compileModule("src/shared/askQuestion.ts");
   return compileModule("src/main/sessions/SessionRuntimeCoordinator.ts", {
     "../../shared/sessionIdentity": identity,
+    "../../shared/askQuestion": askQuestion,
   });
 }
 
@@ -813,7 +817,69 @@ test("batch Ask Question is accepted by the Session UI response gate", async () 
     response: { value: JSON.stringify({ answers: [{ id: "runtime", value: "node" }] }) },
   });
 
-  assert.equal(harness.calls.uiResponse, 1);
+	assert.equal(harness.calls.uiResponse, 1);
+});
+
+test("batch Ask Question sanitizes malformed questions in the pending snapshot", () => {
+  const { SessionRuntimeCoordinator } = loadCoordinator();
+  const harness = createHarness({
+    tabs: [{ id: "agent-a", status: "idle", createdAt: 1 }],
+  });
+  const coordinator = new SessionRuntimeCoordinator(
+    harness.catalog,
+    harness.agents,
+    harness.sender,
+  );
+  const generation = coordinator.bindExistingAgent("session-1", "agent-a");
+  coordinator.observeRuntimeEvent({
+    sessionId: "session-1",
+    agentId: "agent-a",
+    runtimeGeneration: generation,
+    sourceChannel: "agents:ui-request",
+    payload: {
+      agentId: "agent-a",
+      requestId: "batch-sanitize",
+      method: "batch_ask",
+      batchQuestions: [
+        { id: "good", type: "select", question: "Runtime?", options: ["node", null, { label: "deno" }, 42] },
+        { id: "no-type", question: "No type?" },
+        { id: "   ", type: "input", question: "Whitespace id?" },
+        "not-a-record",
+        { id: "editor", type: "editor", question: "Paste?", prefill: "hello", allowOther: true },
+      ],
+    },
+  });
+
+  const pending = coordinator.listPendingUiRequests("session-1");
+  assert.equal(pending.length, 1);
+  const questions = pending[0].batchQuestions;
+  // 坏条目被丢弃（无 type / 空 id / 非 record），好条目原样保留。
+  assert.equal(questions.map((q) => q.id).join("|"), "good|editor");
+  // 选项里的 null / 数字被过滤，字符串与对象选项保留（渲染层读 label 不炸）。
+  assert.equal(
+    JSON.stringify(questions[0].options),
+    JSON.stringify(["node", { label: "deno" }]),
+  );
+  assert.equal(questions[1].prefill, "hello");
+  assert.equal(questions[1].allowOther, true);
+
+  // 全部题目都坏时 batchQuestions 整体省略（overlay 回退到 title 渲染）。
+  coordinator.observeRuntimeEvent({
+    sessionId: "session-1",
+    agentId: "agent-a",
+    runtimeGeneration: generation,
+    sourceChannel: "agents:ui-request",
+    payload: {
+      agentId: "agent-a",
+      requestId: "batch-all-bad",
+      method: "batch_ask",
+      batchQuestions: [null, "text", { id: "x" }],
+    },
+  });
+  const after = coordinator.listPendingUiRequests("session-1");
+  const allBad = after.find((item) => item.requestId === "batch-all-bad");
+  assert.ok(allBad);
+  assert.equal(allBad.batchQuestions, undefined);
 });
 
 test("Session UI response is rejected after the closed runtime is unbound", async () => {

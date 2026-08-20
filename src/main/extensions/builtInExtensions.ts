@@ -6,7 +6,7 @@ import { basename, join } from "node:path";
  * 启动 RPC 时通过可重复的 `--extension/-e` 注入，避免污染用户全局 pi。
  */
 export const BUILT_IN_EXTENSIONS = [
-	"pi-deck-ask-question.ts",
+	"pideck-q-ask-question.ts",
 	"pideck-q-context-controller.ts",
 	"pi-deck-nul-redirect-fix.ts",
 	"pi-deck-plan-mode.ts",
@@ -39,6 +39,7 @@ const DEFAULT_DISABLED_MIGRATIONS: ReadonlyArray<{
 
 /** 文件更名只迁移持久化身份，不改变用户此前的启用/禁用选择。 */
 const BUILT_IN_EXTENSION_ALIASES: Readonly<Record<string, BuiltInExtensionName>> = {
+	"pi-deck-ask-question.ts": "pideck-q-ask-question.ts",
 	"pi-deck-context-controller.ts": "pideck-q-context-controller.ts",
 	"pi-deck-websearch.ts": "pideck-q-websearch.ts",
 	"pi-better-compaction.ts": "pideck-q-better-compaction.ts",

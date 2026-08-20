@@ -61,7 +61,7 @@ function loadExtensionManager({ homeDir, runPiOutput = "", fsOverrides = {} } = 
 			if (id === "./builtInExtensions") {
 				// ExtensionManager 只需要内置名列表；避免 vm 沙箱解析相对 TS 路径失败。
 				const builtInExtensions = [
-					"pi-deck-ask-question.ts",
+					"pideck-q-ask-question.ts",
 					"pi-deck-nul-redirect-fix.ts",
 					"pi-deck-plan-mode.ts",
 					"pi-deck-todo.ts",

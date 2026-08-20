@@ -38,7 +38,11 @@ test("TurnRow renders a single process summary toggle plus order-preserving flat
   assert.match(turnRowSource, /hidden=\{!stepsVisible\}/);
   // 中间内容收进执行过程折叠容器（foldableItems），最终回答常驻容器外（finalItems）
   assert.match(turnRowSource, /foldableItems\.map/);
-  assert.match(turnRowSource, /finalItems\.map/);
+  assert.match(turnRowSource, /persistentItems\.map/);
+  // ask-result 渲染为常驻 AskQuestionResultCard（折叠容器外）
+  assert.match(turnRowSource, /<AskQuestionResultCard/);
+  assert.match(turnRowSource, /item\.kind === "ask-result"/);
+  assert.match(turnRowSource, /<FinalAnswer/);
   // 折叠容器用 Radix CollapsibleContent（高度过渡动画），不再 display:none 突变
   assert.match(turnRowSource, /<Collapsible/);
   assert.match(turnRowSource, /<CollapsibleContent/);

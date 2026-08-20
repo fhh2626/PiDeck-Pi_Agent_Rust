@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../../../shared/types';
+import type { ChatMessage, PendingUiRequestSnapshot } from '../../../shared/types';
 /**
  * Web 端（A2 React）状态类型。
  *
@@ -39,18 +39,12 @@ export type WebRuntime = {
 	runtimeGeneration?: number;
 };
 
-export type WebPendingUiRequest = {
-	sessionId: string;
-	agentId: string;
-	runtimeGeneration: number;
-	requestId: string;
-	method: string;
-	title: string;
-	options?: string[];
-	placeholder?: string;
-	prefill?: string;
-	allowOther?: boolean;
-};
+/**
+ * Web 端待回答的 UI 请求快照。直接复用主进程契约（含 batchQuestions/batchReview），
+ * /api/state 的 pendingUiRequests 由 SessionRuntimeCoordinator 原样序列化，
+ * 两侧共用一份类型，避免字段漂移。
+ */
+export type WebPendingUiRequest = PendingUiRequestSnapshot;
 
 export type WebState = {
 	projects: WebProject[];

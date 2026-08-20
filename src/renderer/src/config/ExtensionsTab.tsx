@@ -35,7 +35,7 @@ function formatExtensionError(error: unknown): string {
 const PIDEK_BUILTIN_SOURCE: Record<string, string> = {
 	"pi-deck-todo": "pi-deck-todo.ts",
 	"pi-deck-plan-mode": "pi-deck-plan-mode.ts",
-	"pi-deck-ask-question": "pi-deck-ask-question.ts",
+	"PiDeck-Q-Ask-Question": "pideck-q-ask-question.ts",
 	"pi-deck-nul-redirect-fix": "pi-deck-nul-redirect-fix.ts",
 	"pi-deck-context-controller": "pideck-q-context-controller.ts",
 	"PiDeck-Q-context-controller": "pideck-q-context-controller.ts",
@@ -75,7 +75,7 @@ const RECOMMENDED_PACKAGES: RecommendedPackage[] = [
 		repoUrl: "https://github.com/fhh2626/PiDeck-Pi_Agent_Rust",
 	},
 	{
-		name: "pi-deck-ask-question",
+		name: "PiDeck-Q-Ask-Question",
 		descriptionKey: "config.extRecommended.piDeckAskQuestion",
 		installCmd: "npm:@earendil-works/pi-deck-ask-question",
 		tags: ["extension"],
@@ -138,6 +138,8 @@ const RECOMMENDED_PACKAGES: RecommendedPackage[] = [
 
 /** 内置扩展的用户可见产品名；source basename 供 -e 注入。 */
 const BUILT_IN_DISPLAY_NAME: Record<string, string> = {
+	"pideck-q-ask-question.ts": "PiDeck-Q-Ask-Question",
+	"pideck-q-ask-question": "PiDeck-Q-Ask-Question",
 	"pideck-q-context-controller.ts": "PiDeck-Q-context-controller",
 	"pideck-q-context-controller": "PiDeck-Q-context-controller",
 	"pideck-q-websearch.ts": "PiDeck-Q-WebSearch",

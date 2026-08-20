@@ -112,6 +112,47 @@ test("tool_execution_end 迟到：按 toolCallId 更新已有工具消息，不 
 	assert.equal(list[0].meta.toolCallId, "tc-1");
 });
 
+test("errored ask_question terminal update removes a stale completed ask card", () => {
+	const manager = createManager();
+	manager.messages.set("agent-1", [
+		{
+			id: "ask-message",
+			agentId: "agent-1",
+			role: "tool",
+			text: "✓ ask_question",
+			timestamp: 1_000,
+			meta: {
+				toolCallId: "ask-call",
+				toolName: "ask_question",
+				status: "done",
+				_askCard: {
+					question: "Continue?",
+					answered: true,
+					answer: true,
+					cancelled: false,
+				},
+			},
+		},
+	]);
+	manager.toolMessageIds.set("agent-1", new Map([["ask-call", "ask-message"]]));
+
+	manager.upsertToolMessage(
+		"agent-1",
+		{
+			toolName: "ask_question",
+			toolCallId: "ask-call",
+			args: { question: "Continue?" },
+			result: "UI failed: timeout",
+			isError: true,
+		},
+		"error",
+	);
+
+	const [message] = manager.messages.get("agent-1");
+	assert.equal(message.meta.status, "error");
+	assert.equal(message.meta._askCard, undefined);
+});
+
 test("finalizeThinkingIntoMessage 终态：更新投影版不 append 副本", () => {
 	const manager = createManager();
 	// 投影版 text 与终态事件 extractText 同规则（thinking 块包 <thinking> 标签）

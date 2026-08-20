@@ -47,6 +47,7 @@ import {
 	AgentMessageProjector,
 	buildActiveBranchEntryIds as buildActiveBranchEntryIdsForDisplay,
 } from "./AgentMessageProjector";
+import { buildAskQuestionResultSummary } from "./askQuestionResult";
 import { LatestByKeyEmitter } from "./LatestByKeyEmitter";
 import {
 	createStreamGateState,
@@ -107,12 +108,6 @@ type CreateAgentInputWithHistory = CreateAgentInput & {
 	/** 重启/重开同一会话时保留 renderer 已展示的历史前缀。 */
 	preserveHistoryOnLoad?: boolean;
 };
-
-/** 从 RPC 返回的未知 ask 记录中安全读取字段，避免批量答案转换扩散 any 强转。 */
-function readAskField(input: unknown, key: string): unknown {
-	if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
-	return Reflect.get(input, key);
-}
 
 export class AgentManager {
 	private readonly agents = new Map<string, AgentRuntime>();
@@ -4608,75 +4603,19 @@ export class AgentManager {
 		// args 可能来自 event.args（对象）或 existing.meta.args（已序列化的 JSON 字符串）。
 		// 如果是后者（如 tool_execution_end 不带 args），直接复用已有字符串避免 double encoding。
 		const argsMeta = typeof args === "string" ? args : this.messageProjector.truncateForDetail(this.messageProjector.safeJson(args));
-		// 提取 ask_question 详情用于渲染提问卡片；支持批量（questions 数组）和单问题两种格式。
-		// pi RPC 返回格式可能为 result.details 嵌套 或 result 顶层（无 details 包装）
-		const askDetails = (() => {
-			if (toolName !== "ask_question" || !result || typeof result !== "object") return undefined;
-			// 格式 1: result.details.question 或 result.details.answers（批量）
-			if ((result as any).details?.question || Array.isArray((result as any).details?.answers)) {
-				return (result as any).details;
-			}
-			// 格式 2: result.question（无 details 包装）
-			if ((result as any).question) {
-				return result as any;
-			}
-			// 格式 3: 从 args 回退读取提问内容（当 result 仅为简单值如选中项字符串时）
-			let parsedArgs: unknown = args;
-			if (typeof args === "string") { try { parsedArgs = JSON.parse(args); } catch { parsedArgs = undefined; } }
-			if (parsedArgs && typeof parsedArgs === "object" && (parsedArgs as any).question) {
-				return {
-					question: (parsedArgs as any).question,
-					options: (parsedArgs as any).options,
-					answer: typeof result === "string" ? result : (result as any).value ?? (result as any).answer,
-					answered: true,
-					answerLabel: typeof result === "string" ? result : (result as any).value ?? (result as any).answer,
-				};
-			}
-			return undefined;
-		})();
-		const askCard = (() => {
-			if (!askDetails) return undefined;
+		// 提取 ask_question 详情用于渲染「常驻问答卡」：支持批量（questions 数组）
+		// 和单问题两种格式，统一走 buildAskQuestionResultSummary（与历史投影共用），
+		// 保证实时/回放得到同样形状的 _askCard。
+		const askCard = buildAskQuestionResultSummary({
+			toolName,
+			args,
+			result,
 			// abort 时覆写 answer 为 null、answered 为 false，确保卡片显示"已取消"
-			const aborted = this.abortedDuringAsk.has(agentId);
-			// 单问题格式：details.question (string), details.answer
-			if (askDetails.question) {
-				return {
-					question: askDetails.question,
-					type: askDetails.type,
-					answered: aborted ? false : askDetails.answered,
-					answer: aborted ? null : askDetails.answer,
-					answerLabel: aborted ? undefined : askDetails.answerLabel,
-					options: askDetails.options,
-				};
-			}
-			// 批量格式：保留完整问答列表，历史卡片才能同时展示每个问题与对应答案，
-			// 不再只取第一题导致用户无法回看其余回答。
-			if (Array.isArray(askDetails.answers) && askDetails.answers.length > 0) {
-				const questions = Array.isArray(askDetails.questions) ? askDetails.questions : [];
-				const batchQuestions = askDetails.answers.map((rawAnswer: unknown, index: number) => {
-					const rawQuestion = questions[index];
-					const questionText = typeof readAskField(rawQuestion, "question") === "string"
-						? String(readAskField(rawQuestion, "question"))
-						: String(readAskField(rawAnswer, "id") ?? "");
-					const rawType = readAskField(rawAnswer, "type") ?? readAskField(rawQuestion, "type");
-					const rawOptions = readAskField(rawQuestion, "options");
-					return {
-						question: questionText,
-						type: typeof rawType === "string" ? rawType : "input",
-						answered: !askDetails.cancelled && readAskField(rawAnswer, "value") !== null,
-						answer: readAskField(rawAnswer, "value"),
-						answerLabel: typeof readAskField(rawAnswer, "label") === "string" ? String(readAskField(rawAnswer, "label")) : undefined,
-						options: Array.isArray(rawOptions) ? rawOptions : undefined,
-					};
-				});
-				const firstQuestion = batchQuestions[0];
-				return {
-					...firstQuestion,
-					questions: batchQuestions,
-				};
-			}
-			return undefined;
-		})();
+			aborted: this.abortedDuringAsk.has(agentId),
+			// 工具调用失败（✗）时不升格成「已回答」问答卡：result 是错误文案，
+			// 降级为普通工具卡，detailText 仍展示错误内容。
+			isError,
+		});
 		const meta = {
 			status,
 			toolName,
@@ -4701,7 +4640,17 @@ export class AgentManager {
 			existing.timestamp = Date.now();
 			// 合并而非替换：重定向到投影版时保留其身份字段（entryId/_piDeckMsgSeq），
 			// 否则渲染层接缝去重与编辑/删除/重发定位会因 entryId 丢失而失效。
-			existing.meta = { ...(existing.meta ?? {}), ...meta };
+			const mergedMeta: Record<string, unknown> = { ...(existing.meta ?? {}), ...meta };
+			// 终态没有生成 askCard（错误/损坏结果）时必须显式删旧值；仅省略字段会因
+			// 上面的对象合并保留旧 _askCard，导致 ✗ ask_question 仍显示“已回答”。
+			if (
+				toolName.toLowerCase() === "ask_question" &&
+				status !== "running" &&
+				!askCard
+			) {
+				delete mergedMeta._askCard;
+			}
+			existing.meta = mergedMeta;
 			this.markMessagesDirtyFrom(agentId, existingToolIndex);
 		} else {
 			list.push({

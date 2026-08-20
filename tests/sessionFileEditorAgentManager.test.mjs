@@ -68,6 +68,11 @@ function loadAgentManager() {
           buildActiveBranchEntryIds: () => [],
         };
       }
+      // Phase B 起 AgentManager 引入 askQuestionResult（ask_question 结果规范化）；
+      // 文件编辑器测试不涉及 ask 投影，返回最小桩即可。
+      if (specifier === "./askQuestionResult") {
+        return { buildAskQuestionResultSummary: () => undefined };
+      }
       if (specifier === "./sessionEntryIds") {
         return { takeActiveEntryId: (ids, index) => ({ entryId: ids?.[index], nextIndex: index + 1 }) };
       }

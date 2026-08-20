@@ -11,7 +11,7 @@ import test from "node:test";
  * extensions/node_modules/<pkg>，并在 dependencies 中显式声明以保证顶层安装。
  */
 
-// pi 扩展加载器自身可解析的包（实证：打包版成功加载 pi-deck-ask-question/todo，
+// pi 扩展加载器自身可解析的包（实证：打包版成功加载 PiDeck-Q-Ask-Question/todo，
 // 仅 undici 解析失败）。新包不在此列时必须先验证打包版能解析再入列。
 const PI_PROVIDED = /^(?:@earendil-works\/.*|typebox)$/;
 

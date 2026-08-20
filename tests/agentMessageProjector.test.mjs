@@ -129,6 +129,93 @@ test("marks recovered ask_question cards unanswered when that agent was cancelle
   assert.equal(messages[0].meta._askCard.options, undefined);
 });
 
+test("restores a full batch ask_question with every question and its answer", () => {
+  const messages = createProjector().convert("agent", [
+    {
+      role: "assistant",
+      content: [{
+        type: "toolCall",
+        id: "ask-batch",
+        name: "ask_question",
+        arguments: {
+          questions: [
+            { question: "Runtime?", type: "select" },
+            { question: "Package manager?", type: "select" },
+            { question: "Extra?", type: "input" },
+          ],
+        },
+      }],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "ask-batch",
+      content: [],
+      details: {
+        questions: [
+          { question: "Runtime?", type: "select", options: ["node", "deno"] },
+          { question: "Package manager?", type: "select", options: ["npm", "pnpm"] },
+          { question: "Extra?", type: "input" },
+        ],
+        answers: [
+          { id: "q1", type: "select", value: "deno", label: "deno" },
+          { id: "q2", type: "select", value: "pnpm", label: "pnpm" },
+          { id: "q3", type: "input", value: "custom text", label: "custom text" },
+        ],
+        cancelled: false,
+      },
+    },
+  ], ["entry-call", "entry-result"]);
+
+  const card = messages[0].meta._askCard;
+  // 关键回归点：历史回放必须恢复全部三题，而不是只取第一题。
+  assert.equal(card.questions.length, 3);
+  // cross-realm prototypes make deepStrictEqual flaky under the VM loader.
+  assert.equal(
+    card.questions.map((item) => item.question).join("|"),
+    "Runtime?|Package manager?|Extra?",
+  );
+  assert.equal(
+    card.questions.map((item) => item.answer).join("|"),
+    "deno|pnpm|custom text",
+  );
+  assert.equal(card.questions[0].options.join("|"), "node|deno");
+  assert.equal(card.cancelled, false);
+});
+
+test("restores a cancelled batch ask_question with every question unanswered", () => {
+  const messages = createProjector().convert("agent", [
+    {
+      role: "assistant",
+      content: [{
+        type: "toolCall",
+        id: "ask-cancel",
+        name: "ask_question",
+        arguments: {
+          questions: [
+            { question: "A?", type: "select" },
+            { question: "B?", type: "select" },
+          ],
+        },
+      }],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "ask-cancel",
+      content: [],
+      details: {
+        questions: [{ question: "A?" }, { question: "B?" }],
+        answers: [],
+        cancelled: true,
+      },
+    },
+  ], ["entry-call", "entry-result"]);
+
+  const card = messages[0].meta._askCard;
+  assert.equal(card.cancelled, true);
+  assert.equal(card.questions.length, 2);
+  assert.ok(card.questions.every((item) => item.answered === false && item.answer === null));
+});
+
 test("returns only message entries on the active branch", () => {
   const ids = buildActiveBranchEntryIds([
     { id: "session", parentId: null, type: "session" },

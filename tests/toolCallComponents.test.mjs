@@ -55,7 +55,10 @@ test("tool card renders tri-state status badges with icons and i18n labels", () 
   // done：secondary 低强调 + CircleCheck 图标；ask_question 已回答时文案替换为「已回答」
   assert.match(toolCalls, /variant="secondary" className="gap-1 px-1 py-0 text-micro"/);
   assert.match(toolCalls, /<CircleCheck size=\{9\}/);
-  assert.match(toolCalls, /askCard\?\.answered \? t\("ask\.answered"\) : t\("tool\.statusDone"\)/);
+  // 已完成 ask 的「已回答」文案改由常驻 AskQuestionResultCard 承载，
+  // ToolCard 的 done 统一用 statusDone（running / 损坏 ask 同走此 badge）。
+  assert.match(toolCalls, /\{t\("tool\.statusDone"\)\}/);
+  assert.doesNotMatch(toolCalls, /askCard\?\.answered \? t\("ask\.answered"\) : t\("tool\.statusDone"\)/);
   // 旧实现「完成后不显示状态」的空文案分支已移除
   assert.doesNotMatch(toolCalls, /statusLabel/);
 });

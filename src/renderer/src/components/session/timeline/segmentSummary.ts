@@ -17,6 +17,8 @@ export function buildProcessSummary(items: TurnDisplayItem[]): ProcessSummary {
 	let thinkingCount = 0;
 	let interimCount = 0;
 	for (const item of items) {
+		// final-answer 与 ask-result 都是常驻内容，不参与「执行过程」统计。
+		if (item.kind === "final-answer" || item.kind === "ask-result") continue;
 		if (item.kind === "process-entry") {
 			if (item.entry.kind === "tool-entry") toolCount += 1;
 			else thinkingCount += 1;

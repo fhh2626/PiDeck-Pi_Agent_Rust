@@ -20,7 +20,12 @@
  * 由 turn/TurnRow 渲染成「一个汇总按钮 + 步骤原位穿插 + 回答常驻」。
  */
 import type { AgentRunItem, ThinkingGroupItem } from "../../app/AppUtils";
+import type { ToolGroupItem } from "../../app/AppUtils";
 import type { TurnDisplayItem } from "./types";
+import type { ChatMessage } from "../../../../../shared/types";
+// 注意：本模块被 tests/turnSegments.test.mjs 以「裸 .ts」方式经 Node type-stripping
+// 直接加载，因此这里必须带 .ts 扩展名（tsconfig allowImportingTsExtensions 已开启）。
+import { getAskQuestionResultFromMessage } from "../../../../../shared/askQuestion.ts";
 
 /* 内联 strip 工具：本模块零运行时依赖（node 单测直接加载 .ts，
  * 无扩展名相对 import 在 node ESM 下不可解析；与 TimelineFormat.ts 同逻辑，改动需同步）。 */
@@ -47,6 +52,44 @@ function isAskQuestionToolGroup(item: AgentRunItem["items"][number]): boolean {
 /** 本轮是否已经出现 ask_question / _askCard 工具组（历史回放与 sticky 解除都靠它）。 */
 export function hasAskQuestionTool(run: AgentRunItem): boolean {
 	return run.items.some(isAskQuestionToolGroup);
+}
+
+/**
+ * 把一个 tool-group 展开为展示项：普通工具进「执行过程」（可折叠），
+ * 已完成的 ask_question 拆成常驻的 ask-result。
+ *
+ * - 组内无 ask 时直接复用原组（id 不变），避免无意义的新对象触发 memo 比较；
+ * - 组内混合时按原位切分：普通工具 buffer → ask → 普通工具 buffer，顺序保持不变；
+ * - ask 判定以规范化后的 _askCard 为准（getAskQuestionResultFromMessage），
+ *   损坏/无 _askCard 的 ask_question 会退化为普通工具卡。
+ */
+function splitToolGroup(
+	group: ToolGroupItem,
+): TurnDisplayItem[] {
+	const out: TurnDisplayItem[] = [];
+	let buffer: ChatMessage[] = [];
+	const flushBuffer = () => {
+		if (buffer.length === 0) return;
+		if (buffer.length === group.messages.length) {
+			// 整组都是普通工具：复用原组引用，memo 快速路径命中。
+			out.push({ kind: "process-entry", entry: { kind: "tool-entry", id: group.id, group } });
+		} else {
+			const chunk: ToolGroupItem = { kind: "tool-group", id: buffer[0].id, messages: buffer };
+			out.push({ kind: "process-entry", entry: { kind: "tool-entry", id: chunk.id, group: chunk } });
+		}
+		buffer = [];
+	};
+	for (const message of group.messages) {
+		const result = getAskQuestionResultFromMessage(message);
+		if (result) {
+			flushBuffer();
+			out.push({ kind: "ask-result", id: message.id, message, result });
+		} else {
+			buffer.push(message);
+		}
+	}
+	flushBuffer();
+	return out;
 }
 
 /**
@@ -134,10 +177,8 @@ export function buildTurnDisplay(
 			return;
 		}
 		if (item.kind === "tool-group") {
-			items.push({
-				kind: "process-entry",
-				entry: { kind: "tool-entry", id: item.id, group: item },
-			});
+			// 普通工具进折叠栏；ask_question 拆成常驻 ask-result（原位、不重排）。
+			for (const entry of splitToolGroup(item)) items.push(entry);
 			return;
 		}
 		if (item.kind !== "message" || item.message.role !== "assistant") return;
@@ -207,6 +248,9 @@ export function buildTurnDisplay(
 export function hasFoldableContent(items: TurnDisplayItem[]): boolean {
 	return items.some((item) => {
 		if (item.kind === "final-answer") return false;
+		// ask-result 是常驻问答卡，不进「执行过程」折叠栏：
+		// 单独只有 ask 的 run 不应显示「执行过程 1 个工具」按钮。
+		if (item.kind === "ask-result") return false;
 		// 空文本 interim（live 挂载点/错误占位）不是可折叠内容：
 		// 全空 run（如连续 error 空消息）不应出现「0 段中间回复」的按钮。
 		if (item.kind === "interim-answer") return !!item.message.text.trim();

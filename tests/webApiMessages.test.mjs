@@ -7,7 +7,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadTsCommonJs } from "./helpers/loadTsCommonJs.mjs";
 
-const { chatMessagesToUiMessages, mergeAuthoritativeUiMessages } = loadTsCommonJs(
+const {
+	chatMessagesToUiMessages,
+	mergeAuthoritativeUiMessages,
+	getWebAskQuestionResult,
+} = loadTsCommonJs(
 	"src/renderer/src/web/webApi.ts",
 );
 
@@ -475,4 +479,165 @@ test("idle merge drops an unmatched thinking card stuck in the middle once the s
 		Array.from(idle, (item) => item.parts.find((part) => part.type === "text")?.text ?? item.parts[0]?.type),
 		["继续", "真正最新的回复", "下一问"],
 	);
+});
+
+test("carries a completed ask_question result in UIMessage metadata", () => {
+	const result = chatMessagesToUiMessages([
+		message({
+			id: "ask-done",
+			role: "tool",
+			text: "✓ ask_question",
+			meta: {
+				toolName: "ask_question",
+				toolCallId: "call-ask",
+				status: "done",
+				_askCard: {
+					question: "选一个",
+					type: "select",
+					answered: true,
+					answer: "b",
+					answerLabel: "B 选项",
+					options: ["a", "b"],
+				},
+			},
+		}),
+	]);
+	const [ui] = result;
+	// metadata 带规范化后的结果（供 Web 时间线渲染常驻问答卡）
+	assert.equal(ui.metadata.askQuestionResult.question, "选一个");
+	assert.equal(ui.metadata.askQuestionResult.answerLabel, "B 选项");
+	assert.equal(ui.metadata.askQuestionResult.cancelled, false);
+	// 读取接口同样返回规范结构
+	const read = getWebAskQuestionResult(ui);
+	assert.equal(read.question, "选一个");
+	assert.equal(read.answered, true);
+});
+
+test("keeps a full batch ask_question result in Web metadata", () => {
+	const result = chatMessagesToUiMessages([
+		message({
+			id: "ask-batch",
+			role: "tool",
+			text: "✓ ask_question",
+			meta: {
+				toolName: "ask_question",
+				toolCallId: "call-ask-batch",
+				status: "done",
+				_askCard: {
+					question: "批量",
+					answered: false,
+					answer: null,
+					questions: [
+						{ question: "第一题", type: "select", answered: true, answer: "x", answerLabel: "X" },
+						{ question: "第二题", type: "confirm", answered: true, answer: true },
+						{ question: "第三题", type: "input", answered: false, answer: null },
+					],
+				},
+			},
+		}),
+	]);
+	const read = getWebAskQuestionResult(result[0]);
+	// 批量：questions 数组完整保留（逐题展示）
+	assert.equal(read.questions.length, 3);
+	assert.equal(read.questions.map((item) => item.question).join("|"), "第一题|第二题|第三题");
+});
+
+test("degrades a corrupt _askCard to a plain Web tool message", () => {
+	const result = chatMessagesToUiMessages([
+		message({
+			id: "ask-bad",
+			role: "tool",
+			text: "✓ ask_question",
+			meta: { toolName: "ask_question", toolCallId: "call-ask-bad", status: "done", _askCard: { cancelled: true } },
+		}),
+	]);
+	// 无问题文本 → normalizer 返回 undefined → Web 时间线退回普通工具卡
+	assert.equal(getWebAskQuestionResult(result[0]), undefined);
+	assert.equal(result[0].metadata.askQuestionResult, undefined);
+});
+
+test("SSE placeholder merge keeps the ask card when the runtime snapshot settles it", () => {
+	// 本地 SSE 只有工具占位（无 _askCard），运行时快照带完整结果；
+	// 按 toolCallId 合并后 metadata 必须继承快照的 askQuestionResult。
+	const current = [
+		{
+			id: "local-ask",
+			role: "assistant",
+			parts: [{ type: "dynamic-tool", toolName: "ask_question", toolCallId: "call-ask", state: "input-available", input: {} }],
+		},
+	];
+	const authoritative = chatMessagesToUiMessages([
+		message({
+			id: "rt-ask",
+			role: "tool",
+			text: "✓ ask_question",
+			timestamp: 120,
+			meta: {
+				toolName: "ask_question",
+				toolCallId: "call-ask",
+				status: "done",
+				_askCard: { question: "选一个", answered: true, answer: "a", answerLabel: "A 选项" },
+			},
+		}),
+	]);
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.length, 1);
+	assert.equal(merged[0].id, "rt-ask");
+	const read = getWebAskQuestionResult(merged[0]);
+	assert.equal(read.question, "选一个");
+	assert.equal(read.answered, true);
+});
+
+test("merge applies a metadata-only snapshot update (ask card appears late)", () => {
+	// 同一 toolCallId 已匹配（parts 形状一致），但本地快照先于 ask 完成到达
+	// （metadata 无 askQuestionResult），下一轮轮询快照才带上结果。
+	// sameUiMessage 若只比 parts 会跳过这次「只变 metadata」的更新。
+	const current = chatMessagesToUiMessages([
+		message({
+			id: "early-ask",
+			role: "tool",
+			text: "✓ ask_question",
+			timestamp: 100,
+			meta: { toolName: "ask_question", toolCallId: "call-ask-2", status: "done", result: "" },
+		}),
+	]);
+	const authoritative = chatMessagesToUiMessages([
+		message({
+			id: "late-ask",
+			role: "tool",
+			text: "✓ ask_question",
+			timestamp: 100,
+			meta: {
+				toolName: "ask_question",
+				toolCallId: "call-ask-2",
+				status: "done",
+				result: "",
+				_askCard: { question: "选一个", answered: true, answer: "a", answerLabel: "A" },
+			},
+		}),
+	]);
+	const merged = mergeAuthoritativeUiMessages(current, authoritative);
+	assert.equal(merged.length, 1);
+	assert.equal(merged[0].id, "late-ask");
+	const read = getWebAskQuestionResult(merged[0]);
+	assert.equal(read.question, "选一个");
+	assert.equal(read.answered, true);
+
+	// 反向：快照没带结果时，本地已有的结果不被「无 metadata」的空快照抹掉。
+	// （parts 相同但 metadata 不同 → 按权威快照替换，权威缺结果即卡片消失，
+	//  与「以快照为准」的合并语义一致。）
+	const mergedBack = mergeAuthoritativeUiMessages(
+		merged,
+		chatMessagesToUiMessages([
+			message({
+				id: "early-ask-again",
+				role: "tool",
+				text: "✓ ask_question",
+				timestamp: 100,
+				meta: { toolName: "ask_question", toolCallId: "call-ask-2", status: "done", result: "" },
+			}),
+		]),
+	);
+	assert.equal(mergedBack.length, 1);
+	assert.equal(getWebAskQuestionResult(mergedBack[0]), undefined);
 });

@@ -57,7 +57,7 @@ test("listActiveBuiltInExtensionPaths respects removedBuiltIn and missing files"
 	const extDir = join(root, "resources", "extensions");
 	mkdirSync(extDir, { recursive: true });
 	// 只写入 ask + todo，故意不写 plan/nul，验证缺失跳过
-	writeFileSync(join(extDir, "pi-deck-ask-question.ts"), "// ask\n", "utf8");
+	writeFileSync(join(extDir, "pideck-q-ask-question.ts"), "// ask\n", "utf8");
 	writeFileSync(join(extDir, "pi-deck-todo.ts"), "// todo\n", "utf8");
 
 	try {
@@ -66,7 +66,7 @@ test("listActiveBuiltInExtensionPaths respects removedBuiltIn and missing files"
 			["pi-deck-todo.ts"],
 		);
 		assert.equal(paths.length, 1);
-		assert.ok(String(paths[0]).endsWith("pi-deck-ask-question.ts"));
+		assert.ok(String(paths[0]).endsWith("pideck-q-ask-question.ts"));
 		// 内置扩展清单随版本增长：ask/context-controller/nul-redirect/plan-mode/security-gate/todo/vision/websearch/better-compaction
 		assert.equal(BUILT_IN_EXTENSIONS.length, 9);
 		assert.ok(BUILT_IN_EXTENSIONS.includes("pideck-q-context-controller.ts"));
@@ -133,13 +133,19 @@ test("renamed built-ins preserve legacy disabled choices", () => {
 	} =
 		loadBuiltInExtensionsModule();
 	const migrated = migrateBuiltInExtensionDefaults(
-		["pi-deck-context-controller.ts", "pi-deck-websearch.ts", "pi-better-compaction.ts"],
+		[
+			"pi-deck-ask-question.ts",
+			"pi-deck-context-controller.ts",
+			"pi-deck-websearch.ts",
+			"pi-better-compaction.ts",
+		],
 		BUILT_IN_EXTENSION_DEFAULTS_VERSION,
 	);
 	assert.equal(migrated.migrated, true);
 	assert.deepEqual(
 		[...migrated.removedBuiltInExtensions].sort(),
 		[
+			"pideck-q-ask-question.ts",
 			"pideck-q-better-compaction.ts",
 			"pideck-q-context-controller.ts",
 			"pideck-q-websearch.ts",
@@ -147,7 +153,12 @@ test("renamed built-ins preserve legacy disabled choices", () => {
 	);
 	assert.deepEqual(
 		[...LEGACY_BUILT_IN_EXTENSION_NAMES].sort(),
-		["pi-better-compaction.ts", "pi-deck-context-controller.ts", "pi-deck-websearch.ts"],
+		[
+			"pi-better-compaction.ts",
+			"pi-deck-ask-question.ts",
+			"pi-deck-context-controller.ts",
+			"pi-deck-websearch.ts",
+		],
 	);
 });
 
@@ -158,6 +169,10 @@ test("built-in extension removal has a registered IPC handler", () => {
 	assert.match(storeIpc, /ipcChannels\.extensionsRestoreBuiltIn[\s\S]*extensionManager\.restoreBuiltIn\(source\)/);
 	assert.match(extensionsTab, /extension\.enabled === false/);
 	assert.match(extensionsTab, /config\.enableExtension/);
+	assert.match(
+		extensionsTab,
+		/"pideck-q-ask-question\.ts": "PiDeck-Q-Ask-Question"/,
+	);
 });
 
 test("AgentManager no longer deploys built-ins via ensurePiDeckExtension", () => {

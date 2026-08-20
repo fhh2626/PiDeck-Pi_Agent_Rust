@@ -97,6 +97,7 @@ function outline(items) {
 				: "tool";
 		}
 		if (item.kind === "interim-answer") return `interim:${item.message.text}`;
+		if (item.kind === "ask-result") return `ask:${item.result.question}`;
 		return `final:${item.message.text}`;
 	});
 }
@@ -520,9 +521,11 @@ test("历史回放（后随 ask_question 工具组）：提问说明提升为 fi
 		askQuestionToolGroup(),
 	]);
 	const items = buildTurnDisplay(run, { showThinking: true });
-	assert.deepEqual(outline(items), ["final:请选择配置", "tool"]);
+	// ask_question 现在是常驻 ask-result（不再是折叠栏里的普通工具）。
+	assert.deepEqual(outline(items), ["final:请选择配置", "ask:选一个"]);
 	assert.equal(items[0].kind, "final-answer");
-	assert.equal(hasFoldableContent(items), true); // 仍有 ask_question 卡片
+	// 只剩「提问说明 final + ask-result」，两者都常驻，折叠栏为空 → 无汇总按钮。
+	assert.equal(hasFoldableContent(items), false);
 	assert.equal(buildProcessSummary(items).interimCount, 0);
 });
 
@@ -533,8 +536,10 @@ test("历史回放且前面有普通工具：普通工具与提问工具保留�
 		askQuestionToolGroup(),
 	]);
 	const items = buildTurnDisplay(run, { showThinking: true });
-	assert.deepEqual(outline(items), ["tool", "final:读完了，请确认：", "tool"]);
+	assert.deepEqual(outline(items), ["tool", "final:读完了，请确认：", "ask:选一个"]);
 	assert.equal(items[1].kind, "final-answer");
+	// read 工具仍在折叠栏（toolCount=1），ask-result 常驻折叠栏外。
+	assert.equal(buildProcessSummary(items).toolCount, 1);
 	assert.equal(buildProcessSummary(items).interimCount, 0);
 });
 
