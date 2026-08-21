@@ -88,7 +88,7 @@ test("second-wave audit: proxy, single-instance, catalog, clone/fork", () => {
   const sessionScanner = read("main/sessions/SessionScanner.ts");
   const visionConfig = read("main/settings/visionBridgeConfig.ts");
   const gitIpc = read("main/ipc/gitIpc.ts");
-  const index = read("main/index.ts");
+  const startupTasks = read("main/backend/backendStartupTasks.ts");
   // 桌面代理：只记 mode 不记 proxyRules（URL 可能内嵌凭据）
   assert.match(desktopProxy, /"Desktop proxy applied", \{ mode: config\.mode \}\)/);
   assert.match(desktopProxy, /"Desktop proxy apply failed"/);
@@ -106,5 +106,5 @@ test("second-wave audit: proxy, single-instance, catalog, clone/fork", () => {
   assert.match(visionConfig, /hasApiKey: Boolean/);
   // git init / web 服务回退留痕
   assert.match(gitIpc, /"Repository initialized", \{ projectId, path: project\.path \}\)/);
-  assert.match(index, /"Web service disabled after apply failure"/);
+  assert.match(startupTasks, /"Web service disabled after apply failure"/);
 });

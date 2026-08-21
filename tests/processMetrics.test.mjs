@@ -137,7 +137,8 @@ test("stop-agent: full session stop chain (coordinator + detach)", () => {
 	const systemIpc = readFileSync("src/main/ipc/systemIpc.ts", "utf8");
 	const preload = readFileSync("src/preload/index.ts", "utf8");
 	const coordinator = readFileSync("src/main/sessions/SessionRuntimeCoordinator.ts", "utf8");
-	const index = readFileSync("src/main/index.ts", "utf8");
+	const sessionBridge = readFileSync("src/main/backend/sessionRuntimeBridge.ts", "utf8");
+	const registerRpc = readFileSync("src/main/backend/registerBackendRpc.ts", "utf8");
 	const tab = readFileSync("src/renderer/src/components/app/settings/ProcessMetricsTab.tsx", "utf8");
 	// 通道 + handler：agentId 输入校验（渲染层数据不可信），走完整会话停止链路
 	assert.match(ipc, /stopAgent: "system:stop-agent"/);
@@ -150,12 +151,12 @@ test("stop-agent: full session stop chain (coordinator + detach)", () => {
 	assert.match(coordinator, /async stopAgentById\(/);
 	assert.match(coordinator, /const binding = this\.getRuntimeBinding\(agentId\);/);
 	assert.match(coordinator, /await this\.stopRuntime\(target\);/);
-	// index.ts 装配：成功后关终端 + detach 推送（渲染层运行标记熄灭的关键）
-	assert.match(index, /async function stopAgentFromMonitor\(/);
-	assert.match(index, /sessionRuntimeCoordinator\.stopAgentById\(agentId\)/);
-	assert.match(index, /terminalManager\.closeAgent\(agentId\);/);
-	assert.match(index, /emitSessionRuntimeDetach\(result\.value\);/);
-	assert.match(index, /stopAgentFromMonitor,/);
+	// 装配：成功后关终端 + detach 推送（渲染层运行标记熄灭的关键）
+	assert.match(sessionBridge, /async function stopAgentFromMonitor\(/);
+	assert.match(sessionBridge, /sessionRuntimeCoordinator\.stopAgentById\(agentId\)/);
+	assert.match(sessionBridge, /terminalManager\.closeAgent\(agentId\);/);
+	assert.match(sessionBridge, /emitSessionRuntimeDetach\(result\.value\);/);
+	assert.match(registerRpc, /stopAgentFromMonitor: runtimeBridge\.stopAgentFromMonitor,/);
 	// preload 暴露
 	assert.match(preload, /stopAgent: \(agentId: string\) =>/);
 	assert.match(preload, /ipcRenderer\.invoke\(ipcChannels\.stopAgent, agentId\)/);

@@ -7,6 +7,8 @@ const coordinator = readFileSync(
   "utf8",
 );
 const main = readFileSync("src/main/index.ts", "utf8");
+const createBackend = readFileSync("src/main/backend/createBackend.ts", "utf8");
+const sessionBridge = readFileSync("src/main/backend/sessionRuntimeBridge.ts", "utf8");
 const agentManager = readFileSync("src/main/pi/AgentManager.ts", "utf8");
 const sessionIpc = readFileSync("src/main/ipc/sessionIpc.ts", "utf8");
 const app = readFileSync("src/renderer/src/App.tsx", "utf8");
@@ -42,14 +44,14 @@ const webChatApp = readFileSync("src/renderer/src/web/WebChatApp.tsx", "utf8");
 
 test("catalog scans attach matching existing runtimes in the main process", () => {
   assert.match(coordinator, /attachCatalogRuntimes\(/);
-  assert.match(main, /attachCatalogRuntimes\(records\)/);
+  assert.match(createBackend, /attachCatalogRuntimes\(records\)/);
   assert.match(sessionIpc, /sessionsCatalogList[\s\S]*mergeScanned[\s\S]*attachCatalogRuntimes/);
 });
 
 test("unbound interactive UI is cancelled and cannot be surfaced as Session UI", () => {
-  assert.match(main, /cancelUnboundUiRequest/);
-  assert.match(main, /"batch_ask"/);
-  assert.match(main, /sendUIResponse\([^,]+,[^,]+, \{ cancelled: true \}\)/);
+  assert.match(sessionBridge, /cancelUnboundUiRequest/);
+  assert.match(sessionBridge, /"batch_ask"/);
+  assert.match(sessionBridge, /sendUIResponse\([^,]+,[^,]+, \{ cancelled: true \}\)/);
   assert.doesNotMatch(app, /bindSessionRuntimeAtom|bindSessionRuntime\(/);
   assert.doesNotMatch(app, /api\.agents\.onUiRequest\(/);
 });
@@ -88,28 +90,28 @@ test("session UI requests remain generation-bound and render in the timeline foo
 
 test("Web wiring is Session-first and exposes no Agent compatibility creation", () => {
   assert.match(
-    main,
+    createBackend,
     /createSessionDraft: async \(input\)[\s\S]*sessionCatalog\.createDraft/,
   );
   assert.match(
-    main,
+    createBackend,
     /sendSessionPrompt: async \(input\)[\s\S]*sessionRuntimeCoordinator\.send\(input\)/,
   );
   // stopSessionRuntime is now a shared helper called from both IPC and the web deps.
-  assert.match(main, /async function stopSessionRuntime\(target[^)]*\)[\s\S]*sessionRuntimeCoordinator\.stopRuntime\(target\)/);
-  assert.doesNotMatch(main, /createAgent:/);
+  assert.match(sessionBridge, /async function stopSessionRuntime\([\s\S]*?sessionRuntimeCoordinator\.stopRuntime\(target\)/);
+  assert.doesNotMatch(createBackend, /createAgent:/);
   assert.doesNotMatch(main, /LEGACY_EXTERNAL_RUNTIME|ipcChannels\.agentsCreate/);
 });
 
 test("catalog deletion rejects bound or activating Session runtimes", () => {
   assert.match(sessionIpc, /sessionsCatalogDelete[\s\S]*sessionRuntimeCoordinator\.getTarget\(sessionId\)[\s\S]*sessionRuntimeCoordinator\.isActivating\(sessionId\)/);
-  assert.match(main, /deleteSessionRecord: async \(sessionId\)[\s\S]*sessionRuntimeCoordinator\.getTarget\(sessionId\)[\s\S]*sessionRuntimeCoordinator\.isActivating\(sessionId\)/);
+  assert.match(createBackend, /deleteSessionRecord: async \(sessionId\)[\s\S]*sessionRuntimeCoordinator\.getTarget\(sessionId\)[\s\S]*sessionRuntimeCoordinator\.isActivating\(sessionId\)/);
   assert.match(coordinator, /isActivating\(sessionId: string\): boolean/);
 });
 
 test("replacement restore is gated by full origin identity in main", () => {
-  assert.match(main, /const originKey = originEntry\?\.filePath[\s\S]*buildSessionOriginKey/);
-  assert.match(main, /canRestoreOrigin: \(\) => \{[\s\S]*buildSessionOriginKey[\s\S]*\) === originKey;/);
+  assert.match(sessionBridge, /const originKey = originEntry\?\.filePath[\s\S]*buildSessionOriginKey/);
+  assert.match(sessionBridge, /canRestoreOrigin: \(\) => \{[\s\S]*buildSessionOriginKey[\s\S]*\) === originKey;/);
   assert.match(coordinator, /failClosedRuntimeReplacement/);
   assert.match(coordinator, /replacementBySession/);
 });
