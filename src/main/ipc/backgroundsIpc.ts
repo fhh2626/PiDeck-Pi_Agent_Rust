@@ -1,9 +1,14 @@
-import { app, dialog, ipcMain, protocol } from "electron";
+import { app, dialog, protocol, type BrowserWindow } from "electron";
 import { mkdir, copyFile, readdir, readFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { ipcChannels } from "../../shared/ipc";
 import { trashPath } from "../fs/trash";
 import { getAppLogger } from "../logging/sharedLogger";
+import type { RpcRouter } from "../transport/RpcRouter";
+
+export type BackgroundsIpcDeps = {
+	getMainWindow: () => BrowserWindow | null;
+};
 
 /** 背景图存放目录（userData/backgrounds/），协议只服务该目录，杜绝任意本地文件读取 */
 export function backgroundsDir(): string {
@@ -84,11 +89,14 @@ export function registerBackgroundImageProtocol(): void {
 }
 
 /** 注册背景图 IPC（settings: 域由 storeIpc 覆盖，这里只挂背景图专用通道） */
-export function registerBackgroundsIpc(): void {
-	ipcMain.handle(ipcChannels.pickBackgroundImage, (event) =>
-		pickBackgroundImage(event.sender as unknown as Electron.BrowserWindow),
+export function registerBackgroundsIpc(
+	router: RpcRouter,
+	deps: BackgroundsIpcDeps,
+): void {
+	router.handle(ipcChannels.pickBackgroundImage, () =>
+		pickBackgroundImage(deps.getMainWindow() ?? undefined),
 	);
-	ipcMain.handle(ipcChannels.removeBackgroundImage, (_event, name: string) =>
+	router.handle(ipcChannels.removeBackgroundImage, (name: string) =>
 		removeBackgroundImage(name),
 	);
 }

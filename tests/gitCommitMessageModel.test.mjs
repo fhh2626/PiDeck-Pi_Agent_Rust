@@ -88,5 +88,5 @@ test("Git summary settings expose the shared command model picker", () => {
 
 test("Git IPC receives the localized settings guidance from the main process", () => {
   assert.match(gitIpc, /mainCopy: \(key: string/);
-  assert.match(mainIndex, /registerGitIpc\(\{[\s\S]*mainCopy: mainCopy/);
+  assert.match(mainIndex, /registerGitIpc\(router,\s*\{[\s\S]*mainCopy: mainCopy/);
 });

@@ -1,8 +1,9 @@
-import { ipcMain, dialog, type BrowserWindow } from "electron";
+import { dialog, type BrowserWindow } from "electron";
 import { ipcChannels } from "../../shared/ipc";
 import type { ExternalEditor, ExternalEditorId, ExternalEditorSetting } from "../../shared/types";
 import type { SettingsStore } from "../settings/SettingsStore";
 import type { AppLogger } from "../logging/AppLogger";
+import type { RpcRouter } from "../transport/RpcRouter";
 import {
 	listConfiguredExternalEditors,
 	mergeDetectedExternalEditors,
@@ -17,11 +18,11 @@ export type EditorsIpcDeps = {
 	getMainWindow: () => BrowserWindow | null;
 };
 
-export function registerEditorsIpc(deps: EditorsIpcDeps): void {
+export function registerEditorsIpc(router: RpcRouter, deps: EditorsIpcDeps): void {
 	const { settingsStore, appLogger, getMainWindow } = deps;
 
-	ipcMain.handle(ipcChannels.editorsList, async () => listConfiguredExternalEditors(settingsStore.get()));
-	ipcMain.handle(ipcChannels.editorsChooseExecutable, async () => {
+	router.handle(ipcChannels.editorsList, async () => listConfiguredExternalEditors(settingsStore.get()));
+	router.handle(ipcChannels.editorsChooseExecutable, async () => {
 		const options = {
 			properties: ["openFile"],
 			filters: process.platform === "win32"
@@ -37,7 +38,7 @@ export function registerEditorsIpc(deps: EditorsIpcDeps): void {
 			: await dialog.showOpenDialog(options);
 		return result.canceled ? null : result.filePaths[0] ?? null;
 	});
-	ipcMain.handle(ipcChannels.editorsRedetect, async () => {
+	router.handle(ipcChannels.editorsRedetect, async () => {
 		const detected = await detectExternalEditors();
 		const settings = await settingsStore.update({
 			externalEditors: mergeDetectedExternalEditors(settingsStore.get().externalEditors, detected),
@@ -45,9 +46,9 @@ export function registerEditorsIpc(deps: EditorsIpcDeps): void {
 		void appLogger.info("editor", "External editors redetected", { count: detected.length });
 		return settings;
 	});
-	ipcMain.handle(
+	router.handle(
 		ipcChannels.editorsUpdate,
-		async (_event, editorId: ExternalEditorId, patch: Partial<ExternalEditorSetting>) => {
+		async (editorId: ExternalEditorId, patch: Partial<ExternalEditorSetting>) => {
 			const current = settingsStore.get().externalEditors;
 			const existing = current[editorId];
 			if (!existing) throw new Error(`Unsupported editor: ${editorId}`);
@@ -72,9 +73,9 @@ export function registerEditorsIpc(deps: EditorsIpcDeps): void {
 			return settings;
 		},
 	);
-	ipcMain.handle(
+	router.handle(
 		ipcChannels.editorsOpenProject,
-		async (_event, editor: ExternalEditor, projectPath: string) => {
+		async (editor: ExternalEditor, projectPath: string) => {
 			// 只接收已检测到的编辑器配置；打开项目不经过 shell 拼接命令,降低路径含空格时失败的概率。
 			await openProjectInEditor(editor, projectPath);
 			void appLogger.info("editor", "Project opened in external editor", {

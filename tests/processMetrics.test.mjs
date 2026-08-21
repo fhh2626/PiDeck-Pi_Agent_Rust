@@ -121,7 +121,7 @@ test("IPC channel + systemIpc handler + preload exposure", () => {
 	const systemIpc = readFileSync("src/main/ipc/systemIpc.ts", "utf8");
 	const preload = readFileSync("src/preload/index.ts", "utf8");
 	assert.match(ipc, /processMetrics: "system:process-metrics"/);
-	assert.match(systemIpc, /ipcMain\.handle\(ipcChannels\.processMetrics/);
+	assert.match(systemIpc, /router\.handle\(ipcChannels\.processMetrics/);
 	// handler 先按 agentId 反查会话身份（进程监控表要显示是哪个会话），
 	// 再交给 getProcessSnapshot 采样内存
 	assert.match(systemIpc, /getSessionInfoForAgent\(\s*agent\.agentId,\s*\)/);
@@ -141,7 +141,7 @@ test("stop-agent: full session stop chain (coordinator + detach)", () => {
 	const tab = readFileSync("src/renderer/src/components/app/settings/ProcessMetricsTab.tsx", "utf8");
 	// 通道 + handler：agentId 输入校验（渲染层数据不可信），走完整会话停止链路
 	assert.match(ipc, /stopAgent: "system:stop-agent"/);
-	assert.match(systemIpc, /ipcMain\.handle\(ipcChannels\.stopAgent/);
+	assert.match(systemIpc, /router\.handle\(ipcChannels\.stopAgent/);
 	assert.match(systemIpc, /typeof agentId !== "string" \|\| !agentId/);
 	// 关键：不能只调 agentManager.stop（会跳过会话状态收尾 → 运行标记不熄灭）
 	assert.match(systemIpc, /deps\.stopAgentFromMonitor\(agentId\)/);

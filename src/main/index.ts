@@ -208,6 +208,7 @@ import {
 import { ProjectResourceManager } from "./projects/ProjectResourceManager";
 import { listVisibleProjects, registerProjectsIpc } from "./ipc/projectsIpc";
 import { registerUsageStatsIpc } from "./ipc/usageStatsIpc";
+import { ElectronRpcRouter } from "./transport/ElectronRpcRouter";
 import { UsageStatsService } from "./usageStats/UsageStatsService";
 import { readLastWindowBounds, saveLastWindowBounds } from "./windowState";
 import { createRendererCrashRecoveryGuard } from "./window/rendererCrashRecovery";
@@ -222,6 +223,7 @@ import { registerScratchPadIpc } from "./ipc/scratchPadIpc";
 import { registerSecurityIpc } from "./ipc/securityIpc";
 import { registerVisionIpc } from "./ipc/visionIpc";
 import { VisionBridgeConfigManager } from "./settings/visionBridgeConfig";
+import { registerElectronPreloadLifecycleIpc } from "./ipc/electronPreloadLifecycleIpc";
 import { registerSessionIpc, scheduleCatalogBackgroundScan } from "./ipc/sessionIpc";
 import { registerSystemIpc } from "./ipc/systemIpc";
 import { fetchModelList, getCachedModelList, refreshModelList } from "./pi/modelListCache";
@@ -1161,23 +1163,27 @@ async function sendAgentPrompt(
 }
 
 function registerIpc() {
+	const router = new ElectronRpcRouter(ipcMain);
+
 	// 用量统计：业务在 UsageStatsService，handler 薄层只校验/适配
-	registerUsageStatsIpc(ipcMain, usageStatsService);
+	registerUsageStatsIpc(router, usageStatsService);
 
 	const catalogIdentityContext = () => {
 		const { wslEnabled, wslDistro, wslUser } = settingsStore.get();
 		return wslEnabled ? { wslDistro, wslUser } : {};
 	};
 
-	registerEditorsIpc({
+	registerEditorsIpc(router, {
 		settingsStore,
 		appLogger,
 		getMainWindow: () => mainWindow,
 	});
 	// 换肤背景图：协议服务 userData/backgrounds/，IPC 负责选图复制与删除
 	registerBackgroundImageProtocol();
-	registerBackgroundsIpc();
-	registerProjectsIpc({
+	registerBackgroundsIpc(router, {
+		getMainWindow: () => mainWindow,
+	});
+	registerProjectsIpc(router, {
 		projectStore,
 		settingsStore,
 		gitService,
@@ -1189,21 +1195,23 @@ function registerIpc() {
 		getMainWindow: () => mainWindow,
 	});
 
-	registerScratchPadIpc({ appLogger });
+	registerScratchPadIpc(router, { appLogger });
 
 	// 安全管理：配置读写 + 会话等级覆盖（SecurityStore 负责持久化与策略快照）
-	registerSecurityIpc({
+	registerSecurityIpc(router, {
 		securityStore,
 		log: (domain, message, details) => void appLogger.info(domain, message, details),
 	});
 
 	// 视觉桥配置（~/.pi/agent/pi-deck-vision.json）界面化编辑；运行时由 pi-deck-vision 扩展消费
-	registerVisionIpc({
+	registerVisionIpc(router, {
 		visionBridge: new VisionBridgeConfigManager(configManager),
 		log: (message, ...args) => appLogger.info("vision", message, ...args),
 	});
 
-	registerSessionIpc({
+	registerElectronPreloadLifecycleIpc(ipcMain, { appLogger });
+
+	registerSessionIpc(router, {
 		projectStore,
 		settingsStore,
 		sessionScanner,
@@ -1265,7 +1273,7 @@ function registerIpc() {
 	}, 3000);
 	prewarmTimer.unref?.();
 
-	registerGitIpc({
+	registerGitIpc(router, {
 		appLogger,
 		mainCopy: mainCopy as (key: string, params?: Record<string, string | number>) => string,
 		getLocale: currentMainProcessLocale,
@@ -1293,7 +1301,7 @@ function registerIpc() {
 			mainWindow.webContents.send(ipcChannels.appUpdateProgress, progress);
 		},
 	});
-	registerSystemIpc({
+	registerSystemIpc(router, {
 		piLocator,
 		settingsStore,
 		configManager,
@@ -1347,7 +1355,7 @@ function registerIpc() {
 		RELEASES_URL,
 	});
 
-	registerStoreIpc({
+	registerStoreIpc(router, {
 		promptManager,
 		skillManager,
 		xuePromptManager,
@@ -1356,7 +1364,7 @@ function registerIpc() {
 		mainCopy: mainCopy as (key: string, params?: Record<string, string | number>) => string,
 	});
 
-	registerTerminalIpc({
+	registerTerminalIpc(router, {
 		appLogger,
 		sessionRuntimeCoordinator,
 		terminalManager,
@@ -1381,7 +1389,7 @@ function registerIpc() {
 	// 预载模型规格索引（sql.js WASM + 全表读入约数十 ms，后台完成避免首次失焦卡顿）
 	modelSpecsStore.warm();
 
-	registerFilesIpc({
+	registerFilesIpc(router, {
 		fileSystemService,
 		projectStore,
 		settingsStore,
@@ -1395,6 +1403,13 @@ function registerIpc() {
 			join(app.getPath("home"), ".pi", "agent"),
 			app.getPath("userData"),
 		],
+	});
+
+	// renderer 挂载后拉取 pending 跳转目标（一次性，取走即清空）
+	router.handle(ipcChannels.appGetFocusTargetPending, () => {
+		const target = pendingFocusTarget;
+		pendingFocusTarget = null;
+		return target;
 	});
 }
 
@@ -1813,12 +1828,6 @@ app.whenReady().then(async () => {
 	if (coldStartTarget?.sessionId) {
 		queueFocusTarget(coldStartTarget.sessionId);
 	}
-	// renderer 挂载后拉取 pending 跳转目标（一次性，取走即清空）
-	ipcMain.handle(ipcChannels.appGetFocusTargetPending, () => {
-		const target = pendingFocusTarget;
-		pendingFocusTarget = null;
-		return target;
-	});
 	void detectExternalEditorsOnFirstLaunch().catch((error) => {
 		void appLogger.warn("editor", "External editor first launch detection failed", error);
 	});

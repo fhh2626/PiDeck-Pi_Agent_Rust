@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain } from "electron";
+import { app, dialog } from "electron";
 import { randomUUID } from "node:crypto";
 import { join, basename } from "node:path";
 import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -7,12 +7,13 @@ import { ipcChannels } from "../../shared/ipc";
 import { trashPath } from "../fs/trash";
 import type { DraftMeta, ScratchPadData } from "../../shared/types";
 import type { AppLogger } from "../logging/AppLogger";
+import type { RpcRouter } from "../transport/RpcRouter";
 
 export type ScratchPadIpcDeps = {
 	appLogger: Pick<AppLogger, "info" | "error">;
 };
 
-export function registerScratchPadIpc({ appLogger }: ScratchPadIpcDeps): void {
+export function registerScratchPadIpc(router: RpcRouter, { appLogger }: ScratchPadIpcDeps): void {
 	const draftsDir = join(app.getPath("userData"), "drafts");
 
 	/** 确保 drafts 目录存在，首次访问时如果旧 scratch-pad.md 存在则迁移为草稿 */
@@ -44,7 +45,7 @@ export function registerScratchPadIpc({ appLogger }: ScratchPadIpcDeps): void {
 	}
 
 	/** 列出所有草稿，按更新时间降序排列 */
-	ipcMain.handle(ipcChannels.scratchPadList, async (): Promise<DraftMeta[]> => {
+	router.handle(ipcChannels.scratchPadList, async (): Promise<DraftMeta[]> => {
 		await ensureDraftsDir();
 		const files = await readdir(draftsDir);
 		const mdFiles = files.filter(f => f.endsWith(".md"));
@@ -71,7 +72,7 @@ export function registerScratchPadIpc({ appLogger }: ScratchPadIpcDeps): void {
 	});
 
 	/** 创建新草稿，默认文件名为当前时间 */
-	ipcMain.handle(ipcChannels.scratchPadCreate, async (): Promise<DraftMeta> => {
+	router.handle(ipcChannels.scratchPadCreate, async (): Promise<DraftMeta> => {
 		await ensureDraftsDir();
 		const name = generateDraftName();
 		const fullPath = join(draftsDir, name);
@@ -88,7 +89,7 @@ export function registerScratchPadIpc({ appLogger }: ScratchPadIpcDeps): void {
 	});
 
 	/** 删除指定草稿 */
-	ipcMain.handle(ipcChannels.scratchPadDelete, async (_event, draftPath: string): Promise<void> => {
+	router.handle(ipcChannels.scratchPadDelete, async (draftPath: string): Promise<void> => {
 		try {
 			// 草稿是用户内容：删除走系统回收站（可恢复）；回收站不可用时抛错，拒绝硬删。
 			await trashPath(draftPath, { source: "scratchPad:delete" });
@@ -103,7 +104,7 @@ export function registerScratchPadIpc({ appLogger }: ScratchPadIpcDeps): void {
 	});
 
 	/** 加载指定草稿内容，path 为空时返回空内容 */
-	ipcMain.handle(ipcChannels.scratchPadLoad, async (_event, draftPath?: string): Promise<ScratchPadData> => {
+	router.handle(ipcChannels.scratchPadLoad, async (draftPath?: string): Promise<ScratchPadData> => {
 		if (!draftPath) return { content: "", lastEditedAt: 0, cursorPosition: 0 };
 		try {
 			const content = await readFile(draftPath, "utf8");
@@ -115,14 +116,14 @@ export function registerScratchPadIpc({ appLogger }: ScratchPadIpcDeps): void {
 	});
 
 	/** 保存内容到指定草稿 */
-	ipcMain.handle(ipcChannels.scratchPadSave, async (_event, draftPath: string, content: string, cursorPosition: number) => {
+	router.handle(ipcChannels.scratchPadSave, async (draftPath: string, content: string, cursorPosition: number) => {
 		await ensureDraftsDir();
 		await writeFile(draftPath, content, "utf8");
 		void appLogger.info("scratchPad", "saved", { path: draftPath, bytes: Buffer.byteLength(content, "utf8"), cursorPosition });
 	});
 
 	/** 导出指定草稿到用户选择的路径 */
-	ipcMain.handle(ipcChannels.scratchPadExport, async (_event, draftPath?: string) => {
+	router.handle(ipcChannels.scratchPadExport, async (draftPath?: string) => {
 		if (!draftPath) return false;
 		const suggestedName = basename(draftPath);
 		const { canceled, filePath } = await dialog.showSaveDialog({

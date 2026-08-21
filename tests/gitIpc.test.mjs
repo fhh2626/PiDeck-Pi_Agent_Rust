@@ -6,7 +6,7 @@ const entry = readFileSync("src/main/index.ts", "utf8");
 const gitIpc = readFileSync("src/main/ipc/gitIpc.ts", "utf8");
 
 test("Git IPC is registered through one-way service dependencies", () => {
-  assert.match(entry, /registerGitIpc\(\{[\s\S]*appLogger,[\s\S]*gitService,[\s\S]*piLocator,[\s\S]*projectStore,[\s\S]*settingsStore,[\s\S]*worktreeService,[\s\S]*\}\)/);
+  assert.match(entry, /registerGitIpc\(router,\s*\{[\s\S]*appLogger,[\s\S]*gitService,[\s\S]*piLocator,[\s\S]*projectStore,[\s\S]*settingsStore,[\s\S]*worktreeService,[\s\S]*\}\)/);
   assert.doesNotMatch(entry, /ipcMain\.handle\(ipcChannels\.git/);
   assert.doesNotMatch(gitIpc, /from\s+["']\.\.\/index["']/);
 });

@@ -82,7 +82,7 @@ test("webview hardening is installed before the main window loads renderer conte
 });
 
 test("external browser IPC shares the HTTP(S) protocol gate and Chromium sandbox stays enabled", () => {
-	const browserOpenExternal = functionBlock(filesIpc, 'ipcMain.handle(ipcChannels.browserOpenExternal', "\n\n\tipcMain.handle(");
+	const browserOpenExternal = functionBlock(filesIpc, 'router.handle(ipcChannels.browserOpenExternal', "\n\n\trouter.handle(");
 	assert.match(browserOpenExternal, /await openExternalUrl\(url, true\)/);
 	assert.doesNotMatch(browserOpenExternal, /shell\.openExternal\(url\)/);
 	// Chromium 沙箱默认关闭是刻意的（Windows 安全软件/旧 GPU 驱动会在沙箱初始化触发原生断点），

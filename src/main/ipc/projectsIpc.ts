@@ -1,4 +1,4 @@
-import { dialog, ipcMain, type BrowserWindow } from "electron";
+import { dialog, type BrowserWindow } from "electron";
 import { ipcChannels } from "../../shared/ipc";
 import type { ProjectStore } from "../projects/ProjectStore";
 import type { SettingsStore } from "../settings/SettingsStore";
@@ -8,6 +8,7 @@ import type { AgentManager } from "../pi/AgentManager";
 import type { AppLogger } from "../logging/AppLogger";
 import type { ProjectResourceManager } from "../projects/ProjectResourceManager";
 import { registerProjectResourceIpc } from "./projectResourceIpc";
+import type { RpcRouter } from "../transport/RpcRouter";
 
 export type ProjectsIpcDeps = {
 	projectStore: ProjectStore;
@@ -36,28 +37,31 @@ export function listVisibleProjects(
 	));
 }
 
-export function registerProjectsIpc({
-	projectStore,
-	settingsStore,
-	gitService,
-	worktreeService,
-	agentManager,
-	appLogger,
-	projectResourceManager,
-	mainCopy,
-	getMainWindow,
-}: ProjectsIpcDeps): void {
+export function registerProjectsIpc(
+	router: RpcRouter,
+	{
+		projectStore,
+		settingsStore,
+		gitService,
+		worktreeService,
+		agentManager,
+		appLogger,
+		projectResourceManager,
+		mainCopy,
+		getMainWindow,
+	}: ProjectsIpcDeps,
+): void {
 	const getVisibleProjects = () => listVisibleProjects(projectStore, settingsStore);
 
-	ipcMain.handle(ipcChannels.projectsList, () => getVisibleProjects());
-	ipcMain.handle(ipcChannels.projectsAdd, async () => {
+	router.handle(ipcChannels.projectsList, () => getVisibleProjects());
+	router.handle(ipcChannels.projectsAdd, async () => {
 		const settings = settingsStore.get();
 		const env = settings.wslEnabled ? "wsl" as const : "windows" as const;
 		const project = await projectStore.chooseAndAdd(env);
 		void appLogger.info("project", "Project added", { projectId: project?.id, path: project?.path, environment: env });
 		return project;
 	});
-	ipcMain.handle(ipcChannels.projectsRemove, async (_event, id: string) => {
+	router.handle(ipcChannels.projectsRemove, async (id: string) => {
 		// 删除前拦截：项目仍有运行中的 Agent（pi 子进程）时禁止删除，避免进程悬挂后台继续占用资源。
 		if (agentManager.hasAgentForProject(id)) {
 			throw new Error("PROJECT_HAS_RUNNING_AGENT");
@@ -66,9 +70,9 @@ export function registerProjectsIpc({
 		void appLogger.info("project", "Project removed", { projectId: id });
 		return getVisibleProjects();
 	});
-	ipcMain.handle(
+	router.handle(
 		ipcChannels.projectsReorder,
-		async (_event, projectIds: string[]) => {
+		async (projectIds: string[]) => {
 			const result = await projectStore.reorder(projectIds);
 			void appLogger.info("project", "Projects reordered", { count: projectIds.length });
 			return getVisibleProjects();
@@ -77,20 +81,20 @@ export function registerProjectsIpc({
 
 	// ── Worktree 项目管理 ──
 
-	ipcMain.handle(ipcChannels.projectsListRoot, () => {
+	router.handle(ipcChannels.projectsListRoot, () => {
 		return projectStore.listRoot();
 	});
 
-	ipcMain.handle(
+	router.handle(
 		ipcChannels.projectsListWorktreeChildren,
-		async (_event, parentId: string) => {
+		async (parentId: string) => {
 			return projectStore.listWorktreeChildren(parentId);
 		},
 	);
 
-	ipcMain.handle(
+	router.handle(
 		ipcChannels.projectsToggleWorktreeEnabled,
-		async (_event, projectId: string) => {
+		async (projectId: string) => {
 			const existing = projectStore.get(projectId);
 			if (!existing) throw new Error(`Project not found: ${projectId}`);
 			// 即将启用时先校验是否 git 仓库；非 git 项目开启工作区模式没有意义，
@@ -123,7 +127,7 @@ export function registerProjectsIpc({
 
 	// ── 聊天项目目录设置 ──
 
-	ipcMain.handle(ipcChannels.projectsChooseChatPath, async () => {
+	router.handle(ipcChannels.projectsChooseChatPath, async () => {
 		// 系统文件选择器，默认定位到当前聊天目录，便于用户就地切换。
 		const result = await dialog.showOpenDialog({
 			title: mainCopy("dialog.chooseChatHistoryFolder"),
@@ -134,9 +138,9 @@ export function registerProjectsIpc({
 		return result.filePaths[0];
 	});
 
-	ipcMain.handle(
+	router.handle(
 		ipcChannels.projectsSetChatPath,
-		async (_event, path: string) => {
+		async (path: string) => {
 			if (typeof path !== "string" || path.length === 0) throw new Error("Invalid chat path");
 			const project = await projectStore.setChatProjectPath(path);
 			// 路径变更后广播项目列表变化，渲染端据此刷新聊天项目的会话。
@@ -147,7 +151,7 @@ export function registerProjectsIpc({
 		},
 	);
 
-	registerProjectResourceIpc({
+	registerProjectResourceIpc(router, {
 		appLogger,
 		projectResourceManager,
 	});
