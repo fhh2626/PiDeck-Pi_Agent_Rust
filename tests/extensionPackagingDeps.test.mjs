@@ -65,6 +65,9 @@ test("pideck-q-better-compaction keeps its relative runtime files in extraResour
 	assert.deepEqual(resource?.filter, ["**/*.ts", "LICENSE"]);
 	assert.equal(resource?.to, "extensions/pideck-q-better-compaction");
 	assert.ok(existsSync(join("resources", "extensions", "pideck-q-better-compaction", "extension-runtime.ts")));
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-better-compaction", "compaction.ts")));
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-better-compaction", "retained-oversize.ts")));
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-better-compaction", "prompts.ts")));
 	assert.ok(existsSync(join("resources", "extensions", "pideck-q-better-compaction", "LICENSE")));
 });
 

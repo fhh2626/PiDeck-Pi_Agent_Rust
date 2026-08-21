@@ -1,26 +1,54 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ResponsesSummaryResult } from "./compact-client";
-import type { ResponsesInputItem } from "./serializer";
+import {
+	isContextOverflow,
+	type AssistantMessage,
+	type Usage,
+} from "@earendil-works/pi-ai";
 
 export type ContextOverflowInfo = { promptTokens?: number; contextLimit?: number };
-export type PiSegmentResult =
-	| { ok: true; summary: string }
-	| { ok: false; reason: "aborted" | "context-overflow" | "failed"; errorMessage?: string; overflow?: ContextOverflowInfo };
+export type CompactionAttemptResult =
+	| { ok: true; summary: string; usage?: Usage }
+	| { ok: false; reason: "context-overflow"; overflow?: ContextOverflowInfo; errorMessage?: string }
+	| { ok: false; reason: "aborted" | "failed"; errorMessage?: string };
+
 export type OversizeRecoveryResult =
-	| { ok: true; summaryText: string }
+	| { ok: true; summaryText: string; usage?: Usage }
 	| { ok: false; reason: "aborted" | "failed"; errorMessage?: string };
 
 export type OversizeRecoveryOptions = {
-	initialOverflow: ContextOverflowInfo;
+	initialOverflow?: ContextOverflowInfo;
 	messages: AgentMessage[];
-	serializeMessages: (messages: AgentMessage[]) => ResponsesInputItem[];
-	attemptSummary: (input: ResponsesInputItem[]) => Promise<ResponsesSummaryResult>;
-	attemptPi: (messages: AgentMessage[]) => Promise<PiSegmentResult>;
+	attemptCompaction: (messages: AgentMessage[]) => Promise<CompactionAttemptResult>;
 	estimateMessageTokens: (message: AgentMessage) => number;
 	maxReductions?: number;
 	safetyRatio?: number;
 	onEvent?: (event: Record<string, unknown>) => void;
 };
+
+function sumUsage(acc: Usage | undefined, add: Usage | undefined): Usage | undefined {
+	if (!add) return acc;
+	if (!acc) return add;
+	return {
+		input: acc.input + add.input,
+		output: acc.output + add.output,
+		cacheRead: acc.cacheRead + add.cacheRead,
+		cacheWrite: acc.cacheWrite + add.cacheWrite,
+		...(acc.cacheWrite1h !== undefined || add.cacheWrite1h !== undefined
+			? { cacheWrite1h: (acc.cacheWrite1h ?? 0) + (add.cacheWrite1h ?? 0) }
+			: {}),
+		...(acc.reasoning !== undefined || add.reasoning !== undefined
+			? { reasoning: (acc.reasoning ?? 0) + (add.reasoning ?? 0) }
+			: {}),
+		totalTokens: acc.totalTokens + add.totalTokens,
+		cost: {
+			input: acc.cost.input + add.cost.input,
+			output: acc.cost.output + add.cost.output,
+			cacheRead: acc.cost.cacheRead + add.cost.cacheRead,
+			cacheWrite: acc.cost.cacheWrite + add.cost.cacheWrite,
+			total: acc.cost.total + add.cost.total,
+		},
+	};
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === "object" && !Array.isArray(value);
@@ -28,6 +56,82 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function positiveNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+const EXTRA_OVERFLOW_PATTERN =
+	/(exceed_context_size|context[_ -]?length[_ -]?exceeded|context size has been exceeded)/i;
+
+const EXTRA_NON_OVERFLOW_PATTERN =
+	/^(?:throttl\w*|service[ _-]?unavailable\w*)\b/i;
+
+const ZERO_USAGE: Usage = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		total: 0,
+	},
+};
+
+function normalizeCompactionError(text: string): string {
+	let value = text.trim();
+
+	for (let i = 0; i < 4; i++) {
+		const next = value
+			.replace(
+				/^(?:Turn prefix summarization failed|Summarization failed|Error):\s*/i,
+				"",
+			)
+			.trim();
+
+		if (next === value) break;
+		value = next;
+	}
+
+	return value;
+}
+
+function piRecognizesContextOverflow(text: string): boolean {
+	const errorMessage = normalizeCompactionError(text);
+	if (!errorMessage) return false;
+
+	if (EXTRA_NON_OVERFLOW_PATTERN.test(errorMessage)) {
+		return false;
+	}
+
+	const probe = {
+		role: "assistant",
+		content: [],
+		api: "openai-completions",
+		provider: "pi-better-compaction",
+		model: "overflow-probe",
+		usage: ZERO_USAGE,
+		stopReason: "error",
+		errorMessage,
+		timestamp: 0,
+	} satisfies AssistantMessage;
+
+	return isContextOverflow(probe);
+}
+
+function matchesContextOverflow(text: string): boolean {
+	const normalized = normalizeCompactionError(text);
+	if (!normalized) return false;
+
+	if (EXTRA_NON_OVERFLOW_PATTERN.test(normalized)) {
+		return false;
+	}
+
+	return (
+		EXTRA_OVERFLOW_PATTERN.test(normalized) ||
+		piRecognizesContextOverflow(normalized)
+	);
 }
 
 function inspectOverflowValue(value: unknown, seen: Set<unknown>): ContextOverflowInfo | undefined {
@@ -48,7 +152,7 @@ function inspectOverflowValue(value: unknown, seen: Set<unknown>): ContextOverfl
 					// Fall through to known plain-text overflow patterns.
 				}
 			}
-			if (!/(exceed_context_size|context[_ -]?length[_ -]?exceeded|context size has been exceeded)/i.test(text)) {
+			if (!matchesContextOverflow(text)) {
 				return undefined;
 			}
 			const counts = text.match(/request\s*\((\d+)\s*tokens\).*?context size\s*\((\d+)\s*tokens\)/i);
@@ -71,9 +175,14 @@ function inspectOverflowValue(value: unknown, seen: Set<unknown>): ContextOverfl
 
 	const code = [value.code, value.type, value.error_code].filter((entry) => typeof entry === "string").join(" ");
 	const message = typeof value.message === "string" ? value.message : "";
-	const directMatch = /(exceed_context_size|context[_ -]?length[_ -]?exceeded|context size has been exceeded)/i.test(
-		`${code} ${message}`,
-	);
+
+	const isKnownNonOverflowCode = EXTRA_NON_OVERFLOW_PATTERN.test(code);
+	const isKnownNonOverflowMessage = EXTRA_NON_OVERFLOW_PATTERN.test(normalizeCompactionError(message));
+	if (isKnownNonOverflowCode || isKnownNonOverflowMessage) {
+		return undefined;
+	}
+
+	const directMatch = matchesContextOverflow(`${code} ${message}`.trim());
 	if (directMatch) {
 		const promptTokens = positiveNumber(value.n_prompt_tokens ?? value.prompt_tokens);
 		const contextLimit = positiveNumber(value.n_ctx ?? value.context_length ?? value.context_limit);
@@ -96,11 +205,6 @@ export function parseContextOverflow(...values: unknown[]): ContextOverflowInfo 
 		if (result) return result;
 	}
 	return undefined;
-}
-
-export function getResponsesOverflow(result: Extract<ResponsesSummaryResult, { ok: false }>): ContextOverflowInfo | undefined {
-	if (result.reason !== "non-2xx" || result.status !== 400) return undefined;
-	return parseContextOverflow(result.responseJson, result.responseText, result.errorMessage);
 }
 
 export function createPortableSummaryMessage(summary: string): AgentMessage {
@@ -181,47 +285,36 @@ function splitForOverflow(
 export async function recoverOversizedCompaction(options: OversizeRecoveryOptions): Promise<OversizeRecoveryResult> {
 	const maxReductions = Math.max(1, options.maxReductions ?? 64);
 	let reductions = 0;
+	let usage: Usage | undefined;
 
 	const reduce = async (groups: AgentMessage[][], knownOverflow?: ContextOverflowInfo): Promise<OversizeRecoveryResult> => {
 		const messages = flattenGroups(groups);
 		let overflow = knownOverflow;
-		let piAttempted = false;
 
 		if (!overflow) {
-			const summaryResult = await options.attemptSummary(options.serializeMessages(messages));
+			const attempt = await options.attemptCompaction(messages);
 			options.onEvent?.({
-				event: "oversize-recovery.responses-summary-attempt",
-				ok: summaryResult.ok,
-				...(summaryResult.ok ? {} : { reason: summaryResult.reason, status: summaryResult.status }),
+				event: "oversize-recovery.compaction-attempt",
+				ok: attempt.ok,
+				...(attempt.ok ? {} : { reason: attempt.reason, errorMessage: attempt.errorMessage }),
 			});
-			if (summaryResult.ok) {
-				return { ok: true, summaryText: summaryResult.summaryText };
-			} else {
-				if (summaryResult.reason === "aborted") return { ok: false, reason: "aborted" };
-				overflow = getResponsesOverflow(summaryResult);
+			if (attempt.ok) {
+				usage = sumUsage(usage, attempt.usage);
+				return {
+					ok: true,
+					summaryText: attempt.summary,
+					...(usage ? { usage } : {}),
+				};
 			}
-		}
-
-		if (!overflow) {
-			piAttempted = true;
-			const piResult = await options.attemptPi(messages);
-			options.onEvent?.({ event: "oversize-recovery.pi-fallback", ok: piResult.ok, ...(piResult.ok ? {} : { reason: piResult.reason }) });
-			if (piResult.ok) return { ok: true, summaryText: piResult.summary };
-			if (piResult.reason === "aborted") return { ok: false, reason: "aborted" };
-			if (piResult.reason !== "context-overflow") return { ok: false, reason: "failed", errorMessage: piResult.errorMessage };
-			overflow = piResult.overflow ?? {};
+			if (attempt.reason === "aborted") return { ok: false, reason: "aborted" };
+			if (attempt.reason !== "context-overflow") {
+				return { ok: false, reason: "failed", errorMessage: attempt.errorMessage };
+			}
+			overflow = attempt.overflow ?? {};
 		}
 
 		let splittableGroups = groups;
 		let split = splitForOverflow(splittableGroups, overflow, options);
-		if (!split && !piAttempted) {
-			const piResult = await options.attemptPi(messages);
-			options.onEvent?.({ event: "oversize-recovery.pi-fallback", ok: piResult.ok, ...(piResult.ok ? {} : { reason: piResult.reason }) });
-			if (piResult.ok) return { ok: true, summaryText: piResult.summary };
-			if (piResult.reason === "aborted") return { ok: false, reason: "aborted" };
-			if (piResult.reason !== "context-overflow") return { ok: false, reason: "failed", errorMessage: piResult.errorMessage };
-			overflow = piResult.overflow ?? overflow;
-		}
 		if (!split && splittableGroups.length === 1) {
 			const chunks = createPortableChunks(splittableGroups[0]!, overflow);
 			if (chunks) {

@@ -6,11 +6,6 @@ export const EXTENSION_STORAGE_ID = "pideck-q-better-compaction";
 export const LEGACY_EXTENSION_STORAGE_ID = "pi-better-compaction";
 export const DEFAULT_ARTIFACT_ROOT = "~/.pi/agent/artifacts/pideck-q-better-compaction";
 export const REDACTED_VALUE = "[REDACTED]";
-/**
- * APIs the extension can summarize through a regular Responses request.
- * `responsesCompactApis` is retained as the configuration key for compatibility.
- */
-export const RESPONSES_COMPACT_CAPABLE_APIS = ["openai-responses", "openai-codex-responses"] as const;
 
 export const THINKING_LEVELS: readonly ThinkingLevel[] = [
 	"off",
@@ -35,23 +30,20 @@ export const MIN_COMPACT_RETRY_DELAY_MS = 0;
 /** Maximum retry delay between compaction attempts in ms. */
 export const MAX_COMPACT_RETRY_DELAY_MS = 10_000;
 
-export type DebugArtifactKind =
-	| "compact-response"
-	| "compaction-event"
-	| "lifecycle";
+export type DebugArtifactKind = "compaction-event" | "lifecycle";
 
 export type ExtensionConfig = {
 	enabled: boolean;
 	/**
-	 * "provider/model-id" used for native-method fallback compaction on non-Responses
-	 * APIs. Unset = current model via pi's default path.
+	 * Optional "provider/model-id" OVERRIDE for compaction. Unset / null /
+	 * unresolvable = the current chat model (ctx.model). It is a selector, not a
+	 * fallback: the configured model runs Pi's native compact() exactly like the
+	 * current one, and matching the current model is perfectly legal.
 	 */
 	compactionModel?: string;
-	/** Thinking level passed to pi's native compact() when the fallback model runs. */
+	/** Thinking level passed to pi's native compact() for every compaction pass. */
 	compactionThinkingLevel: ThinkingLevel;
-	/** Subset of Responses APIs that should use direct prompt-based summarization. */
-	responsesCompactApis: string[];
-	/** Per-attempt timeout for Responses summary and configured-model compact(). 0 = none. */
+	/** Per-attempt timeout for compact() (full pass and recovery segments). 0 = none. */
 	compactTimeoutMs: number;
 	/** Max attempts for the same original-path compaction call. */
 	compactMaxAttempts: number;
@@ -59,7 +51,6 @@ export type ExtensionConfig = {
 	compactRetryDelayMs: number;
 	notifyOnLoad: boolean;
 	debug: boolean;
-	logCompactResponses: boolean;
 	redactSensitiveData: boolean;
 	artifactRoot: string;
 };
@@ -74,7 +65,6 @@ export type LoadedExtensionConfig = {
 export type ArtifactPaths = {
 	rootDir: string;
 	sessionDir: string;
-	compactResponsesDir: string;
 	compactionDir: string;
 	lifecycleDir: string;
 };
@@ -110,13 +100,11 @@ export const DEFAULT_EXTENSION_CONFIG: ExtensionConfig = {
 	enabled: true,
 	compactionModel: undefined,
 	compactionThinkingLevel: "off",
-	responsesCompactApis: [...RESPONSES_COMPACT_CAPABLE_APIS],
 	compactTimeoutMs: MIN_COMPACT_TIMEOUT_MS,
 	compactMaxAttempts: MIN_COMPACT_MAX_ATTEMPTS,
 	compactRetryDelayMs: 1_500,
 	notifyOnLoad: false,
 	debug: false,
-	logCompactResponses: false,
 	redactSensitiveData: true,
 	artifactRoot: DEFAULT_ARTIFACT_ROOT,
 };

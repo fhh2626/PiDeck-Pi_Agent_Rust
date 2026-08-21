@@ -12,7 +12,6 @@ import {
 	MIN_COMPACT_MAX_ATTEMPTS,
 	MIN_COMPACT_RETRY_DELAY_MS,
 	MIN_COMPACT_TIMEOUT_MS,
-	RESPONSES_COMPACT_CAPABLE_APIS,
 	THINKING_LEVELS,
 	type ExtensionConfig,
 	type LoadedExtensionConfig,
@@ -125,28 +124,6 @@ function toThinkingLevel(value: unknown, fieldPath: string, warnings: string[]):
 	return undefined;
 }
 
-function toResponsesCompactApis(value: unknown, fieldPath: string, warnings: string[]): string[] | undefined {
-	if (value === undefined) return undefined;
-	if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-		warnings.push(`Ignoring ${fieldPath}: expected a string array.`);
-		return undefined;
-	}
-
-	const capable = new Set<string>(RESPONSES_COMPACT_CAPABLE_APIS);
-	const accepted: string[] = [];
-	for (const item of new Set(value.map((entry) => entry.trim()).filter(Boolean))) {
-		if (capable.has(item)) {
-			accepted.push(item);
-		} else {
-			warnings.push(
-				`Ignoring ${fieldPath} entry "${item}": only ${[...RESPONSES_COMPACT_CAPABLE_APIS].join(", ")} support direct Responses summarization.`,
-			);
-		}
-	}
-
-	return accepted;
-}
-
 /**
  * Load extension config from the renamed directory. When the new default path
  * is absent, the legacy path remains readable so existing users keep their settings.
@@ -155,7 +132,6 @@ export function loadExtensionConfig(configPath: string = CONFIG_PATH): LoadedExt
 	const warnings: string[] = [];
 	const resolved: ExtensionConfig = {
 		...DEFAULT_EXTENSION_CONFIG,
-		responsesCompactApis: [...DEFAULT_EXTENSION_CONFIG.responsesCompactApis],
 	};
 	let source: string | undefined;
 
@@ -167,8 +143,6 @@ export function loadExtensionConfig(configPath: string = CONFIG_PATH): LoadedExt
 		resolved.enabled = toBoolean(raw.enabled, "enabled", warnings) ?? resolved.enabled;
 		resolved.notifyOnLoad = toBoolean(raw.notifyOnLoad, "notifyOnLoad", warnings) ?? resolved.notifyOnLoad;
 		resolved.debug = toBoolean(raw.debug, "debug", warnings) ?? resolved.debug;
-		resolved.logCompactResponses =
-			toBoolean(raw.logCompactResponses, "logCompactResponses", warnings) ?? resolved.logCompactResponses;
 		resolved.redactSensitiveData =
 			toBoolean(raw.redactSensitiveData, "redactSensitiveData", warnings) ?? resolved.redactSensitiveData;
 
@@ -180,11 +154,6 @@ export function loadExtensionConfig(configPath: string = CONFIG_PATH): LoadedExt
 		resolved.compactionThinkingLevel =
 			toThinkingLevel(raw.compactionThinkingLevel, "compactionThinkingLevel", warnings) ??
 			resolved.compactionThinkingLevel;
-
-		const apis = toResponsesCompactApis(raw.responsesCompactApis, "responsesCompactApis", warnings);
-		if (apis !== undefined) {
-			resolved.responsesCompactApis = apis;
-		}
 
 		const timeoutMs = toInteger(raw.compactTimeoutMs, "compactTimeoutMs", warnings);
 		if (timeoutMs !== undefined) {
