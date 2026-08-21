@@ -3,7 +3,7 @@
  * Phase 3.7: extracted from src/main/index.ts registerIpc().
  */
 
-import type { BrowserWindow } from "electron";
+
 import { ipcChannels } from "../../shared/ipc";
 import { canonicalizeSessionPath } from "../../shared/sessionIdentity";
 import type {
@@ -77,7 +77,7 @@ export type SessionIpcDeps = {
 	appLogger: AppLogger;
 	terminalManager: TerminalSessionManager;
 	mainCopy: (key: string, params?: Record<string, string | number>) => string;
-	getMainWindow: () => BrowserWindow | null;
+	sendToRenderer: (channel: string, ...args: unknown[]) => void;
 	emitSessionRuntimeEvent: (agentId: string, channel: string, payload: unknown) => boolean;
 	emitSessionRuntimeDetach: (target: SessionRuntimeTarget) => void;
 	createAnonymousSession: (input: CreateAnonymousSessionInput) => Promise<CreateAnonymousSessionResult>;
@@ -120,7 +120,7 @@ export function registerSessionIpc(router: RpcRouter, deps: SessionIpcDeps): voi
 		appLogger,
 		terminalManager,
 		mainCopy,
-		getMainWindow,
+		sendToRenderer,
 		emitSessionRuntimeEvent,
 		emitSessionRuntimeDetach,
 		createAnonymousSession,
@@ -198,10 +198,7 @@ export function registerSessionIpc(router: RpcRouter, deps: SessionIpcDeps): voi
 			catalogScanCoordinator.schedule(projectId, async () => {
 				try {
 					await runScanAndMerge();
-					const window = getMainWindow();
-					if (window && !window.isDestroyed()) {
-						window.webContents.send(ipcChannels.sessionsCatalogRefreshed, { projectId });
-					}
+					sendToRenderer(ipcChannels.sessionsCatalogRefreshed, { projectId });
 				} catch (error) {
 					void appLogger.warn("session", "Background catalog scan failed", {
 						projectId,
@@ -347,10 +344,7 @@ export function registerSessionIpc(router: RpcRouter, deps: SessionIpcDeps): voi
 				}
 				await sessionCatalog.remove(sessionId);
 				void appLogger.info("session", "Catalog session deleted", { sessionId, filePath: entry.filePath });
-				const window = getMainWindow();
-				if (window && !window.isDestroyed()) {
-					window.webContents.send(ipcChannels.sessionsCatalogRefreshed, { projectId: entry.projectId });
-				}
+				sendToRenderer(ipcChannels.sessionsCatalogRefreshed, { projectId: entry.projectId });
 				return true;
 			} catch (error) {
 				// 会话删除失败（文件删除失败/记录移除失败/会话使用中拦截）也要留痕，便于事后追踪。

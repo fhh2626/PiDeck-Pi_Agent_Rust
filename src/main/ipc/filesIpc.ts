@@ -1,4 +1,3 @@
-import { dialog, shell, type BrowserWindow } from "electron";
 import { cp, readFile, rename as fsRename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { ipcChannels } from "../../shared/ipc";
@@ -8,13 +7,15 @@ import type { ProjectStore } from "../projects/ProjectStore";
 import type { SettingsStore } from "../settings/SettingsStore";
 import type { AppLogger } from "../logging/AppLogger";
 import type { RpcRouter } from "../transport/RpcRouter";
+import type { PlatformDialogs, PlatformShell } from "../platform/PlatformServices";
 
 export type FilesIpcDeps = {
 	fileSystemService: FileSystemService;
 	projectStore: ProjectStore;
 	settingsStore: SettingsStore;
 	appLogger: Pick<AppLogger, "info" | "error">;
-	getMainWindow: () => BrowserWindow | null;
+	dialogs: PlatformDialogs;
+	platformShell: Pick<PlatformShell, "openPath" | "showItemInFolder">;
 	openExternalUrl: (url: string, forceSystem?: boolean) => Promise<void>;
 	getAuthorizedRoots: () => string[];
 };
@@ -26,7 +27,8 @@ export function registerFilesIpc(
 		projectStore,
 		settingsStore,
 		appLogger,
-		getMainWindow,
+		dialogs,
+		platformShell,
 		openExternalUrl,
 		getAuthorizedRoots,
 	}: FilesIpcDeps,
@@ -75,7 +77,7 @@ export function registerFilesIpc(
 	};
 
 	router.handle(ipcChannels.dialogPickFiles, async (options?: { title?: string; includeDirectories?: boolean }) => {
-		const result = await dialog.showOpenDialog({
+		const result = await dialogs.showOpenDialog({
 			// 调用方传入经过 i18n 的标题；缺省时交由系统使用平台默认文案。
 			title: options?.title,
 			// Windows 上 openFile 与 openDirectory 并存会退化为「只选文件夹」（FOS_PICKFOLDERS），
@@ -83,6 +85,7 @@ export function registerFilesIpc(
 			properties: options?.includeDirectories
 				? ["openFile", "openDirectory", "multiSelections"]
 				: ["openFile", "multiSelections"],
+			parent: "none",
 		});
 		return result.canceled ? [] : result.filePaths;
 	});
@@ -94,15 +97,14 @@ export function registerFilesIpc(
 	});
 
 	router.handle(ipcChannels.filesOpen, async (path: string) => {
-		const error = await shell.openPath(authorizePath(path, "open"));
-		// Electron 通过返回字符串报告打开失败；显式抛出后前端才能提示路径不存在或系统无法打开。
-		if (error) throw new Error(error);
+		const result = await platformShell.openPath(authorizePath(path, "open"));
+		if (!result.ok) throw new Error(result.error);
 	});
 
 	router.handle(ipcChannels.filesShowInFolder, async (path: string) => {
 		// 回归修复（30b6954b 误删）：渲染层「在文件夹中显示」依赖此通道，
 		// 缺失时 invoke 会抛 No handler registered。WSL 路径先转 Windows 再定位。
-		shell.showItemInFolder(authorizePath(path, "show-in-folder"));
+		platformShell.showItemInFolder(authorizePath(path, "show-in-folder"));
 	});
 
 	router.handle(ipcChannels.browserOpenExternal, async (url: string) => {

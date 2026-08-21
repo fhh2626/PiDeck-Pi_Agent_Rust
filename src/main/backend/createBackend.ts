@@ -55,15 +55,18 @@ import type { Backend, CreateBackendOptions } from "./Backend";
 import { createSessionRuntimeBridge } from "./sessionRuntimeBridge";
 import { registerBackendRpc } from "./registerBackendRpc";
 import { startBackendStartupTasks } from "./backendStartupTasks";
+import { createTrashPath } from "../fs/trash";
 
 export async function createBackend(options: CreateBackendOptions): Promise<Backend> {
-	const { router, paths, appInfo, host } = options;
+	const { router, host, platform, runtime } = options;
+	const paths = platform.paths;
+	const appInfo = platform.application;
 
 	function currentMainProcessLocale(): MainProcessLocale {
 		const language = settingsStore.get().language;
 		if (language === "pseudo") return "en-US";
 		return normalizeMainProcessLocale(
-			language === "system" ? appInfo.locale : language,
+			language === "system" ? appInfo.getLocale() : language,
 		);
 	}
 
@@ -74,20 +77,45 @@ export async function createBackend(options: CreateBackendOptions): Promise<Back
 		return mainProcessT(currentMainProcessLocale(), key, params);
 	}
 
-	const projectStore = new ProjectStore(() => mainCopy("dialog.chooseProjectFolder"));
-	const fileSystemService = new FileSystemService();
-	const sessionScanner = new SessionScanner(mainCopy);
-	const codexSessionImporter = new CodexSessionImporter(mainCopy);
-	const claudeSessionImporter = new ClaudeSessionImporter(mainCopy);
-	const openCodeSessionImporter = new OpenCodeSessionImporter(mainCopy);
-	const settingsStore = new SettingsStore();
+	const appLogger = new AppLogger({
+		directory: join(paths.userData, "logs"),
+	});
+	setAppLogger(appLogger);
+	const rpcLogger = new RpcLogger({
+		directory: join(paths.userData, "logs", "rpc"),
+	});
+
+	const trashPath = createTrashPath({
+		trashItem: (p) => platform.shell.trashItem(p),
+		logger: appLogger,
+	});
+
+	const projectStore = new ProjectStore({
+		projectsFile: join(paths.userData, "projects.json"),
+		chatPathFile: join(paths.userData, "chat-path.json"),
+		defaultChatProjectPath: join(paths.userData, "chat-workspace"),
+	});
+	const fileSystemService = new FileSystemService(trashPath);
+	const sessionScanner = new SessionScanner(
+		mainCopy,
+		paths.home,
+		trashPath,
+		paths.downloads,
+		paths.userData,
+	);
+	const codexSessionImporter = new CodexSessionImporter(mainCopy, paths.home);
+	const claudeSessionImporter = new ClaudeSessionImporter(mainCopy, paths.home);
+	const openCodeSessionImporter = new OpenCodeSessionImporter(mainCopy, paths.home);
+	const settingsStore = new SettingsStore({
+		desktopSettingsFile: join(paths.userData, "settings.json"),
+		piAgentSettingsFile: join(paths.home, ".pi", "agent", "settings.json"),
+		getSystemLocale: () => appInfo.getLocale(),
+	});
 	const securityStore = new SecurityStore({
 		settingsStore,
 		log: (domain, message, details) => void appLogger?.info(domain, message, details),
+		userDataDir: paths.userData,
 	});
-	const appLogger = new AppLogger();
-	setAppLogger(appLogger);
-	const rpcLogger = new RpcLogger();
 
 	const usageStatsService = new UsageStatsService({
 		agentDir: join(paths.home, ".pi", "agent"),
@@ -96,33 +124,56 @@ export async function createBackend(options: CreateBackendOptions): Promise<Back
 			warn: (message) => void appLogger?.warn("usage-stats", message),
 		},
 	});
-	const gitService = new GitService();
-	const worktreeService = new WorktreeService(mainCopy);
-	const piLocator = new PiLocator(mainCopy);
-	const configManager = new ConfigManager(undefined, mainCopy);
+	const gitService = new GitService(trashPath);
+	const worktreeService = new WorktreeService(mainCopy, trashPath);
+	const piLocator = new PiLocator(mainCopy, paths.home);
+	const configManager = new ConfigManager(
+		join(paths.home, ".pi", "agent"),
+		mainCopy,
+		platform.fetch ?? globalThis.fetch,
+	);
 	const promptManager = new PromptManager(
-		undefined,
+		paths.home,
 		mainCopy,
 		() => settingsStore.get(),
 		(patch) => settingsStore.update(patch),
+		{
+			openPath: (p) => platform.shell.openPath(p),
+			trashPath,
+		},
 	);
-	const xuePromptManager = new XuePromptManager();
-	const skillManager = new SkillManager(undefined, mainCopy);
+	const wasmLocateDir = appInfo.isPackaged
+		? join(paths.resourcesPath, "app.asar.unpacked", "node_modules", "sql.js", "dist")
+		: join(paths.appPath, "node_modules", "sql.js", "dist");
+	const xuePromptManager = new XuePromptManager(
+		paths.home,
+		join(appInfo.isPackaged ? paths.resourcesPath : paths.appPath, appInfo.isPackaged ? "" : "resources", "xueprompts.db"),
+		wasmLocateDir,
+		appInfo.isPackaged,
+	);
+	const skillManager = new SkillManager(paths.home, mainCopy, {
+		openPath: (p) => platform.shell.openPath(p),
+		trashPath,
+	});
 	const extensionManager = new ExtensionManager(
 		piLocator,
 		() => settingsStore.get(),
 		() => settingsStore.get(),
 		(patch) => settingsStore.update(patch),
 		mainCopy,
+		trashPath,
 	);
 	const projectResourceManager = new ProjectResourceManager(
 		(projectId) => projectStore.get(projectId),
 		mainCopy,
+		trashPath,
 	);
+
+	let getSessionIdForAgent: ((agentId: string) => string | undefined) | undefined;
 
 	const agentManager = new AgentManager(
 		(id) => projectStore.get(id),
-		() => host.getMainWindow(),
+		(channel, ...args) => host.sendToRenderer(channel, ...args),
 		settingsStore,
 		configManager,
 		rpcLogger,
@@ -138,6 +189,16 @@ export async function createBackend(options: CreateBackendOptions): Promise<Back
 		securityStore,
 		// spawn pi 前预检并修复旧版私有头行或路径与 session header 粘连的损坏文件。
 		(filePath) => sessionScanner.repairCorruptSessionHeader(filePath),
+		(agentId) => getSessionIdForAgent?.(agentId),
+		{
+			appName: appInfo.name,
+			appPath: paths.appPath,
+			resourcesPath: paths.resourcesPath,
+			isPackaged: appInfo.isPackaged,
+			notifications: platform.notifications,
+			focusSessionFromNotification: (s) => host.focusSessionFromNotification(s),
+			hasLiveWindow: () => host.hasLiveWindow(),
+		},
 	);
 
 	// 声明 webServiceManager 变量，稍后在 sessionRuntimeCoordinator 初始化后挂载完整回调
@@ -149,6 +210,7 @@ export async function createBackend(options: CreateBackendOptions): Promise<Back
 	);
 
 	await settingsStore.load();
+	platform.application.hideApplicationMenu();
 	const initialSessionSettings = settingsStore.get();
 	const sessionCatalog = new SessionCatalog(
 		join(paths.userData, "session-catalog.json"),
@@ -185,6 +247,7 @@ export async function createBackend(options: CreateBackendOptions): Promise<Back
 		sendAgentPrompt,
 		appLogger,
 	);
+	getSessionIdForAgent = (agentId) => sessionRuntimeCoordinator.getSessionId(agentId);
 
 	const runtimeBridge = createSessionRuntimeBridge({
 		projectStore,
@@ -201,7 +264,7 @@ export async function createBackend(options: CreateBackendOptions): Promise<Back
 	});
 
 	webServiceManager = new WebServiceManager({
-		devRendererUrl: appInfo.devRendererUrl,
+		devRendererUrl: runtime?.devRendererUrl,
 		// 订阅 pi agent 事件流，供 Web SSE 端点转发给浏览器。
 		subscribePiEvents: (handler) => agentManager.addLocalEventListener(
 			(agentId, event) => handler(agentId, event as never),
@@ -426,12 +489,15 @@ export async function createBackend(options: CreateBackendOptions): Promise<Back
 		installationType: settingsStore.get().installationType,
 	});
 
-	await applyDesktopProxy(settingsStore.get());
+	await applyDesktopProxy(settingsStore.get(), platform.proxy);
 
 	const modelSpecsStore = new ModelSpecsStore(
 		appInfo.isPackaged
 			? join(paths.resourcesPath, "model-specs.db")
 			: join(paths.appPath, "resources", "model-specs.db"),
+		undefined,
+		wasmLocateDir,
+		appInfo.isPackaged,
 	);
 
 	const visionBridge = new VisionBridgeConfigManager(configManager);
@@ -442,12 +508,16 @@ export async function createBackend(options: CreateBackendOptions): Promise<Back
 		emitProgress: (progress) => {
 			host.sendToRenderer(ipcChannels.appUpdateProgress, progress);
 		},
+		platformApp: platform.application,
+		platformPaths: platform.paths,
+		platformShell: platform.shell,
+		platformDownloads: platform.downloads,
 	});
 
 	registerBackendRpc({
 		router,
 		host,
-		paths,
+		platform,
 		mainCopy,
 		getLocale: currentMainProcessLocale,
 		runtimeBridge,
@@ -493,7 +563,7 @@ export async function createBackend(options: CreateBackendOptions): Promise<Back
 		resolveSessionIdForAgent: (agentId: string) => sessionRuntimeCoordinator.getSessionId(agentId),
 		hasActiveStreaming: () => agentManager.hasActiveStreaming(),
 		startAfterWindowCreated: () => {
-			if (postWindowStarted) return;
+			if (postWindowStarted || disposed) return;
 			postWindowStarted = true;
 			startBackendStartupTasks({
 				paths,
@@ -516,9 +586,9 @@ export async function createBackend(options: CreateBackendOptions): Promise<Back
 		dispose: () => {
 			if (disposed) return;
 			disposed = true;
-			void webServiceManager.stop();
-			terminalManager.closeAll();
-			agentManager.stopAll();
+			webServiceManager?.stop().catch(() => undefined);
+			terminalManager?.closeAll();
+			agentManager?.stopAll();
 		},
 	};
 }

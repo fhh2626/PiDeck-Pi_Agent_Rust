@@ -110,3 +110,28 @@ test("TEST 11: Backend 暴露 resolveSessionIdForAgent，Shell 支持旧 agentId
 	assert.match(indexSource, /!sessionId && target\.agentId && backend/);
 	assert.match(indexSource, /sessionId = backend\.resolveSessionIdForAgent\(target\.agentId\);/);
 });
+
+test("TEST 12: settings.json, chat-workspace, and logs/rpc remain canonical paths", () => {
+	const indexSource = readFileSync("src/main/index.ts", "utf8");
+	const createBackendSource = readFileSync("src/main/backend/createBackend.ts", "utf8");
+	assert.match(indexSource, /readElectronChromiumSandboxPreference\([\s\S]*?"settings\.json"\)/);
+	assert.match(indexSource, /readSingleInstancePreference\([\s\S]*?"settings\.json"\)/);
+	assert.match(createBackendSource, /desktopSettingsFile:\s*join\(paths\.userData,\s*"settings\.json"\)/);
+	assert.match(createBackendSource, /defaultChatProjectPath:\s*join\(paths\.userData,\s*"chat-workspace"\)/);
+	assert.match(createBackendSource, /directory:\s*join\(paths\.userData,\s*"logs",\s*"rpc"\)/);
+});
+
+test("TEST 13: systemIpc delegates restart and window controls to host without process.exit bypass", () => {
+	const systemIpcSource = readFileSync("src/main/ipc/systemIpc.ts", "utf8");
+	assert.match(systemIpcSource, /restartApplication\(\)/);
+	assert.doesNotMatch(systemIpcSource, /process\.exit/);
+	assert.match(systemIpcSource, /mainWindowControls\.toggleAlwaysOnTop\(\)/);
+	assert.match(systemIpcSource, /mainWindowControls\.setZoomFactor\(/);
+	assert.match(systemIpcSource, /mainWindowControls\.notifyTitleBarChange\(/);
+});
+
+test("TEST 14: createTrashPath rejects when trash capability is unavailable", async () => {
+	const { createTrashPath } = await import("../src/main/fs/trash.ts");
+	const trashPath = createTrashPath({ trashItem: undefined });
+	await assert.rejects(() => trashPath("/some/path"), /Trash service unavailable/);
+});

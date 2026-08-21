@@ -1,5 +1,4 @@
 import { resolveNotificationSessionId } from "./agentUtils";
-import { app, type BrowserWindow, Notification } from "electron";
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
@@ -24,6 +23,11 @@ import type {
 import { ipcChannels } from "../../shared/ipc";
 import { PiProcess } from "./PiProcess";
 import { listActiveBuiltInExtensionPaths } from "../extensions/builtInExtensions";
+import type {
+	PlatformNotifications,
+	PlatformApplication,
+	PlatformPaths,
+} from "../platform/PlatformServices";
 import type { RpcResponse } from "./PiRpcClient";
 import { formatBashToolMessage } from "./bashResult";
 import type { MainProcessTranslationKey } from "../../shared/i18n/mainProcessCopy";
@@ -90,7 +94,18 @@ import {
 } from "../wsl/WslPaths";
 
 /** 项目信任确认弹窗的用户选择 */
+/** 项目信任确认弹窗的用户选择 */
 export type ProjectTrustChoice = "trust-remember" | "trust-session" | "deny";
+
+export interface AgentPlatformDeps {
+	appName: string;
+	appPath: string;
+	resourcesPath: string;
+	isPackaged: boolean;
+	notifications: PlatformNotifications;
+	focusSessionFromNotification: (sessionId?: string) => boolean;
+	hasLiveWindow?: () => boolean;
+}
 
 const SESSION_IDENTITY_RETRY_DELAYS_MS: readonly number[] = [0, 50, 100, 200];
 
@@ -342,7 +357,7 @@ export class AgentManager {
 
 	constructor(
 		private readonly getProject: (id: string) => Project | undefined,
-		private readonly getWindow: () => BrowserWindow | null,
+		private readonly sendToRenderer: (channel: string, ...args: unknown[]) => void,
 		private readonly settingsStore: SettingsStore,
 		private readonly configManager: ConfigManager,
 		private readonly rpcLogger?: RpcLogger,
@@ -367,6 +382,7 @@ export class AgentManager {
 		 * 只索引 record.id，而 tab.sessionId 是 pi 侧会话 id。
 		 */
 		private readonly resolveSessionId?: (agentId: string) => string | undefined,
+		private readonly platformDeps?: AgentPlatformDeps,
 	) {
 		this.messageProjector = new AgentMessageProjector({
 			translate: this.translate,
@@ -407,9 +423,9 @@ export class AgentManager {
 			resolveBuiltInExtensionPaths: (processSettings) =>
 				listActiveBuiltInExtensionPaths(
 					{
-						appPath: app.getAppPath(),
-						resourcesPath: process.resourcesPath,
-						isDev: !app.isPackaged,
+						appPath: this.platformDeps?.appPath ?? process.cwd(),
+						resourcesPath: this.platformDeps?.resourcesPath ?? process.cwd(),
+						isDev: this.platformDeps ? !this.platformDeps.isPackaged : true,
 					},
 					processSettings?.removedBuiltInExtensions ?? settings.removedBuiltInExtensions ?? [],
 				),
@@ -3994,11 +4010,10 @@ export class AgentManager {
 	 * 无窗口可用（如 headless）或 60 秒未响应时默认拒绝（安全优先）。
 	 */
 	private requestProjectTrust(cwd: string, projectName: string): Promise<ProjectTrustChoice> {
-		const requestId = randomUUID();
-		const win = this.getWindow();
-		if (!win || win.isDestroyed()) {
+		if (this.platformDeps?.hasLiveWindow && !this.platformDeps.hasLiveWindow()) {
 			return Promise.resolve<ProjectTrustChoice>("deny");
 		}
+		const requestId = randomUUID();
 		return new Promise<ProjectTrustChoice>((resolve) => {
 			const timer = setTimeout(() => {
 				if (this.pendingTrustRequests.delete(requestId)) {
@@ -4011,7 +4026,7 @@ export class AgentManager {
 					resolve(choice);
 				},
 			});
-			win.webContents.send(ipcChannels.projectsTrustRequest, { requestId, cwd, projectName });
+			this.sendToRenderer(ipcChannels.projectsTrustRequest, { requestId, cwd, projectName });
 		});
 	}
 
@@ -4968,33 +4983,30 @@ export class AgentManager {
 		try {
 			const settings = this.settingsStore.get();
 			if (!settings.enableNotifications) return;
-			if (!Notification.isSupported()) return;
+			if (!this.platformDeps?.notifications.isSupported()) return;
 			if (this.notifiedAskAgents.has(agentId)) return;
 			this.notifiedAskAgents.add(agentId);
 
-			const appName = app.getName();
+			const appName = this.platformDeps.appName || "PiDeck";
 			const title = sessionTitle || appName;
 			// 有具体提问内容时展示问题，否则退回通用文案（批量提问等无 title 场景）
 			const questionText = question.length > 60 ? `${question.slice(0, 60)}…` : question;
 			const body = questionText
 				? this.translate("mainNotification.askQuestion", { title, question: questionText })
 				: this.translate("mainNotification.askPending", { title });
-			const notification = new Notification({
+
+			this.platformDeps.notifications.show({
 				title: appName,
 				body,
 				silent: false,
-				// 自定义 toast XML：launch 携带 sessionId，点击后经 pideck:// 协议唤起应用并跳转对应会话
-				toastXml: this.buildToastXml(appName, body, sessionId),
+				activationUrl: sessionId ? `pideck://session/${sessionId}` : "pideck://",
+				onClick: () => {
+					this.focusMainWindowForSession(sessionId);
+				},
+				onFailed: (error) => {
+					void this.appLogger?.warn("agent", "Ask notification failed to show", { agentId, error: String(error) });
+				},
 			});
-			// 点击通知：聚焦主窗口并切换到对应会话（session-first，跳转按 SessionRecord.id）
-			notification.on("click", () => {
-				this.focusMainWindowForSession(sessionId);
-			});
-			notification.on("failed", (_event, error) => {
-				// Windows 拒绝显示 toast 时触发（show() 本身不抛异常），记 warn 便于排查
-				void this.appLogger?.warn("agent", "Ask notification failed to show", { agentId, error: String(error) });
-			});
-			notification.show();
 		} catch {
 			// 通知失败不影响主流程，静默处理
 		}
@@ -5010,31 +5022,28 @@ export class AgentManager {
 		try {
 			const settings = this.settingsStore.get();
 			if (!settings.enableNotifications) return;
-			if (!Notification.isSupported()) return;
+			if (!this.platformDeps?.notifications.isSupported()) return;
 
 			// 使用应用名称作为通知标题，在 Windows/macOS 通知中心中显示为应用标识
-			const appName = app.getName();
+			const appName = this.platformDeps.appName || "PiDeck";
 			const body = this.translate("mainNotification.sessionDone", { title: sessionTitle });
 			const resolveSessionId = this.resolveSessionId;
 			const sessionId = resolveNotificationSessionId(
 				resolveSessionId ? () => resolveSessionId(agentId) : undefined,
-				this.agents.get(agentId)?.tab.sessionId,
 			);
-			const notification = new Notification({
+
+			this.platformDeps.notifications.show({
 				title: appName,
 				body,
 				silent: false,
-				// 自定义 toast XML：launch 携带 sessionId，点击后经 pideck:// 协议唤起应用并跳转对应会话
-				toastXml: this.buildToastXml(appName, body, sessionId),
+				activationUrl: sessionId ? `pideck://session/${sessionId}` : "pideck://",
+				onClick: () => {
+					this.focusMainWindowForSession(sessionId);
+				},
+				onFailed: (error) => {
+					void this.appLogger?.warn("agent", "Session notification failed to show", { agentId, error: String(error) });
+				},
 			});
-			notification.on("click", () => {
-				this.focusMainWindowForSession(sessionId);
-			});
-			notification.on("failed", (_event, error) => {
-				// Windows 拒绝显示 toast 时触发（show() 本身不抛异常），记 warn 便于排查
-				void this.appLogger?.warn("agent", "Session notification failed to show", { agentId, error: String(error) });
-			});
-			notification.show();
 		} catch {
 			// 通知失败不影响主流程，静默处理
 		}
@@ -5047,16 +5056,11 @@ export class AgentManager {
 	 */
 	private focusMainWindowForSession(sessionId?: string) {
 		try {
-			const win = this.getWindow();
-			if (!win || win.isDestroyed()) {
-				void this.appLogger?.warn("agent", "Notification focus skipped: no main window", { sessionId });
-				return;
-			}
-			if (win.isMinimized()) win.restore();
-			if (!win.isVisible()) win.show();
-			win.focus();
-			if (sessionId) {
-				win.webContents.send(ipcChannels.appFocusSessionTarget, { sessionId });
+			if (this.platformDeps?.focusSessionFromNotification) {
+				const focused = this.platformDeps.focusSessionFromNotification(sessionId);
+				if (!focused) {
+					void this.appLogger?.warn("agent", "Notification focus skipped: no main window", { sessionId });
+				}
 			}
 		} catch (error) {
 			// 聚焦失败不影响主流程，静默处理
@@ -5071,19 +5075,7 @@ export class AgentManager {
 	 * 被唤起实例的 argv 携带协议 URL，主实例据此识别要跳转的会话。
 	 * sessionId 缺省时 launch 回退为 pideck:// 根地址（点击仅聚焦窗口）。
 	 */
-	private buildToastXml(title: string, body: string, sessionId?: string): string {
-		const esc = (s: string) =>
-			s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-		const launch = sessionId ? `pideck://session/${sessionId}` : "pideck://";
-		return `<toast activationType="protocol" launch="${launch}">
-  <visual>
-    <binding template="ToastGeneric">
-      <text>${esc(title)}</text>
-      <text>${esc(body)}</text>
-    </binding>
-  </visual>
-</toast>`;
-	}
+
 
 	/**
 	 * 安排一次消息 emit。流式高频事件走节流合并（同一 agent 50ms 内多次调用只 emit 一次最新数组）；
@@ -5462,9 +5454,7 @@ export class AgentManager {
 
 	private emit(channel: string, payload: unknown) {
 		for (const listener of this.outputListeners) listener(channel, payload);
-		const window = this.getWindow();
-		if (!window || window.isDestroyed()) return;
-		window.webContents.send(channel, payload);
+		this.sendToRenderer(channel, payload);
 	}
 
 	private emitLocalEvent(agentId: string, event: unknown, streamGeneration?: number) {

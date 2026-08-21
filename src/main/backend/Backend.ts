@@ -1,41 +1,29 @@
-import type { BrowserWindow } from "electron";
 import type { AppSettings } from "../../shared/types";
 import type { MainProcessTranslationKey } from "../../shared/i18n/mainProcessCopy";
 import type { AppLogger } from "../logging/AppLogger";
 import type { SettingsStore } from "../settings/SettingsStore";
 import type { RpcRouter } from "../transport/RpcRouter";
-
-export interface BackendPaths {
-	home: string;
-	userData: string;
-	appPath: string;
-	resourcesPath: string;
-}
-
-export interface BackendAppInfo {
-	version: string;
-	locale: string;
-	isPackaged: boolean;
-	devRendererUrl?: string;
-}
+import type { PlatformServices } from "../platform/PlatformServices";
+import type { MainWindowControls } from "../window/MainWindowControls";
 
 export interface BackendHost {
-	getMainWindow(): BrowserWindow | null;
+	mainWindowControls: MainWindowControls;
 	sendToRenderer(channel: string, ...args: unknown[]): void;
+	hasLiveWindow(): boolean;
 	openExternalUrl(url: string, forceSystem?: boolean): Promise<void>;
-	applyNativeThemeSource(settings: AppSettings): void;
 	refreshTrayContextMenu(): void;
 	takePendingFocusTarget(): { sessionId: string } | null;
-	readonly quittingState: {
-		value: boolean;
-	};
+	focusSessionFromNotification(sessionId?: string): boolean;
+	restartApplication: () => void;
 }
 
 export interface CreateBackendOptions {
 	router: RpcRouter;
-	paths: BackendPaths;
-	appInfo: BackendAppInfo;
+	platform: PlatformServices;
 	host: BackendHost;
+	runtime?: {
+		devRendererUrl?: string;
+	};
 }
 
 export interface Backend {

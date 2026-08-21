@@ -1,9 +1,3 @@
-/**
- * System IPC handlers: pi check/exec, WSL, model list, logging, config, app update, dev tools.
- * Phase 3.7: extracted from src/main/index.ts registerIpc().
- */
-
-import { app } from "electron";
 import type { RpcRouter } from "../transport/RpcRouter";
 import { ipcChannels } from "../../shared/ipc";
 import type { RpcLogEntry } from "../../shared/types/rpcLog";
@@ -36,7 +30,14 @@ import { getProcessSnapshot } from "../process/ProcessMonitor";
 import type { ProcessMetricsSnapshot } from "../../shared/types";
 import { getWslExe } from "../wsl/wslExe";
 import { listWebNetworkAddresses } from "../web/WebNetwork";
-import { toggleMainWindowDevTools } from "../devTools";
+import type { MainWindowControls } from "../window/MainWindowControls";
+import type {
+	PlatformApplication,
+	PlatformPaths,
+	PlatformProxy,
+	PlatformShell,
+	PlatformTheme,
+} from "../platform/PlatformServices";
 
 /**
  * IPC 边界校验：RPC 日志条目必须字段齐全，防止渲染层传伪造对象写盘。
@@ -68,7 +69,13 @@ export type SystemIpcDeps = {
 	) => Promise<SessionCommandResult<SessionRuntimeTarget | undefined>>;
 	/** 模型规格存储（resources/model-specs.db 只读，发版前由 sync-model-specs.mjs 同步） */
 	modelSpecsStore: ModelSpecsStore;
-	getMainWindow: () => Electron.BrowserWindow | null;
+	mainWindowControls: MainWindowControls;
+	platformApplication: PlatformApplication;
+	platformPaths: PlatformPaths;
+	platformShell: PlatformShell;
+	platformTheme: PlatformTheme;
+	toggleDevTools?: () => void;
+	sendToRenderer?: (channel: string, ...args: unknown[]) => void;
 	mainCopy: (key: string, params?: Record<string, string | number>) => string;
 	/** Check for app update; implemented by the update domain service. */
 	checkForAppUpdate: (installationType?: "portable" | "installed") => Promise<import("../../shared/types").AppUpdateInfo | null>;
@@ -94,7 +101,7 @@ export type SystemIpcDeps = {
 	/** Refresh tray context menu */
 	refreshTrayContextMenu?: () => void;
 	/** Notify title bar change */
-	notifyTitleBarChange?: (window: Electron.BrowserWindow) => void;
+	notifyTitleBarChange?: () => void;
 	/** Apply native theme source */
 	applyNativeThemeSource?: (settings: AppSettings) => void;
 	/** Apply desktop proxy settings */
@@ -115,6 +122,8 @@ export type SystemIpcDeps = {
 	configureXuePromptManagerWsl?: (env: import("../wsl/WslPaths").WslEnvironment | null) => void;
 	/** Session command IPC error converter */
 	sessionCommandIpcError?: (error: import("../../shared/types").SessionCommandError) => Error;
+	/** Restart the application */
+	restartApplication: () => void;
 	/** Extension manager for pi update */
 	extensionManager?: {
 		checkPiUpdate: () => Promise<import("../../shared/types").PiUpdateCheckResult>;
@@ -124,8 +133,6 @@ export type SystemIpcDeps = {
 	webServiceManager?: { stop: () => Promise<void> };
 	/** Terminal manager for restart */
 	terminalManager?: { closeAll: () => void };
-	/** Is quitting flag (for restart) */
-	isQuitting?: { value: boolean };
 	/** Releases URL */
 	RELEASES_URL?: string;
 };
@@ -141,7 +148,13 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 		rpcLogger,
 		sessionRuntimeCoordinator,
 		modelSpecsStore,
-		getMainWindow,
+		mainWindowControls,
+		platformApplication,
+		platformPaths,
+		platformShell,
+		platformTheme,
+		toggleDevTools,
+		sendToRenderer,
 		mainCopy,
 		checkForAppUpdate,
 		downloadUpdateAsset,
@@ -165,10 +178,8 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 		configureXuePromptManagerWsl,
 		sessionCommandIpcError,
 		extensionManager,
-		webServiceManager,
-		terminalManager,
-		isQuitting,
 		RELEASES_URL,
+		restartApplication,
 	} = deps;
 
 	// ── Pi 检测 ──────────────────────────────────────────────────────
@@ -281,30 +292,29 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 		}
 		try {
 			const { execFile } = await import("node:child_process");
-			const whoami = await new Promise<string>((resolve, reject) => {
-				execFile(wslExePath, ["-d", distro, "-u", user, "whoami"],
-					{ encoding: "utf8", timeout: 10_000, windowsHide: true, shell: wslShell },
-					(err, stdout) => {
-						if (err) { reject(err); return; }
-						resolve(stdout.trim());
-					});
-			});
-			let piVersion = "";
-			try {
-				piVersion = await new Promise<string>((resolve, reject) => {
-					execFile(wslExePath, ["-d", distro, "-u", user, "pi", "--version"],
+			const [whoamiRes, piVersionRes] = await Promise.all([
+				new Promise<string>((resolve, reject) => {
+					execFile(wslExePath, ["-d", distro, "-u", user, "whoami"],
 						{ encoding: "utf8", timeout: 10_000, windowsHide: true, shell: wslShell },
 						(err, stdout) => {
 							if (err) { reject(err); return; }
 							resolve(stdout.trim());
 						});
-				});
-			} catch { /* pi 未安装，piVersion 保持空 */ }
+				}),
+				new Promise<string>((resolve) => {
+					execFile(wslExePath, ["-d", distro, "-u", user, "pi", "--version"],
+						{ encoding: "utf8", timeout: 10_000, windowsHide: true, shell: wslShell },
+						(err, stdout) => {
+							if (err) { resolve(""); return; }
+							resolve(stdout.trim());
+						});
+				}),
+			]);
 			return {
 				ok: true,
-				whoami,
-				piVersion,
-				error: piVersion ? "" : mainCopy("wsl.piNotInstalled"),
+				whoami: whoamiRes,
+				piVersion: piVersionRes,
+				error: piVersionRes ? "" : mainCopy("wsl.piNotInstalled"),
 			};
 		} catch (err) {
 			void appLogger.warn("wsl", "WSL connection validation failed", {
@@ -323,6 +333,8 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 
 	// ── Pi 安装 / NPM ────────────────────────────────────────────────
 
+	const userHomeDir = platformPaths?.home ?? process.cwd();
+
 	router.handle(ipcChannels.piExecInstall, async (command: string): Promise<import("../../shared/types").PiInstallExecResult> => {
 		void appLogger.info("pi", "Executing install command", { command });
 		try {
@@ -334,7 +346,7 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 						process.env.ComSpec || "cmd.exe",
 						["/d", "/s", "/c", command],
 						{
-							cwd: app.getPath("home"),
+							cwd: userHomeDir,
 							timeout: 120_000,
 							// 复用 PiLocator 搜索目录拼 PATH：桌面端继承的注册表 PATH 不含版本管理器
 							// （mise/fnm/volta/scoop 等）在 shell 会话里动态注入的目录，终端可用而
@@ -359,7 +371,7 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 						"/bin/sh",
 						["-c", command],
 						{
-							cwd: app.getPath("home"),
+							cwd: userHomeDir,
 							timeout: 120_000,
 							env: { ...piLocator.createProcessEnv(), npm_config_fund: "false", npm_config_audit: "false" },
 							encoding: "utf8",
@@ -458,7 +470,7 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 	// ── 应用信息 ─────────────────────────────────────────────────────
 
 	router.handle(ipcChannels.appInfo, () => ({
-		version: app.getVersion(),
+		version: platformApplication?.version ?? "0.0.0",
 		releasesUrl: RELEASES_URL ?? "https://github.com/ayuayue/pi-desktop/releases",
 		platform: process.platform,
 	}));
@@ -466,7 +478,7 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 	router.handle(ipcChannels.appNetworkAddresses, () => listWebNetworkAddresses());
 
 	router.handle(ipcChannels.appPreferredSystemLanguages, () => {
-		try { return app.getPreferredSystemLanguages(); } catch { return []; }
+		return platformApplication?.getPreferredSystemLanguages?.() ?? [];
 	});
 
 	// ── 应用更新 ─────────────────────────────────────────────────────
@@ -522,7 +534,12 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 		await appLogger.log(safeLevel as AppLogLevel, scope, message, detail);
 	});
 	router.handle(ipcChannels.logsClear, async () => appLogger.clear());
-	router.handle(ipcChannels.logsOpenFolder, async () => appLogger.openFolder());
+	router.handle(ipcChannels.logsOpenFolder, async () => {
+		await appLogger.ensureDirectory();
+		if (platformShell) {
+			await platformShell.openPath(appLogger.getDirectory());
+		}
+	});
 	router.handle(ipcChannels.logsSize, async () => appLogger.getSize());
 
 	// ── RPC 日志 ─────────────────────────────────────────────────────
@@ -576,76 +593,25 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 		await doOpenExternalUrl(url, forceSystem);
 	});
 
-	router.handle(ipcChannels.appRestart, async () => {
-		if (isQuitting) isQuitting.value = true;
-		await webServiceManager?.stop();
-		terminalManager?.closeAll();
-		agentManager?.stopAll();
-		app.relaunch();
-		app.quit();
+	router.handle(ipcChannels.appRestart, () => {
+		restartApplication();
 	});
-
-	const mainWindow = getMainWindow();
 
 	router.handle(ipcChannels.appWindowMinimize, () => {
-		const win = getMainWindow();
-		if (!win || win.isDestroyed()) return;
-		win.minimize();
+		mainWindowControls.minimize();
 	});
-	/**
-	 * 最大化态以本进程跟踪为准，不用「调用后立刻 isMaximized()」。
-	 * Windows + 无边框上 maximize/unmaximize 后同步读 isMaximized() 常仍是旧值；
-	 * 若再把该旧值经 IPC/事件推回渲染层，会与按钮意图互踩 → 表现为要点两次。
-	 */
-	const wiredMaximizeWindows = new WeakSet<Electron.BrowserWindow>();
-	const maximizedByWindow = new WeakMap<Electron.BrowserWindow, boolean>();
-	const emitMaximizedState = (win: Electron.BrowserWindow, maximized: boolean) => {
-		if (win.isDestroyed()) return;
-		maximizedByWindow.set(win, maximized);
-		win.webContents.send(ipcChannels.appWindowMaximizedChanged, maximized);
-	};
-	const wireMaximizeEvents = (win: Electron.BrowserWindow) => {
-		if (wiredMaximizeWindows.has(win)) return;
-		wiredMaximizeWindows.add(win);
-		maximizedByWindow.set(win, win.isMaximized());
-		// 信事件名，不信事件回调里再读 isMaximized()（同一帧可能仍为旧值）。
-		win.on("maximize", () => emitMaximizedState(win, true));
-		win.on("unmaximize", () => emitMaximizedState(win, false));
-	};
-	const readMaximized = (win: Electron.BrowserWindow): boolean =>
-		maximizedByWindow.get(win) ?? win.isMaximized();
+
 	router.handle(ipcChannels.appWindowToggleMaximize, () => {
-		const win = getMainWindow();
-		if (!win || win.isDestroyed()) return false;
-		wireMaximizeEvents(win);
-		const nextMaximized = !readMaximized(win);
-		if (nextMaximized) win.maximize();
-		else win.unmaximize();
-		// 先写入意图态并推送：不依赖异步事件到达顺序，一次点击即可对齐图标。
-		emitMaximizedState(win, nextMaximized);
-		return nextMaximized;
+		return mainWindowControls.toggleMaximize();
 	});
 	router.handle(ipcChannels.appWindowIsMaximized, () => {
-		const win = getMainWindow();
-		if (!win || win.isDestroyed()) return false;
-		wireMaximizeEvents(win);
-		return readMaximized(win);
+		return mainWindowControls.getWindowState().isMaximized;
 	});
-	{
-		const win = getMainWindow();
-		if (win && !win.isDestroyed()) wireMaximizeEvents(win);
-	}
 	router.handle(ipcChannels.appWindowToggleAlwaysOnTop, () => {
-		const win = getMainWindow();
-		if (!win || win.isDestroyed()) return false;
-		const next = !win.isAlwaysOnTop();
-		win.setAlwaysOnTop(next, "floating");
-		return next;
+		return mainWindowControls.toggleAlwaysOnTop();
 	});
 	router.handle(ipcChannels.appWindowClose, () => {
-		const win = getMainWindow();
-		if (!win || win.isDestroyed()) return;
-		win.close();
+		mainWindowControls.close();
 	});
 
 	// ── 设置 ─────────────────────────────────────────────────────────
@@ -657,6 +623,8 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 		const settings = await settingsStore.update(patch);
 		// 设置变更审计已下沉到 SettingsStore.update 内部统一留痕（覆盖所有直写路径），此处不重复记录
 
+		platformApplication.hideApplicationMenu();
+
 		if (
 			"desktopProxyEnabled" in patch ||
 			"desktopProxyUrl" in patch ||
@@ -665,16 +633,20 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 			if (applyDesktopProxy) await applyDesktopProxy(settings);
 		}
 		if ("theme" in patch) {
-			if (applyNativeThemeSource) applyNativeThemeSource(settings);
+			if (patch.theme && (patch.theme === "system" || patch.theme === "light" || patch.theme === "dark")) {
+				platformTheme.setSource(patch.theme);
+			} else if (applyNativeThemeSource) {
+				applyNativeThemeSource(settings);
+			}
 		}
 		if ("language" in patch) {
 			if (refreshTrayContextMenu) refreshTrayContextMenu();
 		}
 		if ("useNativeTitleBar" in patch) {
-			if (notifyTitleBarChange) notifyTitleBarChange(getMainWindow()!);
+			mainWindowControls.notifyTitleBarChange(settings);
 		}
-		if ("zoomFactor" in patch) {
-			getMainWindow()?.webContents.setZoomFactor(settings.zoomFactor);
+		if ("zoomFactor" in patch && typeof settings.zoomFactor === "number") {
+			mainWindowControls.setZoomFactor(settings.zoomFactor);
 		}
 		if (
 			"webServiceEnabled" in patch ||
@@ -855,5 +827,11 @@ export function registerSystemIpc(router: RpcRouter, deps: SystemIpcDeps): void 
 
 	// ── 开发者控制台 ─────────────────────────────────────────────────
 
-	router.handle(ipcChannels.appToggleDevTools, () => toggleMainWindowDevTools(getMainWindow()));
+	router.handle(ipcChannels.appToggleDevTools, () => {
+		if (mainWindowControls) {
+			mainWindowControls.toggleDevTools();
+		} else {
+			toggleDevTools?.();
+		}
+	});
 }

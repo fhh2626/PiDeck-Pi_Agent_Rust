@@ -1,4 +1,3 @@
-import { dialog, type BrowserWindow } from "electron";
 import { ipcChannels } from "../../shared/ipc";
 import type { ProjectStore } from "../projects/ProjectStore";
 import type { SettingsStore } from "../settings/SettingsStore";
@@ -9,6 +8,13 @@ import type { AppLogger } from "../logging/AppLogger";
 import type { ProjectResourceManager } from "../projects/ProjectResourceManager";
 import { registerProjectResourceIpc } from "./projectResourceIpc";
 import type { RpcRouter } from "../transport/RpcRouter";
+import type { PlatformDialogs } from "../platform/PlatformServices";
+import {
+	normalizeSelectedWslProjectPath,
+	WslPathError,
+	type WslEnvironment,
+} from "../wsl/WslPaths";
+import { resolveWslEnvironment } from "../wsl/WslEnvironment";
 
 export type ProjectsIpcDeps = {
 	projectStore: ProjectStore;
@@ -19,7 +25,8 @@ export type ProjectsIpcDeps = {
 	appLogger: AppLogger;
 	projectResourceManager: ProjectResourceManager;
 	mainCopy: (key: string, params?: Record<string, string | number>) => string;
-	getMainWindow: () => BrowserWindow | null;
+	dialogs: PlatformDialogs;
+	sendToRenderer: (channel: string, ...args: unknown[]) => void;
 };
 
 /** PC 侧栏可见项目：始终包含 chat 项目，再按 WSL/Windows 环境过滤。 */
@@ -48,7 +55,8 @@ export function registerProjectsIpc(
 		appLogger,
 		projectResourceManager,
 		mainCopy,
-		getMainWindow,
+		dialogs,
+		sendToRenderer,
 	}: ProjectsIpcDeps,
 ): void {
 	const getVisibleProjects = () => listVisibleProjects(projectStore, settingsStore);
@@ -57,7 +65,31 @@ export function registerProjectsIpc(
 	router.handle(ipcChannels.projectsAdd, async () => {
 		const settings = settingsStore.get();
 		const env = settings.wslEnabled ? "wsl" as const : "windows" as const;
-		const project = await projectStore.chooseAndAdd(env);
+		let wslEnvironment: WslEnvironment | null = null;
+		if (env === "wsl") {
+			if (!settings.wslDistro) {
+				throw new WslPathError("INVALID_WSL_PATH", "The active WSL environment is unavailable.");
+			}
+			wslEnvironment = await resolveWslEnvironment(settings.wslDistro, settings.wslUser);
+			if (!wslEnvironment) {
+				throw new WslPathError("INVALID_WSL_PATH", "The active WSL environment is unavailable.");
+			}
+		}
+
+		const result = await dialogs.showOpenDialog({
+			title: mainCopy("dialog.chooseProjectFolder"),
+			...(env === "wsl" && wslEnvironment ? { defaultPath: wslEnvironment.windowsHome } : {}),
+			properties: ["openDirectory"],
+		});
+
+		if (result.canceled || result.filePaths.length === 0) return null;
+		let projectPath = result.filePaths[0];
+
+		if (env === "wsl" && wslEnvironment) {
+			projectPath = normalizeSelectedWslProjectPath(projectPath, wslEnvironment);
+		}
+
+		const project = await projectStore.add(projectPath, undefined, env);
 		void appLogger.info("project", "Project added", { projectId: project?.id, path: project?.path, environment: env });
 		return project;
 	});
@@ -129,10 +161,11 @@ export function registerProjectsIpc(
 
 	router.handle(ipcChannels.projectsChooseChatPath, async () => {
 		// 系统文件选择器，默认定位到当前聊天目录，便于用户就地切换。
-		const result = await dialog.showOpenDialog({
+		const result = await dialogs.showOpenDialog({
 			title: mainCopy("dialog.chooseChatHistoryFolder"),
 			defaultPath: projectStore.getChatProjectPath(),
 			properties: ["openDirectory"],
+			parent: "none",
 		});
 		if (result.canceled || result.filePaths.length === 0) return null;
 		return result.filePaths[0];
@@ -144,8 +177,7 @@ export function registerProjectsIpc(
 			if (typeof path !== "string" || path.length === 0) throw new Error("Invalid chat path");
 			const project = await projectStore.setChatProjectPath(path);
 			// 路径变更后广播项目列表变化，渲染端据此刷新聊天项目的会话。
-			const mainWindow = getMainWindow();
-			mainWindow?.webContents.send(ipcChannels.projectsChanged, getVisibleProjects());
+			sendToRenderer(ipcChannels.projectsChanged, getVisibleProjects());
 			void appLogger.info("project", "Chat project path updated", { path });
 			return project;
 		},

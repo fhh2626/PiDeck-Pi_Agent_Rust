@@ -20,10 +20,11 @@ import {
 	detectExternalEditors,
 	mergeDetectedExternalEditors,
 } from "../editors/EditorDetector";
-import type { BackendHost, BackendPaths } from "./Backend";
+import type { BackendHost } from "./Backend";
+import type { PlatformPaths } from "../platform/PlatformServices";
 
 export interface BackendStartupTasksDeps {
-	paths: BackendPaths;
+	paths: PlatformPaths;
 	host: BackendHost;
 	services: {
 		projectStore: ProjectStore;

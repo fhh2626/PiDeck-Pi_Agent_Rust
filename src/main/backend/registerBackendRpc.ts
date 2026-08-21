@@ -37,7 +37,7 @@ import type { WebServiceManager } from "../web/WebServiceManager";
 import type { createAppUpdateService } from "../update/AppUpdateService";
 import { RELEASES_URL } from "../update/AppUpdateService";
 import type { RpcRouter } from "../transport/RpcRouter";
-import type { BackendHost, BackendPaths } from "./Backend";
+import type { BackendHost } from "./Backend";
 import type { SessionRuntimeBridge } from "./sessionRuntimeBridge";
 import { registerUsageStatsIpc } from "../ipc/usageStatsIpc";
 import { registerEditorsIpc } from "../ipc/editorsIpc";
@@ -52,11 +52,15 @@ import { registerSystemIpc } from "../ipc/systemIpc";
 import { registerStoreIpc } from "../ipc/storeIpc";
 import { registerTerminalIpc } from "../ipc/terminalIpc";
 import { registerFilesIpc } from "../ipc/filesIpc";
+import type { PlatformServices } from "../platform/PlatformServices";
+import { resolveBackgroundsDir } from "../backgrounds/BackgroundPaths";
+import { BackgroundImageService } from "../backgrounds/BackgroundImageService";
+import { createTrashPath } from "../fs/trash";
 
 export interface RegisterBackendRpcDeps {
 	router: RpcRouter;
 	host: BackendHost;
-	paths: BackendPaths;
+	platform: PlatformServices;
 	mainCopy: (
 		key: MainProcessTranslationKey,
 		params?: Record<string, string | number>,
@@ -96,7 +100,8 @@ export interface RegisterBackendRpcDeps {
 }
 
 export function registerBackendRpc(deps: RegisterBackendRpcDeps): void {
-	const { router, host, paths, mainCopy, getLocale, runtimeBridge, services } = deps;
+	const { router, host, platform, mainCopy, getLocale, runtimeBridge, services } = deps;
+	const paths = platform.paths;
 	const {
 		projectStore,
 		fileSystemService,
@@ -134,11 +139,22 @@ export function registerBackendRpc(deps: RegisterBackendRpcDeps): void {
 	registerEditorsIpc(router, {
 		settingsStore,
 		appLogger,
-		getMainWindow: () => host.getMainWindow(),
+		dialogs: platform.dialogs,
+		openPath: platform.shell.openPath,
 	});
 
+	const backgroundsDir = resolveBackgroundsDir(paths.userData);
+	const backgroundImageService = new BackgroundImageService({
+		directory: backgroundsDir,
+		trashPath: createTrashPath({
+			trashItem: (p) => platform.shell.trashItem(p),
+			logger: appLogger,
+		}),
+		logger: appLogger,
+	});
 	registerBackgroundsIpc(router, {
-		getMainWindow: () => host.getMainWindow(),
+		backgroundImageService,
+		dialogs: platform.dialogs,
 	});
 
 	registerProjectsIpc(router, {
@@ -150,10 +166,19 @@ export function registerBackendRpc(deps: RegisterBackendRpcDeps): void {
 		appLogger,
 		projectResourceManager,
 		mainCopy: mainCopy as (key: string, params?: Record<string, string | number>) => string,
-		getMainWindow: () => host.getMainWindow(),
+		dialogs: platform.dialogs,
+		sendToRenderer: host.sendToRenderer,
 	});
 
-	registerScratchPadIpc(router, { appLogger });
+	registerScratchPadIpc(router, {
+		appLogger,
+		userDataDir: paths.userData,
+		trashPath: createTrashPath({
+			trashItem: (p) => platform.shell.trashItem(p),
+			logger: appLogger,
+		}),
+		dialogs: platform.dialogs,
+	});
 
 	// 安全管理：配置读写 + 会话等级覆盖（SecurityStore 负责持久化与策略快照）
 	registerSecurityIpc(router, {
@@ -181,7 +206,7 @@ export function registerBackendRpc(deps: RegisterBackendRpcDeps): void {
 		appLogger,
 		terminalManager,
 		mainCopy: mainCopy as (key: string, params?: Record<string, string | number>) => string,
-		getMainWindow: () => host.getMainWindow(),
+		sendToRenderer: host.sendToRenderer,
 		emitSessionRuntimeEvent: runtimeBridge.emitSessionRuntimeEvent,
 		emitSessionRuntimeDetach: runtimeBridge.emitSessionRuntimeDetach,
 		createAnonymousSession: runtimeBridge.createAnonymousSession,
@@ -252,7 +277,13 @@ export function registerBackendRpc(deps: RegisterBackendRpcDeps): void {
 		modelSpecsStore,
 		// 进程监控停止 agent：按 agentId 走完整会话停止链路（含 detach 推送）
 		stopAgentFromMonitor: runtimeBridge.stopAgentFromMonitor,
-		getMainWindow: () => host.getMainWindow(),
+		mainWindowControls: host.mainWindowControls,
+		platformApplication: platform.application,
+		platformPaths: platform.paths,
+		platformShell: platform.shell,
+		platformTheme: platform.theme,
+		toggleDevTools: () => host.mainWindowControls.toggleDevTools(),
+		sendToRenderer: host.sendToRenderer,
 		mainCopy: mainCopy as (key: string, params?: Record<string, string | number>) => string,
 		checkForAppUpdate: appUpdateService.checkForAppUpdate,
 		downloadUpdateAsset: appUpdateService.downloadUpdateAsset,
@@ -260,13 +291,15 @@ export function registerBackendRpc(deps: RegisterBackendRpcDeps): void {
 		openExternalUrl: host.openExternalUrl,
 		extensionManager,
 		// 设置变更副作用（代理 / 主题 / WSL / Web 服务）
-		applyDesktopProxy,
+		applyDesktopProxy: (settings) => applyDesktopProxy(settings, platform.proxy),
 		testPiProxy,
 		applyWebServiceSettings: (settings) => webServiceManager.applySettings(settings),
 		restartWebService: (settings) => webServiceManager.restart(settings),
-		applyNativeThemeSource: host.applyNativeThemeSource,
-		refreshTrayContextMenu: host.refreshTrayContextMenu,
-		notifyTitleBarChange: (window) => settingsStore.notifyTitleBarChange(window),
+		applyNativeThemeSource: (settings) => platform.theme.setSource(settings.theme === "system" || settings.theme === "light" || settings.theme === "dark" ? settings.theme : "system"),
+		refreshTrayContextMenu: () => host.refreshTrayContextMenu(),
+		notifyTitleBarChange: () => {
+			// Title bar change notification
+		},
 		setSessionCatalogIdentityContext: (ctx) => sessionCatalog.setIdentityContext(ctx),
 		resolveWslEnvironment: async (distro, user, logger) => {
 			const { resolveWslEnvironment: resolveWsl } = await import("../wsl/WslEnvironment");
@@ -281,9 +314,9 @@ export function registerBackendRpc(deps: RegisterBackendRpcDeps): void {
 		configureXuePromptManagerWsl: (env) => xuePromptManager.configureWsl(env),
 		sessionCommandIpcError: runtimeBridge.sessionCommandIpcError,
 		// 重启路径需要同步 isQuitting / 停服务，避免 closeToTray 吞掉 relaunch
+		restartApplication: host.restartApplication,
 		webServiceManager,
 		terminalManager,
-		isQuitting: host.quittingState,
 		RELEASES_URL,
 	});
 
@@ -326,7 +359,8 @@ export function registerBackendRpc(deps: RegisterBackendRpcDeps): void {
 		projectStore,
 		settingsStore,
 		appLogger,
-		getMainWindow: () => host.getMainWindow(),
+		dialogs: platform.dialogs,
+		platformShell: platform.shell,
 		openExternalUrl: host.openExternalUrl,
 		getAuthorizedRoots: () => [
 			...projectStore.list().map((project) => project.path),

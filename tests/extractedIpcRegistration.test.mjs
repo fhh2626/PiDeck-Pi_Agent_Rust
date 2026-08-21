@@ -8,7 +8,7 @@ const sessionIpc = readFileSync("src/main/ipc/sessionIpc.ts", "utf8");
 const scratchPadIpc = readFileSync("src/main/ipc/scratchPadIpc.ts", "utf8");
 
 test("extracted session and scratch-pad IPC modules remain registered by the backend", () => {
-  assert.match(registerBackendRpc, /registerScratchPadIpc\(router,\s*\{\s*appLogger,?\s*\}\)/);
+  assert.match(registerBackendRpc, /registerScratchPadIpc\(router,\s*\{/);
   assert.match(
     registerBackendRpc,
     /registerSessionIpc\(router,\s*\{[\s\S]*projectStore,[\s\S]*settingsStore,[\s\S]*sessionScanner,[\s\S]*sessionCatalog,[\s\S]*sessionRuntimeCoordinator,[\s\S]*agentManager,[\s\S]*configManager,[\s\S]*terminalManager,[\s\S]*replaceAgentSession,[\s\S]*\}\)/,

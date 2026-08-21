@@ -18,7 +18,8 @@ import {
 import {
 	readElectronChromiumSandboxPreference,
 	readSingleInstancePreference,
-} from "./settings/SettingsStore";
+} from "./settings/startupPreferences";
+import { createWindowOptions } from "./window/windowOptions";
 import { acquireVersionSingleInstance, type FocusPayload } from "./singleInstance";
 import { extractFocusTargetFromArgv } from "./utils/focusTarget";
 import type { AppLogLevel, AppSettings, StartupWindowMode } from "../shared/types";
@@ -26,6 +27,10 @@ import { ipcChannels } from "../shared/ipc";
 // 使用 ?asset 后缀导入图标，electron-vite 会在构建时将其复制到输出目录并提供正确的运行时路径
 // 这解决了打包后 build/ 目录不在 asar 中导致托盘图标丢失的问题
 import iconPath from "../../build/icon.png?asset";
+import { registerBackgroundImageProtocol } from "./platform/electron/backgroundImageProtocol";
+import { resolveBackgroundsDir } from "./backgrounds/BackgroundPaths";
+import { createElectronPlatformServices } from "./platform/electron/createElectronPlatformServices";
+import { createElectronMainWindowControls } from "./window/MainWindowControls";
 
 // 构建标记：npm run dist:win:dev 打包时由 vite define 注入 true（构建期替换，非运行时环境变量）。
 declare const __PIDECK_DEV_BUILD__: boolean;
@@ -54,7 +59,9 @@ applyLinuxDisplayBackendWorkaround();
 // Chromium 沙箱开关必须在 app.ready 前生效。
 // 默认关闭：Windows 上部分安全软件/旧 GPU 驱动会在沙箱初始化时触发原生断点（0x80000003）。
 // 用户可在「开发设置」中开启 electronChromiumSandbox，重启后走 Chromium 默认沙箱。
-const electronChromiumSandboxEnabled = readElectronChromiumSandboxPreference();
+const electronChromiumSandboxEnabled = readElectronChromiumSandboxPreference(
+	join(app.getPath("userData"), "settings.json"),
+);
 if (!electronChromiumSandboxEnabled) {
 	// 关闭沙箱时显式附带 no-sandbox，避免部分环境仍按默认策略启用。
 	app.commandLine.appendSwitch("no-sandbox");
@@ -87,7 +94,9 @@ if (app.isPackaged) {
 // focus 回调稍后挂到 focusMainWindow（定义在文件后部），避免顶层 TDZ。
 // payload 携带次实例的 argv，可解析「点击系统通知」激活时携带的跳转目标。
 let focusExistingWindow: ((payload?: FocusPayload) => void) | null = null;
-const singleInstanceEnabled = readSingleInstancePreference();
+const singleInstanceEnabled = readSingleInstancePreference(
+	join(app.getPath("userData"), "settings.json"),
+);
 const versionSingleInstance = acquireVersionSingleInstance(
 	singleInstanceEnabled,
 	app.getVersion(),
@@ -127,7 +136,6 @@ process.on("unhandledRejection", (reason) => {
 
 import { readLastWindowBounds, saveLastWindowBounds } from "./windowState";
 import { createRendererCrashRecoveryGuard } from "./window/rendererCrashRecovery";
-import { registerBackgroundImageProtocol } from "./ipc/backgroundsIpc";
 import { registerElectronPreloadLifecycleIpc } from "./ipc/electronPreloadLifecycleIpc";
 import { ElectronRpcRouter } from "./transport/ElectronRpcRouter";
 import { configureBrowserPanelWebviewHost } from "./browser/browserPanelWebviewHost";
@@ -362,7 +370,7 @@ async function prepareMainPreloadPath() {
 async function createWindow() {
 	if (!backend) return;
 	applyNativeThemeSource(backend.settingsStore.get());
-	const windowOptions = backend.settingsStore.createWindowOptions();
+	const windowOptions = createWindowOptions(backend.settingsStore.get());
 	const showMainWindowImmediately = shouldShowMainWindowImmediately();
 	const sourcePreloadPath = join(__dirname, "../preload/index.js");
 	const mainPreloadPath = await prepareMainPreloadPath();
@@ -648,49 +656,55 @@ protocol.registerSchemesAsPrivileged([
 	{ scheme: "pideck-bg", privileges: { secure: true, standard: true, corsEnabled: false, supportFetchAPI: true, stream: false } },
 ]);
 
+function focusSessionFromNotification(sessionId?: string): boolean {
+	if (!mainWindow || mainWindow.isDestroyed()) return false;
+	if (mainWindow.isMinimized()) mainWindow.restore();
+	if (!mainWindow.isVisible()) mainWindow.show();
+	mainWindow.focus();
+	if (sessionId) {
+		mainWindow.webContents.send(ipcChannels.appFocusSessionTarget, { sessionId });
+	}
+	return true;
+}
+
+function hasLiveWindow(): boolean {
+	return Boolean(mainWindow && !mainWindow.isDestroyed());
+}
+
 app.whenReady().then(async () => {
 	// 未拿到同版本主实例锁时不要继续初始化，避免第二进程短暂闪窗。
 	if (singleInstanceEnabled && !gotSingleInstanceLock) return;
 
-	registerBackgroundImageProtocol();
+	const backgroundDirectory = resolveBackgroundsDir(app.getPath("userData"));
+	registerBackgroundImageProtocol(backgroundDirectory);
 
 	const router = new ElectronRpcRouter(ipcMain);
 
+	const platformServices = createElectronPlatformServices({
+		getMainWindow: () => mainWindow,
+	});
+
 	backend = await createBackend({
 		router,
-		paths: {
-			home: app.getPath("home"),
-			userData: app.getPath("userData"),
-			appPath: app.getAppPath(),
-			resourcesPath: process.resourcesPath,
-		},
-		appInfo: {
-			version: app.getVersion(),
-			locale: app.getLocale(),
-			isPackaged: app.isPackaged,
+		platform: platformServices,
+		runtime: {
 			devRendererUrl: shouldUseDevRendererUrl()
 				? process.env.ELECTRON_RENDERER_URL
 				: undefined,
 		},
 		host: {
-			getMainWindow: () => mainWindow,
+			mainWindowControls: createElectronMainWindowControls(() => mainWindow),
 			sendToRenderer,
+			hasLiveWindow,
 			openExternalUrl,
-			applyNativeThemeSource,
 			refreshTrayContextMenu,
+			restartApplication: restartApp,
 			takePendingFocusTarget: () => {
 				const target = pendingFocusTarget;
 				pendingFocusTarget = null;
 				return target;
 			},
-			quittingState: {
-				get value() {
-					return isQuitting;
-				},
-				set value(next: boolean) {
-					isQuitting = next;
-				},
-			},
+			focusSessionFromNotification,
 		},
 	});
 

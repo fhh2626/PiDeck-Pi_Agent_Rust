@@ -76,7 +76,8 @@ test("sensitive operations leave audit traces", () => {
   assert.match(piProcess, /getAppLogger\(\)\?\.error\("pi-process", "Spawn error \(pre-listener sink\)"/);
   assert.match(piProcess, /getAppLogger\(\)\?\.debug\("pi-process", "Pi process spawn"/);
   // 背景图删除留痕
-  assert.match(backgroundsIpc, /getAppLogger\(\)\?\.info\("backgrounds", "Background image removed", \{ name \}\)/);
+  const bgService = read("main/backgrounds/BackgroundImageService.ts");
+  assert.match(bgService, /"Background image removed", \{ name \}/);
   // 会话级安全级别变更留痕（含 from/to）
   assert.match(securityStore, /"Session security level changed", \{\s*sessionId,\s*from: prev,\s*to:/);
 });

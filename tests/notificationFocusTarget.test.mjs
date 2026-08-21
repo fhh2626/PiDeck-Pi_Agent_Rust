@@ -7,29 +7,19 @@ import test from "node:test";
 // renderer 的 sessionRecordByIdAtomFamily 只按 SessionRecord.id 索引，两套 id
 // 不一致（见 index.ts attachRuntime 的 sessionId/piSessionId 双字段），
 // 导致通知点击后 record 解析永远失败，仅完成窗口激活。
-// 修复：通知跳转目标统一用 record.id（coordinator 绑定维护），piSessionId 仅兜底。
+// 修复：通知跳转目标只使用 coordinator 维护的 record.id；缺少稳定身份时只聚焦应用根页。
 
 const RECORD_ID = "11111111-2222-3333-4444-555555555555";
-const PI_SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 
-test("resolveNotificationSessionId prefers record id over pi session id", async () => {
+test("resolveNotificationSessionId only returns a stable record id", async () => {
   const { resolveNotificationSessionId } = await import(
     "../src/main/pi/agentUtils.ts"
   );
-  // record.id 解析成功：用 record.id（renderer 能索引到会话）
-  assert.equal(
-    resolveNotificationSessionId(() => RECORD_ID, PI_SESSION_ID),
-    RECORD_ID,
-  );
-  // coordinator 未绑定（resolver 返回 undefined）：兜底 pi session id（旧 toast 格式）
-  assert.equal(
-    resolveNotificationSessionId(() => undefined, PI_SESSION_ID),
-    PI_SESSION_ID,
-  );
-  // 无 resolver（AgentManager 未注入）：直接用 pi session id
-  assert.equal(resolveNotificationSessionId(undefined, PI_SESSION_ID), PI_SESSION_ID);
-  // 两者皆缺：undefined（通知只聚焦窗口，不跳转）
-  assert.equal(resolveNotificationSessionId(undefined, undefined), undefined);
+  // record.id 解析成功：renderer 能按稳定身份索引会话。
+  assert.equal(resolveNotificationSessionId(() => RECORD_ID), RECORD_ID);
+  // coordinator 尚未绑定或未注入 resolver 时，不得把 pi session id 当作 record.id。
+  assert.equal(resolveNotificationSessionId(() => undefined), undefined);
+  assert.equal(resolveNotificationSessionId(undefined), undefined);
 });
 
 // 契约断言：notifySessionEnd 必须走 resolveNotificationSessionId（不再直接取 tab.sessionId）
