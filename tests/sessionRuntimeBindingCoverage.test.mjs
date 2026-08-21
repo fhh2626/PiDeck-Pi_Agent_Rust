@@ -30,6 +30,15 @@ const toolCards = readFileSync(
   "src/renderer/src/components/session/ToolCallComponents.tsx",
   "utf8",
 );
+const askResultCard = readFileSync(
+  "src/renderer/src/components/session/AskQuestionResultCard.tsx",
+  "utf8",
+);
+const webTimeline = readFileSync(
+  "src/renderer/src/web/WebTimeline.tsx",
+  "utf8",
+);
+const webChatApp = readFileSync("src/renderer/src/web/WebChatApp.tsx", "utf8");
 
 test("catalog scans attach matching existing runtimes in the main process", () => {
   assert.match(coordinator, /attachCatalogRuntimes\(/);
@@ -50,7 +59,8 @@ test("Ask Question keeps normalized batch requests pending for the session respo
   assert.match(agentManager, /hasCustomOption/);
   assert.match(agentManager, /option\.startsWith\("✎"\)/);
   assert.match(agentManager, /allowOther: typed\.allowOther === true \|\| hasCustomOption/);
-  assert.match(agentManager, /questions: batchQuestions/);
+  // AgentManager 把解析出的批量表单原样放进 batch_ask 请求的 batchQuestions 字段
+  assert.match(agentManager, /batchQuestions: batchEnvelope\.questions/);
 });
 
 test("session UI requests remain generation-bound and render in the timeline footer", () => {
@@ -64,8 +74,16 @@ test("session UI requests remain generation-bound and render in the timeline foo
   assert.doesNotMatch(composer, /runtimeUi/);
   assert.match(timeline, /className="session-runtime-ui mx-auto w-full/);
   assert.doesNotMatch(timeline, /session-runtime-ui sticky bottom-0/);
-  assert.match(toolCards, /ask-question-card-result-list/);
-  assert.match(toolCards, /askCard\.questions/);
+  // 已完成 ask_question 渲染为常驻 AskQuestionResultCard（批量逐题展示）；
+  // 普通 ToolCard 只保留 running / 损坏 ask 的图标与副标题（askCard.question）。
+  assert.match(askResultCard, /result\.questions/);
+  assert.match(askResultCard, /AskQuestionResultCard/);
+  assert.match(toolCards, /isAskCard/);
+  // Web 端复用 SessionRuntimeUiOverlay 作为 pending 卡，并通过 props 接线。
+  assert.match(webTimeline, /<SessionRuntimeUiOverlay/);
+  assert.match(webChatApp, /pendingUiRequest=/);
+  assert.match(webChatApp, /onRespondUi=/);
+  assert.doesNotMatch(webTimeline, /function WebAskCard\(/);
 });
 
 test("Web wiring is Session-first and exposes no Agent compatibility creation", () => {

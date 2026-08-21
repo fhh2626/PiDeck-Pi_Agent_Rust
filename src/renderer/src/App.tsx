@@ -61,6 +61,8 @@ import { detectRendererPlatform } from "./lib/detectRendererPlatform";
 import { usePiUpdate } from "./hooks/usePiUpdate";
 import { useAppUpdateController } from "./hooks/useAppUpdateController";
 import { useProjectSync } from "./hooks/useProjectSync";
+import { useProjectCommands } from "./hooks/useProjectCommands";
+import { useSessionMessageCommands } from "./hooks/useSessionMessageCommands";
 import {
   agentInventoryAtom,
   applySessionRuntimeEventAtom,
@@ -112,6 +114,7 @@ import { useScratchPad } from "./hooks/useScratchPad";
 import { useWorktreeActions } from "./hooks/useWorktreeActions";
 import { ChatSessionPane } from "./components/session/ChatSessionPane";
 import { SessionSplitStage } from "./components/session/SessionSplitStage";
+import { canStopBoundAgent } from "./utils/canStopBoundAgent";
 import { splitLayoutSessionIds } from "./utils/sessionSplitEdge";
 import { SessionTabsBar } from "./components/session/SessionTabsBar";
 import { SessionPaneServicesProvider } from "./components/session/SessionPaneServices";
@@ -156,7 +159,6 @@ import type {
   AgentTab,
   AppInfo,
   AppSettings,
-  ChatMessage,
   FileTreeNode,
   ImageContent,
   PiCommand,
@@ -372,15 +374,16 @@ export function App() {
     worktreesByProject,
     branchByProject,
     files,
-    setFiles,
     gitInfo,
     setGitInfo,
+    setProjectBranch,
     setSessionLoadingByProject,
     setVisibleProjectChildCountByProject,
     refreshProjects,
     refreshWorktrees,
     refreshProjectSessions,
     refreshFiles,
+    refreshGitInfo,
     refreshProjectTree,
   } = useProjectSync({
     projects,
@@ -559,7 +562,7 @@ export function App() {
     fontFamilyBaseCustom: "",
     fontFamilyMono: "system-mono",
     fontFamilyMonoCustom: "",
-    removedBuiltInExtensions: ["pi-better-compaction.ts"],
+    removedBuiltInExtensions: ["pideck-q-better-compaction.ts"],
     hiddenBuiltinPromptNames: [],
     disableUpdateCheck: false,
     piRpcOffline: true,
@@ -656,7 +659,6 @@ export function App() {
     return { kind: "project", projectId: project.id, cwd: project.path };
   }, [terminalOwner, currentSessionId, projects]);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
-  const [, setBranchByProject] = useState<Record<string, string | null>>({});
   const [expandedSidebarProjects, setExpandedSidebarProjects] = useState<Set<string>>(new Set());
   const expandedSidebarProjectsRef = useRef(expandedSidebarProjects);
   expandedSidebarProjectsRef.current = expandedSidebarProjects;
@@ -1647,11 +1649,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!activeProjectId) {
-      setFiles([]);
-      setGitInfo({ current: null, branches: [] });
-      return;
-    }
+    if (!activeProjectId) return;
 
     // 切换项目时按 catalog load state 判断。空项目成功返回 [] 后也会是 ready，
     // 不能再用列表长度，否则每次选中都会重扫。
@@ -1660,44 +1658,17 @@ export function App() {
     if (expandedProjectsReady && activeProject && expandedProjects.has(activeProjectId) && loadState?.status !== "loading" && loadState?.status !== "ready") {
       void refreshProjectSessions(activeProjectId).catch(() => undefined);
     }
-
-    setExpandedDirs(new Set());
-    void api.files
-      .list(activeProjectId)
-      .then(setFiles)
-      .catch((error) => console.error("[Files] refresh failed", error));
-    void api.git
-      .branches(activeProjectId)
-      .then(setGitInfo)
-      .catch(() => setGitInfo({ current: null, branches: [] }));
   }, [activeProjectId, currentSessionId, displayAgents.length]);
 
   useEffect(() => {
     if (!activeProjectId) return;
-    let stopped = false;
-    const refreshGitInfo = async () => {
-      try {
-        // 轮询分支信息
-        const next = await api.git.branches(activeProjectId);
-        if (stopped) return;
-        // 分支可能在外部终端/IDE 中切换,轮询只在状态真的变化时更新,避免不必要重渲染。
-        setGitInfo((current) =>
-          current.current === next.current &&
-          current.branches.join("\n") === next.branches.join("\n")
-            ? current
-            : next,
-        );
-      } catch {
-        if (!stopped) {
-          setGitInfo({ current: null, branches: [] });
-        }
-      }
-    };
-    const timer = window.setInterval(refreshGitInfo, 4000);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
+    // 请求序号与项目身份校验由 useProjectSync 统一持有；慢请求即使跨过
+    // 下一次轮询或项目切换才结束，也不会把旧分支写回当前工作区。
+    const timer = window.setInterval(
+      () => void refreshGitInfo(activeProjectId).catch(() => undefined),
+      4000,
+    );
+    return () => window.clearInterval(timer);
   }, [activeProjectId]);
 
   /** 统一通知：普通消息默认 1.5 秒，异常由 kind 映射为 3 秒；Ask 使用持久 warning toast。 */
@@ -1750,62 +1721,6 @@ export function App() {
     }
   }
 
-  async function reorderProjects(
-    sourceProjectId: string,
-    targetProjectId: string,
-  ) {
-    if (sourceProjectId === targetProjectId) return;
-    const sourceProject = projects.find(
-      (project) => project.id === sourceProjectId,
-    );
-    const targetProject = projects.find(
-      (project) => project.id === targetProjectId,
-    );
-    if (isChatProject(sourceProject) || isChatProject(targetProject)) return;
-    const sourceIndex = projects.findIndex(
-      (project) => project.id === sourceProjectId,
-    );
-    const targetIndex = projects.findIndex(
-      (project) => project.id === targetProjectId,
-    );
-    if (sourceIndex === -1 || targetIndex === -1) return;
-
-    const previousProjects = projects;
-    const nextProjects = [...projects];
-    const [movedProject] = nextProjects.splice(sourceIndex, 1);
-    const targetIndexAfterRemoval = nextProjects.findIndex(
-      (project) => project.id === targetProjectId,
-    );
-    const insertIndex =
-      sourceIndex < targetIndex
-        ? targetIndexAfterRemoval + 1
-        : targetIndexAfterRemoval;
-    nextProjects.splice(insertIndex, 0, movedProject);
-    setProjects(nextProjects);
-
-    try {
-      const savedProjects = await api.projects.reorder(
-        nextProjects.map((project) => project.id),
-      );
-      setProjects(savedProjects);
-    } catch (error) {
-      setProjects(previousProjects);
-      showToast(
-        t("app.projectSortFailed", {
-          error: error instanceof Error ? error.message : String(error),
-        }),
-        4000,
-      );
-    }
-  }
-
-  async function addProject() {
-    const project = await api.projects.add();
-    if (!project) return;
-    await refreshProjects();
-    setActiveProjectId(project.id);
-  }
-
   function updateAfterProjectRemoved(
     removedProjectId: string,
     next: Project[],
@@ -1823,6 +1738,28 @@ export function App() {
       if (drawer === "sessions") workspace.closeDrawer();
     }
   }
+
+  const {
+    reorderProjects,
+    addProject,
+    removeSidebarProject,
+    changeChatPath,
+    switchBranch,
+    createBranch,
+  } = useProjectCommands({
+    projects,
+    activeProjectId,
+    gitInfo,
+    setProjects,
+    setActiveProjectId,
+    setGitInfo,
+    setProjectBranch,
+    refreshProjects,
+    refreshProjectSessions,
+    onProjectRemoved: updateAfterProjectRemoved,
+    showToast,
+    overlays,
+  });
 
   function applyAgentRuntimeState(agentId: string, incoming: AgentRuntimeState) {
     const target = getRuntimeTargetForAgent(agentId);
@@ -1854,9 +1791,15 @@ export function App() {
   }
 
   async function closeAgent(agentId: string) {
-    if (isPendingAgentId(agentId)) return;
+    // pending / 无 target 必须抛错：Tab 下拉「关闭会话」成功后才会 closeTab。
+    // 以前这里静默 return，调用方仍关 Tab，标签没了、进程还在。
+    if (isPendingAgentId(agentId)) {
+      throw new Error(t("sessionCommand.runtimeBusy"));
+    }
     const target = getRuntimeTargetForAgent(agentId);
-    if (!target) return;
+    if (!target) {
+      throw new Error(t("sessionCommand.runtimeUnavailable"));
+    }
     requireSessionCommand(await api.sessions.stopRuntime(target));
   }
 
@@ -2051,173 +1994,27 @@ export function App() {
     }
   }
 
-  /** 重发防重复：通过 messageId 锁避免同一消息多次重发。
-   *  锁会在 agent 状态切回 idle 时自动清除（下方 useEffect），超时 30s 兜底释放。 */
-  const resendingIdsRef = useRef<Set<string>>(new Set());
-
-  function resendUserMessage(message: ChatMessage) {
-    if (!activeAgentId || message.agentId !== activeAgentId) return;
-    if (resendingIdsRef.current.has(message.id)) return;
-    resendingIdsRef.current.add(message.id);
-    // 30 秒兜底释放，防止锁泄漏
-    setTimeout(() => resendingIdsRef.current.delete(message.id), 30_000);
-
-    const target = getRuntimeTargetForAgent(activeAgentId);
-    if (!target || !currentSessionId) return;
-    // Resend mutates the persisted branch first, then submits the exact returned snapshot.
-    void api.sessions.prepareRuntimeResend(target, message.id)
-      .then((result) => requireSessionCommand(result).value)
-      .then((snapshot) => submitPromptSnapshot(currentSessionId, snapshot.text, snapshot.images))
-      .catch((error) => showToast(error instanceof Error ? error.message : String(error), 5000));
-  }
-
-  /** agent 切回 idle 时释放所有重发锁，允许下次正常重发。 */
-  useEffect(() => {
-    if (activeAgent?.status !== "running" && activeAgent?.status !== "starting") {
-      resendingIdsRef.current.clear();
-    }
-  }, [activeAgent?.status]);
-
-  /** 将主进程抛出的错误消息中的 BUSY_ 前缀码转为前端多语言文案 */
-  function translateAgentErrorMessage(msg: string): string {
-    if (msg.startsWith("BUSY_STREAMING:")) return t("message.busyStreaming");
-    if (msg.startsWith("BUSY_TOOL:")) return t("message.busyTool");
-    if (msg.startsWith("BUSY_GENERIC:")) return t("message.busyGeneric");
-    return msg;
-  }
-
-  /**
-   * 编辑消息：修改 JSONL + 重载会话。用户已点击「编辑 + 保存」两步操作，意图明确，不额外弹框确认。
-   */
-  async function editMessage(messageId: string, newText: string) {
-    if (!activeAgentId) return;
-    try {
-      const target = getRuntimeTargetForAgent(activeAgentId);
-      if (!target) return;
-      requireSessionCommand(await api.sessions.editRuntimeMessage(target, messageId, newText));
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      showToast(`${t("message.editFailed")}: ${translateAgentErrorMessage(msg)}`, 5000);
-    }
-  }
-
-  /**
-   * 删除消息：从 JSONL 移除 + 重载会话。使用统一的自定义 ConfirmDialog。
-   */
-  function deleteMessage(messageId: string) {
-    if (!activeAgentId) return;
-    overlays.showConfirm({
-      title: t("message.deleteTitle"),
-      message: t("message.deleteReloadPrompt"),
-      danger: true,
-      confirmLabel: t("common.delete"),
-      onConfirm: async () => {
-        overlays.clearConfirm();
-        try {
-          const target = getRuntimeTargetForAgent(activeAgentId);
-          if (!target) return;
-          requireSessionCommand(await api.sessions.deleteRuntimeMessage(target, messageId));
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          showToast(`${t("message.deleteFailed")}: ${translateAgentErrorMessage(msg)}`, 5000);
-        }
-      },
-    });
-  }
-
-  /** 正在 fork 的用户消息 id；用于按钮 loading，避免连点重复 fork。 */
-  const [forkingMessageId, setForkingMessageId] = useState<string | null>(null);
-
-  /**
-   * 解析用户消息对应的 pi session entryId。
-   * 优先 meta.entryId；其次 id 里的 history 片段；再回退 get_fork_messages 按正文匹配。
-   */
-  async function resolveForkEntryId(
-    agentId: string,
-    message: ChatMessage,
-  ): Promise<string | undefined> {
-    if (typeof message.meta?.entryId === "string" && message.meta.entryId) {
-      return message.meta.entryId;
-    }
-    const historyPrefix = `${agentId}-history-`;
-    if (message.id.startsWith(historyPrefix)) {
-      const fromId = message.id.slice(historyPrefix.length).trim();
-      if (fromId && fromId !== String(message.meta?._piDeckMsgSeq ?? "")) {
-        // 纯数字序号是无 entryId 时的 index 回退，不能当 fork entryId。
-        if (!/^\d+$/.test(fromId)) return fromId;
-      }
-    }
-    try {
-      const target = getRuntimeTargetForAgent(agentId);
-      if (!target) return undefined;
-      const forkMessages = requireSessionCommand(
-        await api.sessions.getRuntimeForkMessages(target),
-      ).value;
-      const targetText = message.text.trim();
-      if (!targetText) return undefined;
-      // 相同文案多条时取最后一次，贴近用户点的“当前这句”。
-      for (let i = forkMessages.length - 1; i >= 0; i -= 1) {
-        const item = forkMessages[i];
-        if (item?.entryId && item.text?.trim() === targetText) return item.entryId;
-      }
-    } catch {
-      // getForkMessages 失败时交给上层 toast
-    }
-    return undefined;
-  }
-
-  /**
-   * 从用户消息 fork 新会话（pi /fork）。
-   * 忙碌中不展示入口；点击时再解析 entryId（meta 缺失时走 getForkMessages 回退）。
-   * 成功后主进程把 Agent 换绑到新 SessionRecord；这里必须切焦点并登记常驻 Tab，
-   * 否则 Tab 栏仍停在原会话，runtime 已在新 id 上，点 Tab 会对不上。
-   */
-  async function forkFromUserMessage(message: ChatMessage) {
-    if (!activeAgentId || isAgentCurrentlyBusy()) return;
-    if (forkingMessageId) return;
-    setForkingMessageId(message.id);
-    try {
-      const entryId = await resolveForkEntryId(activeAgentId, message);
-      if (!entryId) {
-        showToast(t("app.forkMissingEntryId"), 4000);
-        return;
-      }
-      const target = getRuntimeTargetForAgent(activeAgentId);
-      if (!target) return;
-      const result = requireSessionCommand(
-        await api.sessions.forkRuntimeSession(target, entryId),
-      );
-      if (result.cancelled) {
-        showToast(t("app.forkCancelled"), 3500);
-        return;
-      }
-      const promptText =
-        typeof result.text === "string" && result.text.length > 0
-          ? result.text
-          : message.text;
-      const projectId =
-        agents.find((agent) => agent.id === activeAgentId)?.projectId ?? activeProjectId;
-      const targetSessionId = result.targetSessionId;
-      await openReplacedRuntimeSession(projectId, targetSessionId);
-      // 草稿必须写到新会话。selectSession 的 setState 还没刷 ref，
-      // 先改 currentSessionIdRef，后面的 user-message-edit 才不会写回旧会话。
-      const draftTarget =
-        targetSessionId ?? currentSessionIdRef.current ?? activeAgentIdRef.current;
-      if (targetSessionId) currentSessionIdRef.current = targetSessionId;
-      if (draftTarget) setPromptForAgent(draftTarget, promptText);
-      window.dispatchEvent(
-        new CustomEvent("user-message-edit", { detail: { text: promptText } }),
-      );
-      showToast(t("app.forkDone"), 3500);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      showToast(t("app.forkFailed", { error: translateAgentErrorMessage(msg) }), 5000);
-    } finally {
-      setForkingMessageId(null);
-    }
-  }
-
-
+  const {
+    resendUserMessage,
+    editMessage,
+    deleteMessage,
+    forkFromUserMessage,
+    forkingMessageId,
+  } = useSessionMessageCommands({
+    activeAgentId,
+    activeAgentStatus: activeAgent?.status,
+    activeProjectId,
+    currentSessionId,
+    agents,
+    isAgentCurrentlyBusy,
+    getRuntimeTargetForAgent,
+    submitPromptSnapshot,
+    openReplacedRuntimeSession,
+    currentSessionIdRef,
+    setPromptForAgent,
+    showToast,
+    overlays,
+  });
   /**
    * 打开系统原生文件/文件夹选择器，将选中路径以 @path 引用格式插入到消息中。
    * 仅引用路径，不读取/上传文件内容。
@@ -2338,41 +2135,6 @@ export function App() {
     }
   }
 
-  async function switchBranch(branch: string) {
-    if (!activeProjectId || !branch || branch === gitInfo.current) return;
-    try {
-      const next = await api.git.checkout(activeProjectId, branch);
-      setGitInfo(next);
-      setBranchByProject((prev) => ({ ...prev, [activeProjectId]: next.current }));
-    } catch (error) {
-      showToast(
-        t("app.branchSwitchFailed", {
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      );
-      const refreshed = await api.git
-        .branches(activeProjectId)
-        .catch(() => ({ current: null, branches: [] }));
-      setGitInfo(refreshed);
-    }
-  }
-
-  async function createBranch(branchName: string) {
-    if (!activeProjectId || !branchName.trim()) return;
-    try {
-      const next = await api.git.createBranch(activeProjectId, branchName);
-      setGitInfo(next);
-      setBranchByProject((prev) => ({ ...prev, [activeProjectId]: next.current }));
-      showToast(t("app.branchCreated", { branch: branchName }), 2500);
-    } catch (error) {
-      showToast(
-        t("app.branchCreateFailed", {
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      );
-    }
-  }
-
   function toggleDirectory(path: string) {
     // 文件树默认折叠,只有用户显式展开目录才显示子项,避免大仓库一打开就产生视觉噪音。
     setExpandedDirs((current) => {
@@ -2454,50 +2216,6 @@ export function App() {
         void deleteSidebarSession(projectId, session);
       },
     });
-  }
-
-  async function removeSidebarProject(project: Project) {
-    try {
-      const next = await api.projects.remove(project.id);
-      setProjects(next);
-      updateAfterProjectRemoved(project.id, next);
-    } catch (error) {
-      if (String(error instanceof Error ? error.message : error).includes("PROJECT_HAS_RUNNING_AGENT")) {
-        overlays.showConfirm({
-          title: t("app.projectRemoveBlockedTitle"),
-          message: t("app.projectRemoveBlockedByAgent"),
-          confirmLabel: t("app.projectRemoveBlockedAck"),
-          onConfirm: () => overlays.clearConfirm(),
-        });
-      } else {
-        showToast(error instanceof Error ? error.message : String(error), 5000);
-      }
-    }
-  }
-
-  /**
-   * 修改内置对话区（Chat）的聊天记录保存目录：弹目录选择器 → 主进程写入
-   * chat-path.json 并广播 projects:changed → 重新扫描该项目会话列表 → toast 提示。
-   * 侧边栏菜单与聊天区头部按钮共用此实现，避免两处 IPC 调用逻辑漂移。
-   */
-  async function changeChatPath(project: Project) {
-    const picked = await api.projects.chooseChatPath();
-    if (!picked || picked === project.path) return;
-    try {
-      await api.projects.setChatPath(picked);
-      await refreshProjectSessions(project.id);
-      showToast(t("app.chatProjectPathUpdated"), 1800);
-    } catch (error) {
-      // 主进程拒绝把聊天目录指向已注册的项目目录（CHAT_PATH_OVERLAPS_PROJECT，issue #149）：
-      // 同路径会吞掉项目区的新项目，这里给出明确提示而不是静默失败。
-      const message = String(error instanceof Error ? error.message : error);
-      showToast(
-        message.includes("CHAT_PATH_OVERLAPS_PROJECT")
-          ? t("app.chatPathOverlapsProject")
-          : message,
-        5000,
-      );
-    }
   }
 
   const sidebarActions: SidebarActions = {
@@ -2702,8 +2420,7 @@ export function App() {
     onExitAllSplit: workspaceChrome.exitAllSplit,
     // Tab 下拉运行控制（织入对方收敛方案）：只对当前会话 Tab 生效。
     // 关闭会话 = 停止 Agent 运行 + 移除会话 Tab（与“关闭标签页”仅移除 Tab 不同）
-    canStopCurrent:
-      activeAgent?.status === "running" || activeAgent?.status === "idle",
+    canStopCurrent: canStopBoundAgent(activeAgent?.status),
     // 会话从未启动（无绑定 agent）时隐藏“关闭会话”：停止无意义，关闭走“关闭标签页”
     onStopCurrent: activeAgentId
       ? () => {
@@ -2711,7 +2428,7 @@ export function App() {
           void (async () => {
             try {
               // 必须 stopRuntime，不能 abort：abort 只取消当前一轮，pi 进程仍占用会话文件。
-              if (isPendingAgentId(activeAgentId)) return;
+              // closeAgent 失败会抛错，这里不得先关 Tab。
               await closeAgent(activeAgentId);
               if (sessionId) workspaceChrome.closeTab(sessionId);
             } catch (error) {

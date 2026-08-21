@@ -44,6 +44,12 @@ test("grep tool shows the pattern", () => {
   assert.match(phrase.label, /搜索 TODO/);
 });
 
+test("web_search tool uses a search phrase rather than a fetch phrase", () => {
+  const phrase = loadPhrase("web_search", { query: "OpenAI Responses API" });
+  assert.match(phrase.label, /搜索 OpenAI Responses API/);
+  assert.match(phrase.loadingLabel, /正在搜索 OpenAI Responses API/);
+});
+
 test("write tool produces file phrase", () => {
   const phrase = loadPhrase("Write", { file_path: "a/b/new.ts" });
   assert.match(phrase.label, /写入 new\.ts/);

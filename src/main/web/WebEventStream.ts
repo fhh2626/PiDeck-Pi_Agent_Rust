@@ -41,6 +41,9 @@ export class PiEventToUiMessageStream {
 	private textBlockId: string | null = null;
 	private reasoningBlockId: string | null = null;
 	private currentMessageId: string | null = null;
+	private readonly startedToolCallIds = new Set<string>();
+	private readonly finishedToolCallIds = new Set<string>();
+	private lastStartedToolCallId: string | null = null;
 	private finished = false;
 
 	/**
@@ -159,29 +162,17 @@ export class PiEventToUiMessageStream {
 		if (eventType === "toolcall_start") {
 			const toolCall = ev.toolCall as Record<string, unknown> | undefined;
 			if (toolCall && typeof toolCall.id === "string" && typeof toolCall.name === "string") {
-				frames.push({
-					type: "tool-input-start",
-					toolCallId: toolCall.id,
-					toolName: toolCall.name,
-				});
-				frames.push({
-					type: "tool-input-available",
-					toolCallId: toolCall.id,
-					toolName: toolCall.name,
-					input: toolCall.input ?? {},
-				});
+				frames.push(...this.ensureToolStarted(toolCall.id, toolCall.name, toolCall.input ?? {}));
 			}
 			return frames;
 		}
 		if (eventType === "toolcall_end") {
 			const toolCall = ev.toolCall as Record<string, unknown> | undefined;
-			if (toolCall && typeof toolCall.id === "string") {
-				frames.push({
-					type: "tool-output-available",
-					toolCallId: toolCall.id,
-					output: toolCall.output ?? {},
-				});
-			}
+			const rawId = typeof toolCall?.id === "string" ? toolCall.id : undefined;
+			const toolName = typeof toolCall?.name === "string" ? toolCall.name : "tool";
+			const toolCallId = this.resolveToolCallId(rawId, toolName);
+			if (!toolCallId) return frames;
+			frames.push(...this.finishTool(toolCallId, toolName, toolCall?.input ?? {}, false));
 			return frames;
 		}
 
@@ -196,28 +187,55 @@ export class PiEventToUiMessageStream {
 
 	private startTool(event: PiEvent): UiMessageStreamFrame[] {
 		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
-		const toolCallId = typeof event.toolCallId === "string"
-			? event.toolCallId
-			: `tool_${toolName}_${Date.now()}`;
-		return [
-			{ type: "tool-input-start", toolCallId, toolName },
-			{ type: "tool-input-available", toolCallId, toolName, input: event.args ?? {} },
-		];
+		const toolCallId = this.resolveToolCallId(event.toolCallId, toolName);
+		if (!toolCallId) return [];
+		return this.ensureToolStarted(toolCallId, toolName, event.args ?? {});
 	}
 
 	private endTool(event: PiEvent): UiMessageStreamFrame[] {
-		const toolCallId = typeof event.toolCallId === "string"
-			? event.toolCallId
-			: undefined;
+		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
+		const toolCallId = this.resolveToolCallId(event.toolCallId, toolName);
 		if (!toolCallId) return [];
-		if (event.isError) {
-			return [{
-				type: "tool-output-error",
-				toolCallId,
-				errorText: "Tool failed",
-			}];
-		}
-		return [{ type: "tool-output-available", toolCallId, output: {} }];
+		return this.finishTool(toolCallId, toolName, event.args ?? {}, event.isError === true);
+	}
+
+	/** 无 ID 的 start/end 共用最近一张工具卡，避免合成 ID 对不上后把 end 丢掉。 */
+	private resolveToolCallId(rawId: string | undefined, toolName: string): string | undefined {
+		if (typeof rawId === "string" && rawId.trim()) return rawId;
+		if (this.lastStartedToolCallId) return this.lastStartedToolCallId;
+		if (!toolName) return undefined;
+		return `tool_${toolName}_${Date.now()}`;
+	}
+
+	/** 同一 toolCallId 只开一次 input 帧，避免 end 早到时 useChat 抛错关流。 */
+	private ensureToolStarted(
+		toolCallId: string,
+		toolName: string,
+		input: unknown,
+	): UiMessageStreamFrame[] {
+		this.lastStartedToolCallId = toolCallId;
+		if (this.startedToolCallIds.has(toolCallId)) return [];
+		this.startedToolCallIds.add(toolCallId);
+		return [
+			{ type: "tool-input-start", toolCallId, toolName },
+			{ type: "tool-input-available", toolCallId, toolName, input },
+		];
+	}
+
+	private finishTool(
+		toolCallId: string,
+		toolName: string,
+		input: unknown,
+		isError: boolean,
+	): UiMessageStreamFrame[] {
+		const frames = this.ensureToolStarted(toolCallId, toolName, input);
+		if (this.finishedToolCallIds.has(toolCallId)) return frames;
+		this.finishedToolCallIds.add(toolCallId);
+		frames.push(isError
+			? { type: "tool-output-error", toolCallId, errorText: "Tool failed" }
+			: { type: "tool-output-available", toolCallId, output: {} },
+		);
+		return frames;
 	}
 
 	/** 只关当前 text/reasoning 块，不结束整条 SSE。 */
@@ -238,6 +256,12 @@ export class PiEventToUiMessageStream {
 		if (this.finished) return [];
 		this.finished = true;
 		const frames = this.closeOpenBlocks();
+		// start/end ID 对不上时，收尾把未完成的工具卡关掉，避免一直转圈。
+		for (const toolCallId of this.startedToolCallIds) {
+			if (this.finishedToolCallIds.has(toolCallId)) continue;
+			this.finishedToolCallIds.add(toolCallId);
+			frames.push({ type: "tool-output-available", toolCallId, output: {} });
+		}
 		if (event.error !== undefined) {
 			const errorText = typeof event.error === "string"
 				? event.error

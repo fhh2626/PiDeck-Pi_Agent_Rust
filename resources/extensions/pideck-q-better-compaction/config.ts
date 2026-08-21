@@ -4,15 +4,41 @@ import * as path from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
 	DEFAULT_EXTENSION_CONFIG,
-	EXTENSION_ID,
-	RESPONSES_COMPACT_CAPABLE_APIS,
+	EXTENSION_STORAGE_ID,
+	LEGACY_EXTENSION_STORAGE_ID,
+	MAX_COMPACT_MAX_ATTEMPTS,
+	MAX_COMPACT_RETRY_DELAY_MS,
+	MAX_COMPACT_TIMEOUT_MS,
+	MIN_COMPACT_MAX_ATTEMPTS,
+	MIN_COMPACT_RETRY_DELAY_MS,
+	MIN_COMPACT_TIMEOUT_MS,
 	THINKING_LEVELS,
 	type ExtensionConfig,
 	type LoadedExtensionConfig,
 } from "./types";
 
-export const CONFIG_DIR = path.join(os.homedir(), ".pi", "agent", "extensions", EXTENSION_ID);
+export const CONFIG_DIR = path.join(os.homedir(), ".pi", "agent", "extensions", EXTENSION_STORAGE_ID);
 export const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+export const LEGACY_CONFIG_PATH = path.join(
+	os.homedir(),
+	".pi",
+	"agent",
+	"extensions",
+	LEGACY_EXTENSION_STORAGE_ID,
+	"config.json",
+);
+
+/** Prefer the renamed config path while retaining a read-only legacy fallback. */
+export function resolveConfigReadPath(
+	requestedPath: string,
+	defaultPath: string = CONFIG_PATH,
+	legacyPath: string = LEGACY_CONFIG_PATH,
+	fileExists: (filePath: string) => boolean = isFile,
+): string {
+	return requestedPath === defaultPath && !fileExists(defaultPath) && fileExists(legacyPath)
+		? legacyPath
+		: requestedPath;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === "object" && !Array.isArray(value);
@@ -58,6 +84,26 @@ function toBoolean(value: unknown, fieldPath: string, warnings: string[]): boole
 	return undefined;
 }
 
+function toInteger(value: unknown, fieldPath: string, warnings: string[]): number | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+	warnings.push(`Ignoring ${fieldPath}: expected an integer.`);
+	return undefined;
+}
+
+function clampInteger(
+	value: number,
+	fieldPath: string,
+	min: number,
+	max: number,
+	warnings: string[],
+): number {
+	if (value < min || value > max) {
+		warnings.push(`Clamping ${fieldPath}=${value} to the range [${min}, ${max}].`);
+	}
+	return Math.min(max, Math.max(min, value));
+}
+
 function toModelSpec(value: unknown, fieldPath: string, warnings: string[]): string | null | undefined {
 	if (value === undefined) return undefined;
 	// Explicit null clears a spec, matching the documented "unset = current model" behavior.
@@ -78,54 +124,25 @@ function toThinkingLevel(value: unknown, fieldPath: string, warnings: string[]):
 	return undefined;
 }
 
-function toResponsesCompactApis(value: unknown, fieldPath: string, warnings: string[]): string[] | undefined {
-	if (value === undefined) return undefined;
-	if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-		warnings.push(`Ignoring ${fieldPath}: expected a string array.`);
-		return undefined;
-	}
-
-	const capable = new Set<string>(RESPONSES_COMPACT_CAPABLE_APIS);
-	const accepted: string[] = [];
-	for (const item of new Set(value.map((entry) => entry.trim()).filter(Boolean))) {
-		if (capable.has(item)) {
-			accepted.push(item);
-		} else {
-			warnings.push(
-				`Ignoring ${fieldPath} entry "${item}": only ${[...RESPONSES_COMPACT_CAPABLE_APIS].join(", ")} support the compact endpoint.`,
-			);
-		}
-	}
-
-	return accepted;
-}
-
 /**
- * Load extension config. Single source: `~/.pi/agent/extensions/pi-better-compaction/config.json`
- * merged over code defaults. A missing file silently yields the defaults.
+ * Load extension config from the renamed directory. When the new default path
+ * is absent, the legacy path remains readable so existing users keep their settings.
  */
 export function loadExtensionConfig(configPath: string = CONFIG_PATH): LoadedExtensionConfig {
 	const warnings: string[] = [];
 	const resolved: ExtensionConfig = {
 		...DEFAULT_EXTENSION_CONFIG,
-		responsesCompactApis: [...DEFAULT_EXTENSION_CONFIG.responsesCompactApis],
 	};
 	let source: string | undefined;
 
-	const raw = readJsonObject(configPath, warnings);
+	const effectiveConfigPath = resolveConfigReadPath(configPath);
+	const raw = readJsonObject(effectiveConfigPath, warnings);
 	if (raw) {
-		source = configPath;
+		source = effectiveConfigPath;
 
 		resolved.enabled = toBoolean(raw.enabled, "enabled", warnings) ?? resolved.enabled;
-		resolved.allowCompactionContinuityBreak =
-			toBoolean(raw.allowCompactionContinuityBreak, "allowCompactionContinuityBreak", warnings) ??
-			resolved.allowCompactionContinuityBreak;
 		resolved.notifyOnLoad = toBoolean(raw.notifyOnLoad, "notifyOnLoad", warnings) ?? resolved.notifyOnLoad;
 		resolved.debug = toBoolean(raw.debug, "debug", warnings) ?? resolved.debug;
-		resolved.logProviderPayloads =
-			toBoolean(raw.logProviderPayloads, "logProviderPayloads", warnings) ?? resolved.logProviderPayloads;
-		resolved.logCompactResponses =
-			toBoolean(raw.logCompactResponses, "logCompactResponses", warnings) ?? resolved.logCompactResponses;
 		resolved.redactSensitiveData =
 			toBoolean(raw.redactSensitiveData, "redactSensitiveData", warnings) ?? resolved.redactSensitiveData;
 
@@ -138,9 +155,41 @@ export function loadExtensionConfig(configPath: string = CONFIG_PATH): LoadedExt
 			toThinkingLevel(raw.compactionThinkingLevel, "compactionThinkingLevel", warnings) ??
 			resolved.compactionThinkingLevel;
 
-		const apis = toResponsesCompactApis(raw.responsesCompactApis, "responsesCompactApis", warnings);
-		if (apis !== undefined) {
-			resolved.responsesCompactApis = apis;
+		const timeoutMs = toInteger(raw.compactTimeoutMs, "compactTimeoutMs", warnings);
+		if (timeoutMs !== undefined) {
+			if (timeoutMs === 0) {
+				resolved.compactTimeoutMs = 0;
+			} else {
+				resolved.compactTimeoutMs = clampInteger(
+					timeoutMs,
+					"compactTimeoutMs",
+					MIN_COMPACT_TIMEOUT_MS,
+					MAX_COMPACT_TIMEOUT_MS,
+					warnings,
+				);
+			}
+		}
+
+		const maxAttempts = toInteger(raw.compactMaxAttempts, "compactMaxAttempts", warnings);
+		if (maxAttempts !== undefined) {
+			resolved.compactMaxAttempts = clampInteger(
+				maxAttempts,
+				"compactMaxAttempts",
+				MIN_COMPACT_MAX_ATTEMPTS,
+				MAX_COMPACT_MAX_ATTEMPTS,
+				warnings,
+			);
+		}
+
+		const retryDelayMs = toInteger(raw.compactRetryDelayMs, "compactRetryDelayMs", warnings);
+		if (retryDelayMs !== undefined) {
+			resolved.compactRetryDelayMs = clampInteger(
+				retryDelayMs,
+				"compactRetryDelayMs",
+				MIN_COMPACT_RETRY_DELAY_MS,
+				MAX_COMPACT_RETRY_DELAY_MS,
+				warnings,
+			);
 		}
 
 		if (typeof raw.artifactRoot === "string" && raw.artifactRoot.trim().length > 0) {
@@ -150,7 +199,7 @@ export function loadExtensionConfig(configPath: string = CONFIG_PATH): LoadedExt
 		}
 	}
 
-	resolved.artifactRoot = resolveConfiguredPath(resolved.artifactRoot, path.dirname(configPath));
+	resolved.artifactRoot = resolveConfiguredPath(resolved.artifactRoot, path.dirname(effectiveConfigPath));
 
 	return {
 		config: resolved,

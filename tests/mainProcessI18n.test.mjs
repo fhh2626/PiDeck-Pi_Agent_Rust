@@ -262,7 +262,7 @@ test("main-process user surfaces use stable copy and keep caught details in logs
     "store.yaoDetailFailed",
     "store.yaoImportFailed",
   ]) {
-    assert.match(source, new RegExp(`mainCopy\\("${key.replaceAll(".", "\\.")}"`));
+    assert.match(source, new RegExp(`(?:mainCopy|deps\\.translate)\\("${key.replaceAll(".", "\\.")}"`));
   }
   assert.doesNotMatch(source, /label:\s*"(?:显示窗口|退出 PiDeck-Q)"/);
   assert.doesNotMatch(source, /title:\s*"选择聊天记录目录"/);

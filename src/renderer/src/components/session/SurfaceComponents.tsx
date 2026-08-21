@@ -12,54 +12,15 @@ import {
 	type PointerEvent as ReactPointerEvent,
 	type ReactNode,
 } from "react";
-import { toBlob } from "html-to-image";
 import { MarkdownStream } from "./MarkdownStream";
 import { useAtomValue } from "jotai";
 import "katex/dist/katex.min.css";
-
-/**
- * 消息图片按需解码：base64 data URL 的字符串已在消息对象中（无法省字符串），
- * 但解码出的位图是内存大头（一张截图 1~5MB）——视口外不设 src 不解码，
- * 进入视口（含 200px 提前量）才挂载 src；未加载时占位高度避免滚动跳动。
- * decoding="async" 保证解码不阻塞渲染主线程。
- */
-function MessageImage(props: {
-	src: string;
-	alt: string;
-	className: string;
-	onClick?: () => void;
-	/** 未加载时的占位高度类（无固定尺寸的图片防滚动跳动；固定尺寸缩略图无需传） */
-	placeholderClass?: string;
-}) {
-	const ref = useRef<HTMLImageElement>(null);
-	const [inView, setInView] = useState(false);
-	useEffect(() => {
-		const el = ref.current;
-		if (!el) return;
-		const observer = new IntersectionObserver(
-			(entries) => {
-				if (entries[0]?.isIntersecting) {
-					setInView(true);
-					observer.disconnect();
-				}
-			},
-			{ rootMargin: "200px" },
-		);
-		observer.observe(el);
-		return () => observer.disconnect();
-	}, []);
-	return (
-		<img
-			ref={ref}
-			src={inView ? props.src : undefined}
-			alt={props.alt}
-			className={`${props.className}${!inView && props.placeholderClass ? ` ${props.placeholderClass}` : ""}`}
-			loading="lazy"
-			decoding="async"
-			onClick={props.onClick}
-		/>
-	);
-}
+import { MessageImage, ImagePreviewModal } from "./MessageImage";
+import { CopyMenu } from "./MessageCopyMenu";
+import { EmptyState } from "./EmptyState";
+export { ImagePreviewModal } from "./MessageImage";
+export { CopyMenu } from "./MessageCopyMenu";
+export { EmptyState } from "./EmptyState";
 import {
 	summarizeMessage,
 	type RenderMessage,
@@ -114,10 +75,8 @@ import {
 	Terminal,
 	UploadCloud,
 	Wrench,
-	X,
 	Star,
 	FolderOpen,
-	Copy,
 	Trash,
 	Share,
 	SquarePen,
@@ -131,12 +90,6 @@ import { normalizeSessionPathForCompare } from "../../agentListDisplay";
 import { t } from "../../i18n";
 import { showNotice } from "../../utils/notice";
 import { Button } from "../ui-shadcn/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "../ui-shadcn/dropdown-menu";
 import type {
 	AgentRuntimeState,
 	AgentTab,
@@ -456,160 +409,6 @@ export function AgentAvatar(props: { status: string }) {
 			<span className="avatar-status-indicator" aria-label={normalizedStatus}>
 				{normalizedStatus === "error" ? <CircleAlert size={8} strokeWidth={2.5} /> : normalizedStatus === "starting" ? <CircleDot size={8} strokeWidth={2.5} /> : normalizedStatus === "running" ? <LoaderCircle size={8} strokeWidth={2.5} className="animate-spin" /> : <Check size={8} strokeWidth={2.5} />}
 			</span>
-		</div>
-	);
-}
-
-export function EmptyState(props: {
-	hasProject: boolean;
-	onCreate: () => void;
-	/** 可选：自定义操作区（如项目空态的主从按钮），默认提供“启动 Agent”/无项目提示 */
-	actions?: ReactNode;
-	/** 可选：底部 meta 区（如模型/思考级别/路径），渲染在发丝线分隔的 dl 容器内 */
-	footer?: ReactNode;
-	/** 可选：章节页眉发丝线右侧的上下文（如当前项目名），帮助用户确认所在工作区 */
-	eyebrow?: ReactNode;
-}) {
-	const description = props.hasProject
-		? t("app.emptyHasProject")
-		: t("app.emptyNoProject");
-
-	return (
-		// Editorial 空态：左对齐章节式排版而非居中对话框，品牌感由衬线斜体的重音词承担。
-		// 重音词固定用拉丁词（zh「Session」/ en「session」）：内置艺术字 Plantin 仅有拉丁字形，
-		// 居中策略：几何居中（justify-center）后用户反馈标题区仍略偏上——
-		// 补 pt-[10vh] 让内容块整体下移，标题重心落到窗口光学中心。
-		<div
-			className="empty-state relative h-full min-h-0 overflow-hidden bg-transparent px-6 text-left"
-			data-empty-state={props.hasProject ? "project" : "no-project"}
-		>
-			<div className="mx-auto flex h-full w-full max-w-2xl animate-in flex-col justify-center pt-[10vh] duration-500 fade-in">
-				{/* 章节页眉：发丝线 + 项目上下文，建立编辑排版的节奏起点 */}
-				<div className="flex items-center gap-4 text-[13px] text-text-secondary">
-					<span className="h-px flex-1 bg-border-subtle" aria-hidden="true"></span>
-					{props.eyebrow}
-				</div>
-				<h2 className="mt-10 animate-in text-[clamp(2.5rem,5vw,3.25rem)] font-semibold leading-[1.1] tracking-[-0.03em] delay-100 duration-500 fade-in fill-mode-backwards slide-in-from-bottom-2 text-foreground">
-					{props.hasProject ? (
-						<>
-							{t("app.emptyProjectTitleLead")}<br />
-							<span className="font-brand font-medium italic">{t("app.emptyProjectTitleAccent")}</span>
-							{/* 句号用前景色（黑/白实心）而非灰：作为标题的落点强调，视觉上更扎实 */}
-							<span className="text-foreground">{t("app.emptyProjectTitlePunct")}</span>
-						</>
-					) : (
-						t("app.emptyNoProjectTitle")
-					)}
-				</h2>
-				<p className="mt-6 max-w-md animate-in text-[15px] leading-7 delay-100 duration-500 fade-in fill-mode-backwards text-text-secondary">{description}</p>
-				{/* actions 是左对齐的主从按钮区，跟随阅读动线而不是居中悬浮 */}
-				<div className="mt-10 animate-in delay-200 duration-500 fade-in fill-mode-backwards slide-in-from-bottom-2">{
-					props.actions ?? (
-						props.hasProject ? (
-							<Button size="lg" className="h-12 rounded-xl bg-foreground px-7 text-background shadow-sm hover:bg-foreground/85" onClick={props.onCreate}>{t("app.createAgent")}</Button>
-						) : (
-							<p className="text-sm text-muted-foreground">{t("app.emptyNoProject")}</p>
-						)
-					)
-				}</div>
-				{props.footer && (
-					<div className="mt-14 animate-in border-t border-border-subtle pt-5 delay-300 duration-500 fade-in fill-mode-backwards">{props.footer}</div>
-				)}
-			</div>
-		</div>
-	);
-}
-
-async function copyElementAsPng(element: HTMLElement) {
-	// 截图复制依赖浏览器 ClipboardItem PNG 支持；失败时由调用方提示/回退，不影响文本复制。
-	// 使用 toBlob 而非 toPng+fetch 避免 CSP 拒绝连接 data: URL。
-	// 克隆节点 + 内边距 + 临时注入 body 的方式与分享为图片（handleMultiSelectCopy）保持一致，
-	// 避免直接截图导致图片紧贴内容边缘、缺少留白。
-	const clone = element.cloneNode(true) as HTMLElement;
-	clone.style.padding = "24px";
-	clone.style.background =
-		getComputedStyle(document.documentElement).getPropertyValue("--color-bg-panel") || "#fff";
-	// 将 clone 插入到原元素旁边，确保 CSS 样式正确继承（父层选择器、rem 等）
-	if (element.parentElement) {
-		element.parentElement.insertBefore(clone, element.nextSibling);
-	}
-	let blob: Blob | null = null;
-	try {
-		blob = await toBlob(clone, {
-			cacheBust: true,
-			pixelRatio: Math.min(2, window.devicePixelRatio || 1),
-			backgroundColor:
-				getComputedStyle(document.documentElement).getPropertyValue("--color-bg-panel") || undefined,
-			filter: (node) =>
-				!(node instanceof HTMLElement) ||
-				(!node.classList.contains("turn-row-actions") &&
-					!node.classList.contains("user-turn-actions") &&
-					!node.classList.contains("copy-menu-popover")),
-		});
-	} finally {
-		clone.remove();
-	}
-	if (!blob) return;
-	await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-}
-
-export function CopyMenu(props: {
-	text: string;
-	markdown: string;
-	targetRef: React.RefObject<HTMLElement | null>;
-	className?: string;
-}) {
-	const [copied, setCopied] = useState<string | null>(null);
-	const copy = async (kind: "text" | "markdown" | "image") => {
-		try {
-			if (kind === "text") await navigator.clipboard.writeText(props.text);
-			if (kind === "markdown") await navigator.clipboard.writeText(props.markdown);
-			if (kind === "image" && props.targetRef.current) await copyElementAsPng(props.targetRef.current);
-			setCopied(kind);
-			showNotice(t("copy.success"), 1200);
-			window.setTimeout(() => setCopied(null), 1800);
-		} catch {
-			setCopied(null);
-			showNotice(t("copy.failed"), 2000);
-		}
-	};
-	return (
-		<div className={`copy-menu ${props.className ?? ""}`}>
-			{/* 拆分按钮：主按钮点击直接复制纯文本（默认动作，不再弹菜单）；
-			   右侧小箭头展开完整菜单（复制为 Markdown / 图片）。弹层走 shadcn
-			   DropdownMenu：Radix 定位 + animate-in/out + dropdown-stagger 错峰动画。 */}
-			<div className="flex items-center overflow-hidden rounded-sm border border-transparent hover:border-border">
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					className="copy-menu-trigger size-7 rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
-					type="button"
-					onClick={() => void copy("text")}
-					title={t("common.copy")}
-				>
-					{copied ? <Check size={14} /> : <Copy size={14} />}
-				</Button>
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<Button
-							variant="ghost"
-							size="icon-sm"
-							className="size-6 rounded-none border-l border-border/60 px-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-							type="button"
-							aria-label={t("copy.moreOptions")}
-							title={t("copy.moreOptions")}
-						>
-							<ChevronDown size={12} />
-						</Button>
-					</DropdownMenuTrigger>
-					{/* 保留 copy-menu-popover 锚点类：多选导出/截图复制仍靠它排除菜单节点 */}
-					<DropdownMenuContent align="end" className="copy-menu-popover min-w-[132px]">
-						<DropdownMenuItem onSelect={() => void copy("text")}>{t("copy.asText")}</DropdownMenuItem>
-						<DropdownMenuItem onSelect={() => void copy("markdown")}>{t("copy.asMarkdown")}</DropdownMenuItem>
-						<DropdownMenuItem onSelect={() => void copy("image")}>{t("copy.asImage")}</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-			</div>
 		</div>
 	);
 }
@@ -1209,28 +1008,6 @@ export const UserBubble = memo(function UserBubble(props: {
 		</article>
 	);
 });
-
-export function ImagePreviewModal(props: {
-	image: ImageContent;
-	onClose: () => void;
-}) {
-	return (
-		<div className="image-preview-modal" onClick={props.onClose}>
-			<button
-				className="image-preview-close"
-				onClick={props.onClose}
-				aria-label={t("app.imagePreviewClose")}
-			>
-				<X size={20} strokeWidth={2.4} />
-			</button>
-			<img
-				src={`data:${props.image.mimeType};base64,${props.image.data}`}
-				alt={t("app.imagePreviewAlt")}
-				onClick={(event) => event.stopPropagation()}
-			/>
-		</div>
-	);
-}
 
 // ANSI 转义码正则:匹配 \x1b[...m 等终端颜色/样式序列
 function stripThinkingTags(text: string): string {

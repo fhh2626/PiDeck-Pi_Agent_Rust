@@ -11,7 +11,7 @@ import test from "node:test";
  * extensions/node_modules/<pkg>，并在 dependencies 中显式声明以保证顶层安装。
  */
 
-// pi 扩展加载器自身可解析的包（实证：打包版成功加载 pi-deck-ask-question/todo，
+// pi 扩展加载器自身可解析的包（实证：打包版成功加载 PiDeck-Q-Ask-Question/todo，
 // 仅 undici 解析失败）。新包不在此列时必须先验证打包版能解析再入列。
 const PI_PROVIDED = /^(?:@earendil-works\/.*|typebox)$/;
 
@@ -57,13 +57,27 @@ test("extension runtime deps are packaged next to extensions", () => {
 	}
 });
 
-test("pi-better-compaction keeps its relative runtime files in extraResources", () => {
+test("pideck-q-better-compaction keeps its relative runtime files in extraResources", () => {
 	const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 	const resource = (pkg.build?.extraResources ?? []).find(
-		(entry) => entry.from === "resources/extensions/pi-better-compaction",
+		(entry) => entry.from === "resources/extensions/pideck-q-better-compaction",
 	);
 	assert.deepEqual(resource?.filter, ["**/*.ts", "LICENSE"]);
-	assert.equal(resource?.to, "extensions/pi-better-compaction");
-	assert.ok(existsSync(join("resources", "extensions", "pi-better-compaction", "extension-runtime.ts")));
-	assert.ok(existsSync(join("resources", "extensions", "pi-better-compaction", "LICENSE")));
+	assert.equal(resource?.to, "extensions/pideck-q-better-compaction");
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-better-compaction", "extension-runtime.ts")));
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-better-compaction", "compaction.ts")));
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-better-compaction", "retained-oversize.ts")));
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-better-compaction", "prompts.ts")));
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-better-compaction", "LICENSE")));
+});
+
+test("pideck-q-websearch keeps its relative fallback module in extraResources", () => {
+	const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+	const resource = (pkg.build?.extraResources ?? []).find(
+		(entry) => entry.from === "resources/extensions/pideck-q-websearch",
+	);
+	assert.deepEqual(resource?.filter, ["**/*.ts"]);
+	assert.equal(resource?.to, "extensions/pideck-q-websearch");
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-websearch", "extension-runtime.ts")));
+	assert.ok(existsSync(join("resources", "extensions", "pideck-q-websearch", "fallback.ts")));
 });

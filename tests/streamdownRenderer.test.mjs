@@ -9,6 +9,7 @@ import test from "node:test";
 // 锚点：mermaid/math 由 @streamdown/* 插件接管；a 仍走 MarkdownLink
 // （file:// 打开 + 系统浏览器）；Tailwind 已扫描 streamdown 类名保证控件样式完整。
 const stream = readFileSync("src/renderer/src/components/session/MarkdownStream.tsx", "utf8");
+const renderer = readFileSync("src/renderer/src/components/session/MarkdownStreamRenderer.tsx", "utf8");
 const surface = readFileSync("src/renderer/src/components/session/SurfaceComponents.tsx", "utf8");
 const link = readFileSync("src/renderer/src/components/session/MarkdownLink.tsx", "utf8");
 const linkCore = readFileSync("src/renderer/src/components/session/MarkdownLinkCore.ts", "utf8");
@@ -17,40 +18,50 @@ const main = readFileSync("src/renderer/src/main.tsx", "utf8");
 const packageJson = readFileSync("package.json", "utf8");
 const surfacesCss = readFileSync("src/renderer/src/styles/surfaces.css", "utf8");
 
+test("Markdown heavy runtime stays behind the async renderer boundary", () => {
+  // 首屏壳层只能动态加载完整 renderer；type-only import 不会进入运行时依赖图。
+  assert.match(stream, /import\("\.\/MarkdownStreamRenderer"\)/);
+  assert.doesNotMatch(stream, /from "streamdown"/);
+  assert.doesNotMatch(stream, /from "@streamdown\/(?:code|mermaid|math)"/);
+
+  // 完整能力仍由异步模块统一拥有，不能为了减包退化 Markdown 功能。
+  assert.match(renderer, /from "streamdown"/);
+  assert.match(renderer, /import \{ code \} from "@streamdown\/code"/);
+  assert.match(renderer, /import \{ mermaid \} from "@streamdown\/mermaid"/);
+  assert.match(renderer, /import \{ createMathPlugin \} from "@streamdown\/math"/);
+});
+
 test("streamdown pipeline delegates to official plugins (code/mermaid/math) and keeps link override", () => {
   // 官方插件接管：代码高亮、mermaid、数学
-  assert.match(stream, /import \{ code \} from "@streamdown\/code"/);
-  assert.match(stream, /import \{ mermaid \} from "@streamdown\/mermaid"/);
-  assert.match(stream, /import \{ createMathPlugin \} from "@streamdown\/math"/);
+  assert.match(renderer, /import \{ code \} from "@streamdown\/code"/);
+  assert.match(renderer, /import \{ mermaid \} from "@streamdown\/mermaid"/);
+  assert.match(renderer, /import \{ createMathPlugin \} from "@streamdown\/math"/);
   // 数学插件开启单美元行内公式（singleDollarTextMath: true）：
   // AI 输出 $...$ 是常态，默认关闭会整句原样输出（2026-08 修复，防回归锚点）
-  assert.match(stream, /createMathPlugin\(\{ singleDollarTextMath: true \}\)/);
-  assert.match(stream, /plugins: \(effectiveLight/);
-  assert.match(stream, /IncrementalMarkdownFrontier/);
-  assert.match(stream, /FrozenMarkdownChunk/);
-  assert.match(stream, /UNSTABLE_TAIL_BLOCKS/);
-  assert.match(stream, /math: mathPlugin/);
+  assert.match(renderer, /createMathPlugin\(\{ singleDollarTextMath: true \}\)/);
+  assert.match(renderer, /effectiveLight/);
+  assert.match(renderer, /math: mathPlugin/);
   // 公式复制走事件委托浮层（FormulaCopyLayer）：rehype-katex 产物不进组件 map，
   // 旧 p 层拦截只能覆盖“单一行内公式独占一段”，已删除（2026-08 通用化）
   assert.match(stream, /<FormulaCopyLayer \/>/);
   assert.doesNotMatch(stream, /MathBlockParagraph/);
   // 非 light 分支注册 code 插件；light（更新日志等轻场景）保持无高亮
-  assert.match(stream, /\bcode,\n/);
+  assert.match(renderer, /\bcode,\n/);
   // 不再用 details 折叠代码块（会露出浏览器默认「详情」）；行号沿用 streamdown 默认开启
-  assert.doesNotMatch(stream, /collapseCodeBlocks/);
-  assert.doesNotMatch(stream, /lineNumbers=\{false\}/);
+  assert.doesNotMatch(renderer, /collapseCodeBlocks/);
+  assert.doesNotMatch(renderer, /lineNumbers=\{false\}/);
   // 链接覆盖保留（file:// 打开 + 外链拦截是项目核心能力）
-  assert.match(stream, /a: \(linkProps\) =>/);
-  assert.match(stream, /MarkdownLink/);
-  assert.match(stream, /remarkLinkifyPaths/);
+  assert.match(renderer, /a: \(linkProps\) =>/);
+  assert.match(renderer, /MarkdownLink/);
+  assert.match(renderer, /remarkLinkifyPaths/);
   // 自定义 pre/span 覆盖移除：mermaid 由插件渲染、公式由 math 插件
-  assert.doesNotMatch(stream, /pre: \(preProps\) => <CodeBlock/);
-  assert.doesNotMatch(stream, /span: \(spanProps\) => <MathSpan/);
-  // 流式也走 static：streaming 模式的 useTransition 会合并帧导致蹦字
-  assert.match(stream, /mode="static"/);
-  assert.doesNotMatch(stream, /mode=\{props\.isStreaming \? "streaming" : "static"\}/);
+  assert.doesNotMatch(renderer, /pre: \(preProps\) => <CodeBlock/);
+  assert.doesNotMatch(renderer, /span: \(spanProps\) => <MathSpan/);
+  // 富渲染只发生在 settle 后，固定使用 static 模式。
+  assert.match(renderer, /mode="static"/);
+  assert.doesNotMatch(renderer, /mode=\{props\.isStreaming \? "streaming" : "static"\}/);
   // mermaid 主题跟随明暗
-  assert.match(stream, /theme: isDark \? "dark" : "default"/);
+  assert.match(renderer, /theme: isDark \? "dark" : "default"/);
 });
 
 test("streamdown code/table chrome uses faded action controls", () => {
@@ -125,50 +136,37 @@ test("static markdown scenes share the Streamdown engine", () => {
   assert.match(scratchPad, /remarkBreaks/);
 });
 
-test("streaming overlong guard: plain-text fallback above STREAM_LIGHT_MAX_CHARS", () => {
+test("streaming and first paint stay on the split plain-text fallback", () => {
   const stream = readFileSync("src/renderer/src/components/session/MarkdownStream.tsx", "utf8");
   const policy = readFileSync("src/renderer/src/components/session/markdownStreamPolicy.ts", "utf8");
-  // 阈值常量迁到纯策略模块（行为单测见 markdownStreamPolicy.test.mjs），MarkdownStream 兼容再导出
+  // 阈值兼容导出与超大 settle 轻插件策略仍保留。
   assert.match(policy, /export const STREAM_LIGHT_MAX_CHARS = 40_000/);
-  assert.match(policy, /export const STREAM_UNFREEZABLE_MIN_CHARS = 8_000/);
   assert.match(policy, /export const SETTLE_FULL_MAX_CHARS = 150_000/);
   assert.match(stream, /export \{ STREAM_LIGHT_MAX_CHARS \} from "\.\/markdownStreamPolicy"/);
-  // 回退节点：纯文本 + pre-wrap（排版由容器 markdown-body 接管）
-  assert.match(stream, /streamPlain =\s*\n?\s*isStreamingNow && displayText\.length > STREAM_LIGHT_MAX_CHARS/);
-  // 不可冻结（prefixEnd=0，未闭合围栏等）且超过小阈值：流式期间同样回退纯文本，
-  // 避免每帧全量重渲染（大代码块流式输出时 GC 追不上、原生内存爬升）
-  assert.match(stream, /frozenSplit !== undefined && frozenSplit\.prefixEnd === 0 && displayText\.length > STREAM_UNFREEZABLE_MIN_CHARS/);
-  // settle 全量渲染上限：超大内容保持轻量插件（防逐 token 高亮留下 GB 级 DOM）
+  // 所有流式内容及异步加载期都复用同一个可读 fallback，不创建 Markdown 解析树。
+  assert.match(stream, /const displayText = isStreamingNow \? displayedContent : props\.text/);
+  assert.match(stream, /const renderRichMarkdown = !isStreamingNow && rendererRequested && Renderer/);
+  assert.match(stream, /<PlainStreamSplit text=\{displayText\} \/>/);
+  assert.doesNotMatch(stream, /IncrementalMarkdownFrontier|FrozenMarkdownChunk|<Streamdown/);
+  // settle 全量渲染上限：超大内容保持轻量插件。
   assert.match(stream, /shouldKeepLightOnSettle\(props\.text\.length\)/);
-  // 回退必须发生在 Streamdown 之外（不建解析树），且依赖链含 streamPlain
   assert.match(stream, /whitespace-pre-wrap break-words/);
-  assert.match(stream, /if \(streamPlain\)/);
-  assert.match(stream, /pipe, streamPlain/);
-  // 超长兜底对思考同样生效（ThinkingBlock 走同一 MarkdownStream），无需额外开关
+  // 思考同样复用 MarkdownStream，无需另一条首屏渲染链。
   const thinking = readFileSync("src/renderer/src/components/session/TimelineEventCards.tsx", "utf8");
   assert.match(thinking, /<MarkdownStream/);
-  // 流式轻渲染契约不回退：static 模式 + 流式精简插件仍是默认；
-  // 精简插件必须是模块级稳定引用（NO_STREAM_*），不能内联 []——
-  // 否则 pipe 每帧重建，冻结 prefix chunk 的 memo 失效，每帧全量重解析
-  assert.match(stream, /mode="static"/);
-  assert.match(stream, /resolvedRemarkPlugins = isStreamingNow\s*\n\s*\?\s*NO_STREAM_REMARK_PLUGINS/);
-  assert.match(stream, /resolvedRehypePlugins = isStreamingNow\s*\n\s*\?\s*NO_STREAM_REHYPE_PLUGINS/);
-  assert.doesNotMatch(stream, /isStreamingNow\s*\?\s*\[\]/);
 });
 
-test("settle full render is deferred to idle (no long task during interaction)", () => {
+test("static and settled rich rendering is deferred to idle with plain-text failure fallback", () => {
 	const stream = readFileSync("src/renderer/src/components/session/MarkdownStream.tsx", "utf8");
-	// settle 全量渲染（元素树+高亮，实测 70-100ms 长任务）必须延迟到浏览器空闲，
-	// 避免在用户滚动/交互期间卡帧造成滚动跳动
-	assert.match(stream, /wasStreamingRef = useRef\(false\)/);
+	// 静态首帧和 settle 都必须延迟到空闲；不能在首次 render 直接请求重库。
 	assert.match(stream, /requestIdleCallback\(schedule, \{ timeout: 1500 \}\)/);
-	// 静态场景（从未流式，如 FileDiffViewer）不得延迟：立即全量
-	assert.match(stream, /if \(!wasStreamingRef\.current\) \{\s*\n\s*\/\/ 静态场景/);
-	assert.match(stream, /setSettleFull\(true\);\s*\n\s*return;/);
-	// settle 等待期保持轻量渲染（effectiveLight 含 !settleFull），并继续走冻结渲染
-	assert.match(stream, /const effectiveLight = props\.light \|\| isStreamingNow \|\| !settleFull/);
-	assert.match(stream, /const usingFrozen = isStreamingNow \|\| !settleFull/);
-	assert.match(stream, /if \(!usingFrozen\) frontierRef\.current\.reset\(\)/);
+	assert.match(stream, /const \[rendererRequested, setRendererRequested\] = useState\(false\)/);
+	assert.match(stream, /if \(isStreamingNow\) \{\s*setRendererRequested\(false\)/);
+	assert.match(stream, /cancelIdleCallback\(id\)/);
+	// 异步失败不能清空消息；promise 缓存复位供后续挂载重试，当前保持 PlainStreamSplit。
+	assert.match(stream, /rendererLoadPromise = undefined/);
+	assert.match(stream, /\.catch\(\(\) => \{/);
+	assert.match(stream, /<PlainStreamSplit text=\{displayText\} \/>/);
 });
 
 test("AnswerOutput live path renders through MarkdownStream (no dual typewriter)", () => {

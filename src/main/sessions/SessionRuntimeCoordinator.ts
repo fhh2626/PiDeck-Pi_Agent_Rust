@@ -20,8 +20,10 @@ import type {
 	SessionRuntimeTarget,
 	SessionTargetedValue,
 	SessionUiResponseInput,
+	PendingUiRequestSnapshot,
 } from "../../shared/types";
 import { buildSessionOriginKey } from "../../shared/sessionIdentity";
+import { normalizeAgentUiBatchQuestion } from "../../shared/askQuestion";
 import type { SessionCatalogEntry } from "./SessionCatalog";
 
 export interface SessionCatalogGateway {
@@ -102,19 +104,8 @@ type DeliveryCacheEntry = {
 	promise: Promise<SendSessionPromptResult>;
 };
 
-export type PendingUiRequestSnapshot = {
-	sessionId: string;
-	agentId: string;
-	runtimeGeneration: number;
-	requestId: string;
-	method: string;
-	title: string;
-	options?: string[];
-	placeholder?: string;
-	prefill?: string;
-	allowOther?: boolean;
-};
-
+// 待回答的 UI 请求快照（Web/飞书轮询用）。契约统一走 shared/types（含
+// batchQuestions/batchReview），Web 与主进程共用一份，避免两侧各维护一套。
 type PendingUiRequest = PendingUiRequestSnapshot;
 
 export type SessionRuntimeBinding = {
@@ -653,6 +644,14 @@ export class SessionRuntimeCoordinator {
 		const options = Array.isArray(event.payload.options)
 			? event.payload.options.filter((option): option is string => typeof option === "string")
 			: undefined;
+		// batch_ask 的完整表单（逐题渲染/评审）随快照下发给 Web/飞书；
+		// 逐题走共享 normalizer（shared/askQuestion）收窄：坏数据最多退化成少几题，
+		// 不崩轮询；选项里的 null/数字也被过滤，渲染层读 option.label 不会炸。
+		const batchQuestions = Array.isArray(event.payload.batchQuestions)
+			? event.payload.batchQuestions
+					.map((question) => normalizeAgentUiBatchQuestion(question))
+					.filter((question): question is NonNullable<typeof question> => question !== undefined)
+			: undefined;
 		this.pendingUiRequests.set(key, {
 			sessionId: event.sessionId,
 			agentId: event.agentId,
@@ -664,6 +663,8 @@ export class SessionRuntimeCoordinator {
 			placeholder: typeof event.payload.placeholder === "string" ? event.payload.placeholder : undefined,
 			prefill: typeof event.payload.prefill === "string" ? event.payload.prefill : undefined,
 			allowOther: event.payload.allowOther === true,
+			...(batchQuestions && batchQuestions.length > 0 ? { batchQuestions } : {}),
+			...(event.payload.batchReview === true ? { batchReview: true } : {}),
 		});
 
 		// 非聚焦会话收到 Ask 类请求时触发桌面通知：用户切到别的会话时

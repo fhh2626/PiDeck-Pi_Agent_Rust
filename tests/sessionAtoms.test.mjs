@@ -901,6 +901,125 @@ test("window slide-out keeps an older identical assistant reply even without a d
     [...entry().messages.map((m) => m.meta.entryId)],
     ["e3", "e4"],
   );
+  assert.equal(
+    entry().history.nextBefore,
+    null,
+    "slide-out without a file cursor stays unknown, not exhausted",
+  );
+  assert.equal(entry().history.exhausted, undefined);
+});
+
+test("cursor-less slide-out history still accepts a first history page", () => {
+  const atoms = loadAtoms();
+  const store = createStore();
+  const entry = () => store.get(atoms.sessionMessagesCacheAtom)["session-a"];
+  store.set(atoms.applySessionRuntimeEventAtom, {
+    sessionId: "session-a",
+    agentId: "agent-a",
+    runtimeGeneration: 1,
+    sourceChannel: "agents:message",
+    payload: {
+      agentId: "agent-a",
+      windowStart: 2,
+      totalLength: 4,
+      slideOut: [
+        { id: "u1", role: "user", text: "old", meta: { entryId: "e1" } },
+      ],
+      messages: [
+        { id: "u2", role: "user", text: "q", meta: { entryId: "e3" } },
+        { id: "a2", role: "assistant", text: "a", meta: { entryId: "e4" } },
+      ],
+    },
+  });
+  assert.equal(entry().history.nextBefore, null, "unknown cursor stays null");
+  assert.equal(store.set(atoms.prependSessionHistoryPageAtom, {
+    sessionId: "session-a",
+    expectedRevision: entry().revision,
+    before: undefined,
+    page: {
+      messages: [{ id: "h0", role: "user", text: "older", meta: { entryId: "e0" } }],
+      total: 24,
+      nextBefore: 12,
+      indexVersion: "1:1",
+    },
+  }), true);
+  assert.deepEqual([...entry().history.messages.map((m) => m.meta.entryId)], ["e0", "e1"]);
+  assert.equal(entry().history.nextBefore, 12);
+});
+
+test("slide-out history keeps the file cursor when windowStartFilePos is present", () => {
+  const atoms = loadAtoms();
+  const store = createStore();
+  const entry = () => store.get(atoms.sessionMessagesCacheAtom)["session-a"];
+  store.set(atoms.applySessionRuntimeEventAtom, {
+    sessionId: "session-a",
+    agentId: "agent-a",
+    runtimeGeneration: 1,
+    sourceChannel: "agents:message",
+    payload: {
+      agentId: "agent-a",
+      windowStart: 2,
+      totalLength: 4,
+      windowStartFilePos: 24,
+      slideOut: [
+        { id: "u1", role: "user", text: "old", meta: { entryId: "e1" } },
+      ],
+      messages: [
+        { id: "u2", role: "user", text: "q", meta: { entryId: "e3" } },
+        { id: "a2", role: "assistant", text: "a", meta: { entryId: "e4" } },
+      ],
+    },
+  });
+  assert.equal(entry().history.nextBefore, 24);
+  assert.equal(store.set(atoms.prependSessionHistoryPageAtom, {
+    sessionId: "session-a",
+    expectedRevision: entry().revision,
+    before: 24,
+    page: {
+      messages: [{ id: "h0", role: "user", text: "older", meta: { entryId: "e0" } }],
+      total: 24,
+      nextBefore: 12,
+      indexVersion: "1:1",
+    },
+  }), true);
+  assert.equal(entry().history.nextBefore, 12);
+});
+
+test("empty exhausted history page keeps the top marker so the load button can hide", () => {
+  const atoms = loadAtoms();
+  const store = createStore();
+  const entry = () => store.get(atoms.sessionMessagesCacheAtom)["session-a"];
+  store.set(atoms.applySessionRuntimeEventAtom, {
+    sessionId: "session-a",
+    agentId: "agent-a",
+    runtimeGeneration: 1,
+    sourceChannel: "agents:message",
+    payload: {
+      agentId: "agent-a",
+      windowStart: 2,
+      totalLength: 4,
+      messages: [
+        { id: "u2", role: "user", text: "q", meta: { entryId: "e3" } },
+        { id: "a2", role: "assistant", text: "a", meta: { entryId: "e4" } },
+      ],
+    },
+  });
+  assert.equal(store.set(atoms.prependSessionHistoryPageAtom, {
+    sessionId: "session-a",
+    expectedRevision: entry().revision,
+    before: undefined,
+    page: {
+      messages: [
+        { id: "u2", role: "user", text: "q", meta: { entryId: "e3" } },
+      ],
+      total: 4,
+      nextBefore: null,
+      indexVersion: "1:1",
+    },
+  }), true);
+  assert.equal(entry().history.messages.length, 0);
+  assert.equal(entry().history.nextBefore, null);
+  assert.equal(entry().history.exhausted, true);
 });
 
 test("prependSessionHistoryPageAtom guards revision and cursor continuity, dedupes against segment", () => {

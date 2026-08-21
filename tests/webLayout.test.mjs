@@ -42,6 +42,24 @@ test("Web model picker supports search and mobile header wrapping", () => {
 	assert.match(webHeader, /<CommandInput placeholder=\{t\("web\.modelSearch"\)\}/);
 	assert.match(webHeader, /CommandEmpty>\{t\("web\.modelEmpty"\)\}/);
 	assert.match(webHeader, /chat-header flex min-w-0 flex-wrap/);
+	assert.match(webHeader, /chat-header-runtime/);
+	assert.match(webHeader, /max-w-52 shrink/);
+});
+
+test("Mobile Web header wraps context checks above the model picker", () => {
+	const checks = readFileSync("src/renderer/src/web/WebContextChecks.tsx", "utf8");
+	assert.match(webCss, /\.chat-header-actions[\s\S]*flex-wrap:\s*wrap;/);
+	assert.doesNotMatch(
+		webCss,
+		/@media\s*\(max-width:\s*900px\)[\s\S]*\.chat-header-actions[\s\S]*flex-wrap:\s*nowrap;/,
+		"phones must not force the header controls onto one squeezed row",
+	);
+	assert.match(webCss, /chat-context-checks,[\s\S]*flex:\s*1\s+1\s+100%;/);
+	assert.match(checks, /chat-context-checks/);
+	assert.match(checks, /whitespace-nowrap/);
+	assert.match(webHeader, /chat-header-runtime/);
+	assert.match(webHeader, /max-w-52 shrink/);
+	assert.match(webCss, /overflow-x:\s*auto;/);
 });
 
 test("Web header mounts context checkboxes before the model picker", () => {
@@ -68,6 +86,55 @@ test("Web starts with no selected session and exposes a scroll-to-bottom action"
 	assert.doesNotMatch(webChatApp, /setActiveSessionId\(next\.sessions\[0\]\?\.id \?\? ""\)/);
 	assert.match(webChatApp, /setActiveSessionId\(""\)/);
 	assert.match(webTimeline, /scroll-to-bottom|ScrollDown|scrollToBottom/);
+});
+
+test("Web history load control stays at the top and can recover from a missing cursor", () => {
+	assert.match(webChatApp, /hasMoreWebHistory/);
+	assert.match(webChatApp, /canRequestWebHistoryPage/);
+	assert.match(webChatApp, /catalogMessageCount: activeSession\?\.messageCount/);
+	assert.match(webChatApp, /status: "ready"/);
+	assert.match(webChatApp, /status: "error"/);
+	assert.match(webChatApp, /不要把会话标成 loaded/);
+	const loadButton = webTimeline.indexOf('t("timeline.loadMoreHistory"');
+	const messageMap = webTimeline.indexOf("messages.map((message)");
+	assert.ok(loadButton >= 0, "WebTimeline must render a load-more control");
+	assert.ok(messageMap > loadButton, "load more must sit above the message list, not after it");
+});
+
+test("Web history remains interactive and cached while an answer streams", () => {
+	assert.doesNotMatch(
+		webChatApp,
+		/if \(!activeSessionId \|\| streaming \|\| loadingMore\) return/,
+		"streaming must not silently discard a load-more click",
+	);
+	assert.doesNotMatch(
+		webChatApp,
+		/Boolean\(activeSessionId\) && !streaming && hasMoreWebHistory/,
+		"the history control must stay visible while the model is answering",
+	);
+	assert.match(
+		webChatApp,
+		/messagesBySessionRef\.current\[activeSessionId\] = mergeAuthoritativeUiMessages\(/,
+		"streaming updates must merge into prepended history instead of replacing it with the runtime tail",
+	);
+	assert.match(
+		webTimeline,
+		/onClick=\{\(\) => \{\s*stickToBottomRef\.current = false;[\s\S]*?onLoadMore\(\);\s*\}\}/,
+		"loading older messages must suspend bottom-follow so the prepended page stays visible",
+	);
+});
+
+test("Web stream-error recovery preserves pages that were already loaded", () => {
+	assert.doesNotMatch(
+		webChatApp,
+		/messagesBySessionRef\.current\[sessionId\] = authoritative;/,
+		"a tail-page recovery response must not replace the complete per-session cache",
+	);
+	assert.doesNotMatch(
+		webChatApp,
+		/setMessages\(authoritative\)/,
+		"error recovery must render the merged cache rather than only the recovered tail page",
+	);
 });
 
 test("Web tool cards stay compact and keep a visible settled status", () => {
@@ -118,4 +185,12 @@ test("Web entry wraps the app in TooltipProvider for context-check hints", () =>
 	const webMain = readFileSync("src/renderer/src/web-main.tsx", "utf8");
 	assert.match(webMain, /TooltipProvider/);
 	assert.match(webMain, /<WebChatApp/);
+});
+test("Web chat stream errors do not flip the connection badge", () => {
+	assert.match(webChatApp, /markWebStateFailure/);
+	assert.match(webChatApp, /setCommandError\(t\("web\.streamFailed"\)\)/);
+	assert.doesNotMatch(
+		webChatApp,
+		/setCommandError\(t\("web\.streamFailed"\)\);\s*setConnected\(false\)/,
+	);
 });

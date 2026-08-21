@@ -14,6 +14,7 @@ import type {
 	CreateAnonymousSessionResult,
 	CreateSessionDraftInput,
 	ImageContent,
+	PendingUiRequestSnapshot,
 	PiCommand,
 	Project,
 	SendSessionPromptInput,
@@ -29,13 +30,13 @@ import type {
 	SessionUiResponseInput,
 	UpdateSessionRecordInput,
 } from "../../shared/types";
-import type { PendingUiRequestSnapshot } from "../sessions/SessionRuntimeCoordinator";
 import { serializeWebClientDictionaries, webEnUS } from "./WebI18n";
 import {
 	WebEventStreamRouter,
 	serializeSseFrame,
 	type PiEvent,
 } from "./WebEventStream";
+import { getAppLogger } from "../logging/sharedLogger";
 
 type WebServiceSettings = Pick<
 	AppSettings,
@@ -209,6 +210,8 @@ export class WebServiceManager {
 		// 解绑 pi 事件源，避免服务关闭后仍在转发事件到已失效的 SSE 连接。
 		this.eventStreamRouter.unbindPiSource();
 		if (!this.server) return;
+		getAppLogger()?.info("web", "Web service stopping", this.current ?? {});
+
 		const server = this.server;
 		this.server = null;
 		this.current = null;
@@ -253,6 +256,9 @@ export class WebServiceManager {
 			});
 		}
 
+		// 长回复 SSE 可能超过 Node 默认 5 分钟 requestTimeout；只关请求超时，保留 keep-alive。
+		server.requestTimeout = 0;
+		server.headersTimeout = 0;
 		await new Promise<void>((resolve, reject) => {
 			server.once("error", reject);
 			server.listen(port, host, () => {
@@ -262,6 +268,7 @@ export class WebServiceManager {
 		});
 		this.server = server;
 		this.current = { host, port: this.getPort(server, port) };
+		getAppLogger()?.info("web", "Web service started", this.current);
 	}
 
 	private async handleRequest(
@@ -543,7 +550,10 @@ export class WebServiceManager {
 				this.handleStream(sessionId, request, response);
 				const result = await this.deps.sendSessionPrompt({
 					sessionId,
-					requestId: String(body.id ?? crypto.randomUUID()),
+					// useChat 的 id 是 sessionId，不能当 requestId：
+					// SessionRuntimeCoordinator 会按 sessionId+requestId 缓存 10 分钟，
+					// 第二次发送会被当成同一请求直接吞掉。
+					requestId: crypto.randomUUID(),
 					message,
 				}).catch((error: unknown) => ({
 					accepted: false as const,

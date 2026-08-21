@@ -2,6 +2,7 @@ import type { ChatMessage, ImageContent } from "../../shared/types";
 import type { MainProcessTranslationKey } from "../../shared/i18n/mainProcessCopy";
 import { extractMessageText } from "./messageContent";
 import { takeActiveEntryId } from "./sessionEntryIds";
+import { buildAskQuestionResultSummary } from "./askQuestionResult";
 
 export type AgentMessageProjectorDeps = {
 	translate: (
@@ -166,38 +167,19 @@ export class AgentMessageProjector {
 					// detailText 整体截断（拼接后可能超单段上限）并标记 truncated/fullLength，
 					// 渲染层据此提供「查看完整输出」按需加载（sessionsCatalogReadMessageFullText）。
 					const detailDelivery = this.truncateDetailWithMeta(detailText);
-					// 从历史工具结果中提取 ask_question 详情，用于渲染提问卡片（支持单问题和批量格式）。
-					const askCard = (() => {
-						if (toolName !== "ask_question" || !typed.details) return undefined;
-						// abort 时发 value:null 导致 answer 为 null，但 pi 可能已默认选了第一选项。
-						// 覆写 answer 为 null、answered 为 false，确保卡片显示"已取消"。
-						const aborted = this.deps.isAskAborted(agentId);
-						// 单问题格式：details.question (string), details.answer
-						if (typed.details.question) {
-							return {
-								question: typed.details.question,
-								type: typed.details.type,
-								answered: aborted ? false : typed.details.answered,
-								answer: aborted ? null : typed.details.answer,
-								answerLabel: aborted ? undefined : typed.details.answerLabel,
-								options: typed.details.options,
-							};
-						}
-						// 批量格式：details.questions / details.answers 数组，取第一组问答
-						if (Array.isArray(typed.details.answers) && typed.details.answers.length > 0) {
-							const firstQuestion = Array.isArray(typed.details.questions) ? typed.details.questions[0] : undefined;
-							const firstAnswer = typed.details.answers[0];
-							return {
-								question: firstQuestion?.question ?? String(firstAnswer.id ?? ""),
-								type: firstAnswer.type ?? firstQuestion?.type ?? "input",
-								answered: !typed.details.cancelled && firstAnswer.value !== null,
-								answer: firstAnswer.value,
-								answerLabel: firstAnswer.label,
-								options: firstQuestion?.options,
-							};
-						}
-						return undefined;
-					})();
+				// 从历史工具结果中提取 ask_question 详情，用于渲染「常驻问答卡」：
+				// 与实时（AgentManager）共用 buildAskQuestionResultSummary，保证批量问答
+				// 在历史回放时同样恢复全部问题（而非只取第一题）。
+				// abort 时 isAskAborted 覆写 answer=null / answered=false，显示"已取消"。
+				const askCard = buildAskQuestionResultSummary({
+					toolName,
+					args: historicalCall?.args,
+					result,
+					aborted: this.deps.isAskAborted(agentId),
+					// 与实时路径（AgentManager）对齐：历史里 ✗ ask_question 的
+					// result 同样是错误文案，不升格成「已回答」问答卡。
+					isError,
+				});
 					// entryIndex 已在上方 takeActiveEntryId 推进
 					return [{
 						id: `${agentId}-history-${currentEntryId ?? index}`,

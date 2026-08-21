@@ -46,6 +46,10 @@ function loadAgentMessageProjectorModule() {
       if (specifier === "../extensions/builtInExtensions") {
         return { appendBuiltInExtensionArgs: (args) => [...args] };
       }
+      // Phase B 起 AgentMessageProjector / AgentManager 引入 askQuestionResult
+      if (specifier === "./askQuestionResult") {
+        return { buildAskQuestionResultSummary: () => undefined };
+      }
       return nodeRequire(specifier);
     },
     Date,
@@ -160,6 +164,10 @@ function loadAgentManagerModule() {
       if (specifier === "./streamGate") return streamGateModule.exports;
       if (specifier === "./cacheHitStats") return cacheHitStatsModule.exports;
       if (specifier === "../../shared/toolRuntimeState") return { updateActiveToolCalls: () => undefined };
+      // AgentManager 也依赖 askQuestionResult（与 Projector 共用同一桩）
+      if (specifier === "./askQuestionResult") {
+        return { buildAskQuestionResultSummary: () => undefined };
+      }
       if (specifier === "../wsl/WslPaths") {
         return { toWindowsHostPath: (path) => path, toWslLinuxPath: (path) => path };
       }

@@ -134,6 +134,54 @@ test("load-more compensation is skipped at the very top so prepended content sta
   assert.equal(resolveTimelineTopCompensation(240, 0), 240);
 });
 
+test("runtime history still has more after a cursor-less slide-out prefix", () => {
+  const { hasMoreRuntimeHistory } = loadTimelineHelpers();
+  assert.equal(hasMoreRuntimeHistory({
+    source: "runtime",
+    windowStart: 18,
+    windowStartFilePos: 24,
+    history: {
+      messages: [{ id: "h1" }],
+      nextBefore: null,
+    },
+  }), true);
+  assert.equal(hasMoreRuntimeHistory({
+    source: "runtime",
+    windowStart: 18,
+    history: {
+      messages: [{ id: "h1" }],
+      nextBefore: null,
+      exhausted: true,
+    },
+  }), false);
+  assert.equal(hasMoreRuntimeHistory({
+    source: "runtime",
+    windowStart: 0,
+    history: {
+      messages: [{ id: "h1" }],
+      nextBefore: 12,
+    },
+  }), true);
+  assert.equal(hasMoreRuntimeHistory({
+    source: "runtime",
+    windowStart: 0,
+    windowStartFilePos: 24,
+    history: {
+      messages: [{ id: "h1" }],
+      nextBefore: null,
+    },
+  }), true);
+  assert.equal(hasMoreRuntimeHistory({
+    source: "runtime",
+    windowStart: 0,
+    windowStartFilePos: 0,
+  }), false);
+  assert.equal(hasMoreRuntimeHistory({
+    source: "disk",
+    windowStart: 18,
+  }), false);
+});
+
 test("auto history load ignores programmatic scrolls and only fires on real user scroll", () => {
   // 监听器迁移到 controller：程序化滚动事件先消费 programmaticScrollRef 抑制标记；
   // 组件里不再存在裸的 scrollTop>240 触发（原实现会因补偿滚动连锁翻页）。

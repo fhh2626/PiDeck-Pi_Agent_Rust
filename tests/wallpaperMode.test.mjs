@@ -29,7 +29,7 @@ test("wallpaper mode: background image reveals through translucent panels", () =
 });
 
 test("wallpaper surfaces do not let bg-background utility hide the image", () => {
-  const surfaceSource = readFileSync("src/renderer/src/components/session/SurfaceComponents.tsx", "utf8");
+  const surfaceSource = readFileSync("src/renderer/src/components/session/EmptyState.tsx", "utf8");
   const startSource = readFileSync("src/renderer/src/components/session/SessionStartSurface.tsx", "utf8");
   const composerSource = readFileSync("src/renderer/src/components/session/ComposerArea.tsx", "utf8");
 

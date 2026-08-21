@@ -1,9 +1,37 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 import { readRendererStyles } from "./helpers/rendererStyles.mjs";
 import ts from "typescript";
 import vm from "node:vm";
+
+test("html-to-image stays behind the shared dynamic loader", () => {
+  for (const relativePath of readdirSync("src/renderer/src", { recursive: true })) {
+    if (typeof relativePath !== "string" || !/\.[cm]?[jt]sx?$/.test(relativePath)) continue;
+    const source = readFileSync(`src/renderer/src/${relativePath}`, "utf8");
+    const sourceFile = ts.createSourceFile(
+      relativePath,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      relativePath.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+    const runtimeImport = sourceFile.statements.find((statement) =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === "html-to-image" &&
+      !statement.importClause?.isTypeOnly
+    );
+    assert.equal(
+      runtimeImport,
+      undefined,
+      `${relativePath} must not statically import html-to-image`,
+    );
+  }
+
+  const loader = readFileSync("src/renderer/src/utils/htmlToImage.ts", "utf8");
+  assert.match(loader, /import\("html-to-image"\)/);
+});
 
 function loadAppUtils() {
   const source = readFileSync("src/renderer/src/components/app/AppUtils.ts", "utf8");

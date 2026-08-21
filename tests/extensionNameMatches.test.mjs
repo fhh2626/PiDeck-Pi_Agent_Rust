@@ -57,7 +57,7 @@ test("only todo / plan / ask built-ins participate in conflict detection", () =>
 	assert.equal(BUILT_IN_CONFLICT_KEYWORDS[0][1], "todo");
 	assert.equal(BUILT_IN_CONFLICT_KEYWORDS[1][0], "pi-deck-plan-mode.ts");
 	assert.equal(BUILT_IN_CONFLICT_KEYWORDS[1][1], "plan");
-	assert.equal(BUILT_IN_CONFLICT_KEYWORDS[2][0], "pi-deck-ask-question.ts");
+	assert.equal(BUILT_IN_CONFLICT_KEYWORDS[2][0], "pideck-q-ask-question.ts");
 	assert.equal(BUILT_IN_CONFLICT_KEYWORDS[2][1], "ask");
 });
 

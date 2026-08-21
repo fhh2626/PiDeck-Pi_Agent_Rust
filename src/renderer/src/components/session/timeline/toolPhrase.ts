@@ -88,7 +88,7 @@ export function getToolPhrase(
 	}
 
 	// 搜索类
-	if (key === "grep" || key === "search") {
+	if (key === "grep" || key === "search" || key === "web_search" || key === "websearch" || key === "websearch_") {
 		const pattern = firstString(input.pattern, input.query, input.q);
 		return phraseFor(pattern ? `搜索 ${truncate(String(pattern), 40)}` : "搜索", pattern ? `正在搜索 ${truncate(String(pattern), 40)}...` : "正在搜索...");
 	}
@@ -98,7 +98,7 @@ export function getToolPhrase(
 	}
 
 	// 网络获取类
-	if (key === "fetch" || key === "fetch_content" || key === "web_search" || key === "url" || key === "http" || key.includes("fetch")) {
+	if (key === "fetch" || key === "fetch_content" || key === "url" || key === "http" || key.includes("fetch")) {
 		const url = firstString(input.url, input.urls, input.query);
 		return phraseFor(url ? `获取 ${truncate(String(url), 50)}` : "获取网页", url ? `正在获取 ${truncate(String(url), 50)}...` : "正在获取网页...");
 	}

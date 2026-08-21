@@ -1,5 +1,5 @@
 /**
- * PiDeck Ask Question Extension
+ * PiDeck-Q-Ask-Question Extension
  *
  * 注册 ask_question 工具，让 LLM 可以向用户提问并从桌面端 UI 获取回答。
  * 使用 pi RPC Extension UI Protocol（ctx.ui.select/input/editor）实现用户交互，

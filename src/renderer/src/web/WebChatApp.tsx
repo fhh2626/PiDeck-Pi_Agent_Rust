@@ -12,7 +12,7 @@ import type { AgentUiResponse } from '../../../shared/types';
  * UI 层与桌面端对齐：WebSidebar / WebHeader / WebTimeline / WebComposer，
  * 复用桌面设计 token、shadcn 组件、lucide 图标与 timeline/surfaces 样式类。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
@@ -37,15 +37,14 @@ import {
 	setRuntimeThinking,
 	updateSessionRecord,
 } from "./webApi";
-import type { WebProject, WebState } from "./webTypes";
-
-/** 分页元数据：已加载消息总数 + 更早一页的游标。 */
-type HistoryMeta = {
-	total: number;
-	nextBefore: number | null;
-	nextBeforeEntryId?: string;
-	indexVersion?: string;
-};
+import type { WebPendingUiRequest, WebProject, WebState } from "./webTypes";
+import {
+	markWebStateFailure,
+	markWebStateSuccess,
+	WEB_STATE_POLL_MS,
+	type WebConnectionSnapshot,
+} from "./webConnection";
+import { canRequestWebHistoryPage, hasMoreWebHistory, type WebHistoryMeta } from "./webHistory";
 
 export function WebChatApp() {
 	const [state, setState] = useState<WebState>({
@@ -57,7 +56,9 @@ export function WebChatApp() {
 	const [activeSessionId, setActiveSessionId] = useState<string>("");
 	const [creatingProjectId, setCreatingProjectId] = useState<string>("");
 	const [connected, setConnected] = useState(false);
+	const connectionRef = useRef<WebConnectionSnapshot>({ connected: false, failures: 0 });
 	const [loadingMore, setLoadingMore] = useState(false);
+	const [historyEpoch, setHistoryEpoch] = useState(0);
 	const [models, setModels] = useState<AvailableModel[]>([]);
 	const [commandError, setCommandError] = useState<string | null>(null);
 	// 首页（无会话）时选择的模型/思考级别：暂存为待用偏好，随下一次新建会话生效
@@ -100,7 +101,10 @@ export function WebChatApp() {
 	// ── 本组件自持的 per-session 消息缓存（useChat 切换 id 会重建 Chat 实例） ──
 	const messagesBySessionRef = useRef<Record<string, UIMessage[]>>({});
 	const loadedSessionsRef = useRef<Set<string>>(new Set());
-	const historyMetaRef = useRef<Record<string, HistoryMeta>>({});
+	const historyMetaRef = useRef<Record<string, WebHistoryMeta>>({});
+	const bumpHistory = useCallback(() => {
+		setHistoryEpoch((value) => value + 1);
+	}, []);
 	const historyRequestSequenceRef = useRef<Record<string, number>>({});
 	const activeSessionIdRef = useRef<string>("");
 	const streamingRef = useRef(false);
@@ -166,20 +170,28 @@ export function WebChatApp() {
 					nextBefore: page.nextBefore,
 					nextBeforeEntryId: page.nextBeforeEntryId,
 					indexVersion: page.indexVersion,
+					status: "ready",
 				};
 				loadedSessionsRef.current.add(sessionId);
+				bumpHistory();
 				// 仅当仍停留在该会话时才注入（避免切走后 setMessages 串台）
 				if (activeSessionIdRef.current === sessionId && !streamingRef.current) {
 					setMessages(merged);
 				}
 			})
 			.catch(() => {
+				if (historyRequestSequenceRef.current[sessionId] !== requestSequence) return;
+				historyMetaRef.current[sessionId] = {
+					total: historyMetaRef.current[sessionId]?.total ?? 0,
+					nextBefore: null,
+					status: "error",
+				};
+				bumpHistory();
 				if (activeSessionIdRef.current === sessionId) setCommandError(t("web.historyLoadFailed"));
 			});
-	}, [activeSessionId, setMessages]);
+	}, [activeSessionId, bumpHistory, setMessages]);
 
-	// SSE 断线不伪装成可恢复的增量流：先读取已落盘的权威历史，避免旧的
-	// partial UI 覆盖最终消息。下一次发送会建立新的 /api/chat 流。
+	// SSE 异常才回读权威历史。正常 finish+[DONE] 不是失败，不要把侧栏打成断开。
 	useEffect(() => {
 		if (!error || !activeSessionId) return;
 		const sessionId = activeSessionId;
@@ -192,21 +204,30 @@ export function WebChatApp() {
 					activeSessionIdRef.current !== sessionId
 				) return;
 				const authoritative = chatMessagesToUiMessages(page.messages);
-				messagesBySessionRef.current[sessionId] = authoritative;
+				// Recovery only fetches the authoritative tail page. Merge it into the
+				// cached transcript so a stream error cannot discard older loaded pages.
+				const merged = mergeAuthoritativeUiMessages(
+					messagesBySessionRef.current[sessionId] ?? [],
+					authoritative,
+					{ dropUnmatchedTrailingPlaceholders: true },
+				);
+				messagesBySessionRef.current[sessionId] = merged;
 				historyMetaRef.current[sessionId] = {
 					total: page.total,
 					nextBefore: page.nextBefore,
 					nextBeforeEntryId: page.nextBeforeEntryId,
 					indexVersion: page.indexVersion,
+					status: "ready",
 				};
 				loadedSessionsRef.current.add(sessionId);
-				if (!streamingRef.current) setMessages(authoritative);
+				bumpHistory();
+				if (!streamingRef.current) setMessages(merged);
 				setCommandError(t("web.streamFailed"));
 			})
 			.catch(() => {
 				if (activeSessionIdRef.current === sessionId) setCommandError(t("web.historyLoadFailed"));
 			});
-	}, [activeSessionId, error, setMessages]);
+	}, [activeSessionId, bumpHistory, error, setMessages]);
 
 	// 轮询拿到的运行时快照也要在切换会话/流结束后立即回放，
 	// 否则 Web 只显示自己发出的 SSE，PC 端新增的消息永远要等重新打开页面才出现。
@@ -215,12 +236,17 @@ export function WebChatApp() {
 		syncRuntimeMessages(state, activeSessionId);
 	}, [activeSessionId, state, streaming, syncRuntimeMessages]);
 
-	// 流式期间同步缓存：仅 streaming 时回写（空闲时 setMessages 来自历史恢复/分页，
-	// 对应逻辑已各自写缓存；这里若无条件覆盖会把刚恢复的历史再次清空）
+	// 流式期间同步缓存：仅 streaming 时合并（空闲时 setMessages 来自历史恢复/分页，
+	// 对应逻辑已各自写缓存）。运行时 useChat 可能只保留尾部窗口，不能直接覆盖缓存，
+	// 否则用户已经「加载更多」prepend 的旧页会在下一次发送后全部丢失。
+	// 不要把会话标成 loaded：那是「首页已经成功」的语义。流式先标 loaded
+	// 会让 handleLoadMore 在还没拿到 nextBefore 时直接 return，点按钮没反应。
 	useEffect(() => {
 		if (!activeSessionId || !streaming) return;
-		messagesBySessionRef.current[activeSessionId] = messages;
-		loadedSessionsRef.current.add(activeSessionId);
+		messagesBySessionRef.current[activeSessionId] = mergeAuthoritativeUiMessages(
+			messagesBySessionRef.current[activeSessionId] ?? [],
+			messages,
+		);
 	}, [messages, activeSessionId, streaming]);
 
 	// 首页直发：useChat 随 activeSessionId 切换在渲染期重建实例（@ai-sdk/react 在 render 中
@@ -248,7 +274,9 @@ export function WebChatApp() {
 				if (disposed) return;
 				setState(next);
 				syncRuntimeMessages(next, activeSessionIdRef.current);
-				setConnected(true);
+				const nextConnection = markWebStateSuccess();
+				connectionRef.current = nextConnection;
+				setConnected(nextConnection.connected);
 				// 清理已被外部删除的会话缓存
 				const validSessionIds = new Set(next.sessions.map((s) => s.id));
 				for (const id of Object.keys(messagesBySessionRef.current)) {
@@ -263,11 +291,14 @@ export function WebChatApp() {
 					setActiveSessionId("");
 				}
 			} catch {
-				if (!disposed) setConnected(false);
+				if (disposed) return;
+				const nextConnection = markWebStateFailure(connectionRef.current);
+				connectionRef.current = nextConnection;
+				setConnected(nextConnection.connected);
 			}
 		};
 		void refresh();
-		const timer = setInterval(refresh, 3000);
+		const timer = setInterval(refresh, WEB_STATE_POLL_MS);
 		return () => {
 			disposed = true;
 			clearInterval(timer);
@@ -278,9 +309,22 @@ export function WebChatApp() {
 
 	const [uiResponding, setUiResponding] = useState(false);
 
-	const handleRespondUi = async (response: AgentUiResponse) => {
-		const request = (state.pendingUiRequests ?? []).find((item) => item.sessionId === activeSessionId);
-		if (!request || uiResponding) return;
+	// 当前会话的 pending 提问：取最后一条（最新到达的），与桌面 pickActiveAskRequest
+	// 的「展示最新」语义一致——否则挂着旧 select 时会遮蔽真正要回答的那条。
+	const activePendingUiRequest = useMemo(() => {
+		const list = (state.pendingUiRequests ?? []).filter(
+			(item) => item.sessionId === activeSessionId,
+		);
+		return list.length > 0 ? list[list.length - 1] : undefined;
+	}, [state.pendingUiRequests, activeSessionId]);
+
+	// 提交 pending 卡回答。responder 把「当前这条 request」随响应带回，
+	// 避免轮询快照过期后答错请求。
+	const handleRespondUi = async (
+		request: WebPendingUiRequest,
+		response: AgentUiResponse,
+	): Promise<boolean> => {
+		if (uiResponding) return false;
 		setUiResponding(true);
 		setCommandError(null);
 		try {
@@ -292,8 +336,10 @@ export function WebChatApp() {
 				response,
 			});
 			await refreshNow();
+			return true;
 		} catch (error) {
 			setCommandError(error instanceof Error ? error.message : String(error));
+			return false;
 		} finally {
 			setUiResponding(false);
 		}
@@ -344,7 +390,6 @@ export function WebChatApp() {
 			await refreshNow();
 		} catch (error) {
 			setCommandError(error instanceof Error ? error.message : String(error));
-			setConnected(false);
 		} finally {
 			setCreatingProjectId("");
 		}
@@ -354,7 +399,8 @@ export function WebChatApp() {
 	const markSessionLoaded = (id: string) => {
 		loadedSessionsRef.current.add(id);
 		messagesBySessionRef.current[id] = [];
-		historyMetaRef.current[id] = { total: 0, nextBefore: null };
+		historyMetaRef.current[id] = { total: 0, nextBefore: null, status: "ready" };
+		bumpHistory();
 	};
 
 	const handleCreateSession = async (projectId: string) => {
@@ -371,7 +417,6 @@ export function WebChatApp() {
 			await refreshNow();
 		} catch (error) {
 			setCommandError(error instanceof Error ? error.message : String(error));
-			setConnected(false);
 		} finally {
 			setCreatingProjectId("");
 		}
@@ -484,39 +529,60 @@ export function WebChatApp() {
 			const next = await fetchState();
 			setState(next);
 			syncRuntimeMessages(next, activeSessionIdRef.current);
-			setConnected(true);
+			const nextConnection = markWebStateSuccess();
+			connectionRef.current = nextConnection;
+			setConnected(nextConnection.connected);
 		} catch {
-			setConnected(false);
+			const nextConnection = markWebStateFailure(connectionRef.current);
+			connectionRef.current = nextConnection;
+			setConnected(nextConnection.connected);
 		}
 	};
 
 	const handleLoadMore = async () => {
-		if (!activeSessionId || streaming || loadingMore) return;
+		if (!activeSessionId || loadingMore) return;
 		const sessionId = activeSessionId;
 		const meta = historyMetaRef.current[sessionId];
-		if (!meta || meta.nextBefore == null) return;
+		const alreadyLoaded = loadedSessionsRef.current.has(sessionId);
+		// 首页失败 / 尚未拉过 / 流式提前标了缓存：重新拉尾页；已有游标：继续往更早翻。
+		if (!canRequestWebHistoryPage({ loaded: alreadyLoaded, meta })) return;
 		const requestSequence = (historyRequestSequenceRef.current[sessionId] ?? 0) + 1;
 		historyRequestSequenceRef.current[sessionId] = requestSequence;
 		setLoadingMore(true);
 		try {
-			const page = await fetchMessagePage(sessionId, meta.nextBefore);
+			const page = await fetchMessagePage(
+				sessionId,
+				meta?.nextBefore != null ? meta.nextBefore : undefined,
+			);
 			if (
 				historyRequestSequenceRef.current[sessionId] !== requestSequence ||
-				activeSessionIdRef.current !== sessionId ||
-				streamingRef.current
+				activeSessionIdRef.current !== sessionId
 			) return;
-			// 前插更早的消息：更新缓存与游标后，把「旧页 + 当前全部消息」重新注入
 			historyMetaRef.current[sessionId] = {
 				total: page.total,
 				nextBefore: page.nextBefore,
 				nextBeforeEntryId: page.nextBeforeEntryId,
 				indexVersion: page.indexVersion,
+				status: "ready",
 			};
 			const older = chatMessagesToUiMessages(page.messages);
-			const merged = [...older, ...(messagesBySessionRef.current[sessionId] ?? [])];
+			const merged = meta?.nextBefore != null
+				? [...older, ...(messagesBySessionRef.current[sessionId] ?? [])]
+				: mergeAuthoritativeUiMessages(older, messagesBySessionRef.current[sessionId] ?? []);
 			messagesBySessionRef.current[sessionId] = merged;
+			loadedSessionsRef.current.add(sessionId);
+			bumpHistory();
+			// merged 基于每个流式增量都会更新的 per-session 缓存，既含当前回复也含旧页；
+			// 因此可以直接注入 useChat，让思考/回答期间点击「加载更多」立即可见。
 			setMessages(merged);
 		} catch {
+			if (historyRequestSequenceRef.current[sessionId] !== requestSequence) return;
+			historyMetaRef.current[sessionId] = {
+				total: historyMetaRef.current[sessionId]?.total ?? 0,
+				nextBefore: historyMetaRef.current[sessionId]?.nextBefore ?? null,
+				status: "error",
+			};
+			bumpHistory();
 			if (activeSessionIdRef.current === sessionId) setCommandError(t("web.historyLoadFailed"));
 		} finally {
 			setLoadingMore(false);
@@ -533,11 +599,16 @@ export function WebChatApp() {
 		return "idle";
 	})();
 
+	void historyEpoch;
 	const activeMeta = activeSessionId ? historyMetaRef.current[activeSessionId] : undefined;
-	const hasMoreHistory = Boolean(activeMeta && activeMeta.nextBefore != null && !streaming);
+	const hasMoreHistory = Boolean(activeSessionId) && hasMoreWebHistory({
+		meta: activeMeta,
+		loaded: loadedSessionsRef.current.has(activeSessionId),
+		catalogMessageCount: activeSession?.messageCount,
+	});
 	const moreCount = activeMeta
-		? Math.max(0, activeMeta.total - messagesBySessionRef.current[activeSessionId]?.length)
-		: 0;
+		? Math.max(0, activeMeta.total - (messagesBySessionRef.current[activeSessionId]?.length ?? 0))
+		: Math.max(0, activeSession?.messageCount ?? 0);
 
 	return (
 		<div className="app wechat-shell flex h-full w-full min-w-0 overflow-hidden bg-background text-foreground">
@@ -576,6 +647,8 @@ export function WebChatApp() {
 					loadingMore={loadingMore}
 					streaming={streaming}
 					error={error?.message ?? commandError}
+					pendingUiRequest={activePendingUiRequest}
+					onRespondUi={handleRespondUi}
 					onLoadMore={() => void handleLoadMore()}
 				/>
 				<WebComposer

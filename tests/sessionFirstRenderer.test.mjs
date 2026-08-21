@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const appSource = readFileSync("src/renderer/src/App.tsx", "utf8");
+const messageCommandsSource = readFileSync(
+  "src/renderer/src/hooks/useSessionMessageCommands.ts",
+  "utf8",
+);
 const sessionViewSource = readFileSync(
   "src/renderer/src/components/session/SessionView.tsx",
   "utf8",
@@ -106,10 +110,10 @@ test("typing in the current Composer prewarms its runtime once", () => {
 
 
 test("forking a user message opens the new session as a permanent tab", () => {
-  const body = functionBody("forkFromUserMessage");
+  const body = functionBody("forkFromUserMessage", messageCommandsSource);
   // fork 做于 Tab 栏之前：只刷新列表不切焦点/不登记，新会话会出现但点 Tab 对不上 runtime。
   assert.match(body, /openReplacedRuntimeSession\(/);
-  assert.match(body, /targetSessionId \?\? currentSessionIdRef/);
+  assert.match(body, /result\.targetSessionId \?\? input\.currentSessionIdRef/);
   assert.match(functionBody("openReplacedRuntimeSession"), /registerOpenSession\(targetSessionId, "permanent"\)/);
   assert.match(functionBody("openReplacedRuntimeSession"), /selectSessionCommand\(projectId, targetSessionId, true\)/);
   assert.match(functionBody("cloneAgentSession"), /openReplacedRuntimeSession\(/);

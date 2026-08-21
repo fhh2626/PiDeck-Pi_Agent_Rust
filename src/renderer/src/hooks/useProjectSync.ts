@@ -5,6 +5,12 @@ import { sessionRecordToSummary } from "../atoms/session-selectors";
 
 const SESSION_REFRESH_TIMEOUT_MS = 20_000;
 const SIDEBAR_PROJECT_CHILD_PAGE_SIZE = 5;
+const EMPTY_FILE_TREE: FileTreeNode[] = [];
+
+type ActiveProjectFiles = {
+  projectId: string | undefined;
+  files: FileTreeNode[];
+};
 
 function withTimeout<T>(
   promise: Promise<T>,
@@ -73,10 +79,22 @@ export function useProjectSync(input: UseProjectSyncInput) {
   } = input;
   const [worktreesByProject, setWorktreesByProject] = useState<Record<string, WorktreeEntry[]>>({});
   const [branchByProject, setBranchByProject] = useState<Record<string, string | null>>({});
-  const [files, setFiles] = useState<FileTreeNode[]>([]);
+  const [projectFiles, setProjectFiles] = useState<ActiveProjectFiles>({
+    projectId: undefined,
+    files: EMPTY_FILE_TREE,
+  });
+  // useEffect 在提交后才清理旧 state；渲染时先按项目身份过滤，保证切换后的
+  // 第一帧也不会把上一项目的文件树挂到新项目名下。
+  const files = projectFiles.projectId === activeProjectId
+    ? projectFiles.files
+    : EMPTY_FILE_TREE;
   const [gitInfo, setGitInfo] = useState<GitBranchInfo>({ current: null, branches: [] });
   const [sessionLoadingByProject, setSessionLoadingByProject] = useState<Record<string, boolean>>({});
   const [visibleProjectChildCountByProject, setVisibleProjectChildCountByProject] = useState<Record<string, number>>({});
+  const activeProjectIdRef = useRef(activeProjectId);
+  activeProjectIdRef.current = activeProjectId;
+  const fileRequestRef = useRef(0);
+  const gitInfoRequestRef = useRef(0);
   const sessionRequestByProjectRef = useRef<Record<string, number>>({});
   const sessionRefreshRunningRef = useRef<Set<string>>(new Set());
   const sessionRefreshPendingRef = useRef<Set<string>>(new Set());
@@ -239,11 +257,66 @@ export function useProjectSync(input: UseProjectSyncInput) {
   }
 
   async function refreshFiles(projectId = activeProjectId, silent = false) {
-    if (!projectId) return;
+    // 文件树只表示当前项目。旧项目的复制/移动回调可能在切换后才到达；
+    // 必须在递增 generation 前拒绝，否则它会误取消新项目正在进行的加载。
+    if (!projectId || activeProjectIdRef.current !== projectId) return;
+    const request = fileRequestRef.current + 1;
+    fileRequestRef.current = request;
     const next = await api.files.list(projectId);
-    setFiles(next);
+    if (
+      fileRequestRef.current !== request ||
+      activeProjectIdRef.current !== projectId
+    ) return;
+    setProjectFiles({ projectId, files: next });
     if (!silent) showToast(t("app.filesRefreshed", {}), 1800);
   }
 
-  return { worktreesByProject, branchByProject, files, setFiles, gitInfo, setGitInfo, sessionLoadingByProject, setSessionLoadingByProject, visibleProjectChildCountByProject, setVisibleProjectChildCountByProject, refreshProjects, refreshWorktrees, refreshSessions, refreshProjectSessions, refreshFiles, refreshProjectTree };
+  async function refreshGitInfo(projectId = activeProjectId) {
+    if (!projectId || activeProjectIdRef.current !== projectId) return;
+    const request = gitInfoRequestRef.current + 1;
+    gitInfoRequestRef.current = request;
+    let next: GitBranchInfo;
+    try {
+      next = await api.git.branches(projectId);
+    } catch (error) {
+      // 只允许当前项目的最新失败清空状态；旧项目失败不能抹掉新项目结果。
+      if (
+        gitInfoRequestRef.current === request &&
+        activeProjectIdRef.current === projectId
+      ) {
+        setGitInfo({ current: null, branches: [] });
+        setBranchByProject((current) => ({ ...current, [projectId]: null }));
+      }
+      throw error;
+    }
+    if (
+      gitInfoRequestRef.current !== request ||
+      activeProjectIdRef.current !== projectId
+    ) return;
+    setGitInfo((current) =>
+      current.current === next.current &&
+      current.branches.join("\n") === next.branches.join("\n")
+        ? current
+        : next,
+    );
+    setBranchByProject((current) => ({ ...current, [projectId]: next.current }));
+  }
+
+  function setProjectBranch(projectId: string, branch: string | null) {
+    setBranchByProject((current) => ({ ...current, [projectId]: branch }));
+  }
+
+  useEffect(() => {
+    // 项目身份变化时先让旧树退出屏幕，再加载新项目。两个请求共用各自的
+    // request generation；即使旧 IPC 无法取消，迟到结果也不能回写当前项目。
+    fileRequestRef.current += 1;
+    gitInfoRequestRef.current += 1;
+    setProjectFiles({ projectId: activeProjectId, files: EMPTY_FILE_TREE });
+    setGitInfo({ current: null, branches: [] });
+    if (!activeProjectId) return;
+    void refreshFiles(activeProjectId, true).catch(() => undefined);
+    void refreshGitInfo(activeProjectId).catch(() => undefined);
+  }, [activeProjectId]);
+
+  return { worktreesByProject, branchByProject, files, gitInfo, setGitInfo, setProjectBranch, sessionLoadingByProject, setSessionLoadingByProject, visibleProjectChildCountByProject, setVisibleProjectChildCountByProject, refreshProjects, refreshWorktrees, refreshSessions, refreshProjectSessions, refreshFiles, refreshGitInfo, refreshProjectTree };
 }

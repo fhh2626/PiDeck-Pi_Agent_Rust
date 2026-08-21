@@ -57,7 +57,7 @@ test("listActiveBuiltInExtensionPaths respects removedBuiltIn and missing files"
 	const extDir = join(root, "resources", "extensions");
 	mkdirSync(extDir, { recursive: true });
 	// 只写入 ask + todo，故意不写 plan/nul，验证缺失跳过
-	writeFileSync(join(extDir, "pi-deck-ask-question.ts"), "// ask\n", "utf8");
+	writeFileSync(join(extDir, "pideck-q-ask-question.ts"), "// ask\n", "utf8");
 	writeFileSync(join(extDir, "pi-deck-todo.ts"), "// todo\n", "utf8");
 
 	try {
@@ -66,24 +66,43 @@ test("listActiveBuiltInExtensionPaths respects removedBuiltIn and missing files"
 			["pi-deck-todo.ts"],
 		);
 		assert.equal(paths.length, 1);
-		assert.ok(String(paths[0]).endsWith("pi-deck-ask-question.ts"));
-		// 内置扩展清单随版本增长：ask/context-controller/nul-redirect/plan-mode/security-gate/todo/vision/better-compaction
-		assert.equal(BUILT_IN_EXTENSIONS.length, 8);
-		assert.ok(BUILT_IN_EXTENSIONS.includes("pi-deck-context-controller.ts"));
+		assert.ok(String(paths[0]).endsWith("pideck-q-ask-question.ts"));
+		// 内置扩展清单随版本增长：ask/context-controller/nul-redirect/plan-mode/security-gate/todo/vision/websearch/better-compaction
+		assert.equal(BUILT_IN_EXTENSIONS.length, 9);
+		assert.ok(BUILT_IN_EXTENSIONS.includes("pideck-q-context-controller.ts"));
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
 });
 
-test("pi-better-compaction is packaged as a built-in and disabled by default", () => {
+test("pideck-q-websearch is packaged as a default-disabled built-in", () => {
 	const { BUILT_IN_EXTENSIONS, DEFAULT_DISABLED_BUILT_IN_EXTENSIONS } = loadBuiltInExtensionsModule();
-	assert.ok(BUILT_IN_EXTENSIONS.includes("pi-better-compaction.ts"));
-	assert.ok(DEFAULT_DISABLED_BUILT_IN_EXTENSIONS.includes("pi-better-compaction.ts"));
+	assert.ok(BUILT_IN_EXTENSIONS.includes("pideck-q-websearch.ts"));
+	assert.ok(DEFAULT_DISABLED_BUILT_IN_EXTENSIONS.includes("pideck-q-websearch.ts"));
+	assert.match(
+		readFileSync("resources/extensions/pideck-q-websearch.ts", "utf8"),
+		/pideck-q-websearch\/extension-runtime\.ts/,
+	);
+	assert.ok(
+		readFileSync("resources/extensions/pideck-q-websearch/extension-runtime.ts", "utf8").includes(
+			"name: \"web_search\"",
+		),
+	);
+});
+
+test("pideck-q-better-compaction is packaged as a built-in and disabled by default", () => {
+	const { BUILT_IN_EXTENSIONS, DEFAULT_DISABLED_BUILT_IN_EXTENSIONS } = loadBuiltInExtensionsModule();
+	assert.ok(BUILT_IN_EXTENSIONS.includes("pideck-q-better-compaction.ts"));
+	assert.ok(DEFAULT_DISABLED_BUILT_IN_EXTENSIONS.includes("pideck-q-better-compaction.ts"));
 	assert.match(
 		readFileSync("src/main/settings/SettingsStore.ts", "utf8"),
 		/removedBuiltInExtensions:\s*\[\.\.\.DEFAULT_DISABLED_BUILT_IN_EXTENSIONS\]/,
 	);
-	assert.ok(readFileSync("resources/extensions/pi-better-compaction.ts", "utf8").includes("extension-runtime.ts"));
+	assert.ok(readFileSync("resources/extensions/pideck-q-better-compaction.ts", "utf8").includes("extension-runtime.ts"));
+	assert.match(
+		readFileSync("resources/extensions/pideck-q-better-compaction/types.ts", "utf8"),
+		/EXTENSION_ID = "PiDeck-Q-Better-Compaction"/,
+	);
 });
 
 test("default-disabled built-in migration is one-time and preserves a later restore", () => {
@@ -93,11 +112,54 @@ test("default-disabled built-in migration is one-time and preserves a later rest
 	} = loadBuiltInExtensionsModule();
 	const migrated = migrateBuiltInExtensionDefaults(["pi-deck-todo.ts"], undefined);
 	assert.equal(migrated.migrated, true);
-	assert.equal(migrated.removedBuiltInExtensions.includes("pi-better-compaction.ts"), true);
+	assert.equal(migrated.removedBuiltInExtensions.includes("pideck-q-better-compaction.ts"), true);
+	assert.equal(migrated.removedBuiltInExtensions.includes("pideck-q-websearch.ts"), true);
+
+	const upgraded = migrateBuiltInExtensionDefaults([], 1);
+	assert.equal(upgraded.migrated, true);
+	assert.equal(upgraded.removedBuiltInExtensions.includes("pideck-q-websearch.ts"), true);
+	assert.equal(upgraded.removedBuiltInExtensions.includes("pideck-q-better-compaction.ts"), false);
 
 	const restored = migrateBuiltInExtensionDefaults([], BUILT_IN_EXTENSION_DEFAULTS_VERSION);
 	assert.equal(restored.migrated, false);
 	assert.equal(JSON.stringify(restored.removedBuiltInExtensions), "[]");
+});
+
+test("renamed built-ins preserve legacy disabled choices", () => {
+	const {
+		BUILT_IN_EXTENSION_DEFAULTS_VERSION,
+		LEGACY_BUILT_IN_EXTENSION_NAMES,
+		migrateBuiltInExtensionDefaults,
+	} =
+		loadBuiltInExtensionsModule();
+	const migrated = migrateBuiltInExtensionDefaults(
+		[
+			"pi-deck-ask-question.ts",
+			"pi-deck-context-controller.ts",
+			"pi-deck-websearch.ts",
+			"pi-better-compaction.ts",
+		],
+		BUILT_IN_EXTENSION_DEFAULTS_VERSION,
+	);
+	assert.equal(migrated.migrated, true);
+	assert.deepEqual(
+		[...migrated.removedBuiltInExtensions].sort(),
+		[
+			"pideck-q-ask-question.ts",
+			"pideck-q-better-compaction.ts",
+			"pideck-q-context-controller.ts",
+			"pideck-q-websearch.ts",
+		],
+	);
+	assert.deepEqual(
+		[...LEGACY_BUILT_IN_EXTENSION_NAMES].sort(),
+		[
+			"pi-better-compaction.ts",
+			"pi-deck-ask-question.ts",
+			"pi-deck-context-controller.ts",
+			"pi-deck-websearch.ts",
+		],
+	);
 });
 
 test("built-in extension removal has a registered IPC handler", () => {
@@ -107,6 +169,10 @@ test("built-in extension removal has a registered IPC handler", () => {
 	assert.match(storeIpc, /ipcChannels\.extensionsRestoreBuiltIn[\s\S]*extensionManager\.restoreBuiltIn\(source\)/);
 	assert.match(extensionsTab, /extension\.enabled === false/);
 	assert.match(extensionsTab, /config\.enableExtension/);
+	assert.match(
+		extensionsTab,
+		/"pideck-q-ask-question\.ts": "PiDeck-Q-Ask-Question"/,
+	);
 });
 
 test("AgentManager no longer deploys built-ins via ensurePiDeckExtension", () => {
@@ -116,6 +182,16 @@ test("AgentManager no longer deploys built-ins via ensurePiDeckExtension", () =>
 	assert.doesNotMatch(index, /async function ensurePiDeckExtension/);
 	assert.doesNotMatch(storeIpc, /ensurePiDeckExtension/);
 	assert.match(index, /migrateLegacyBuiltInExtensions/);
+	assert.match(index, /\.\.\.LEGACY_BUILT_IN_EXTENSION_NAMES/);
 	assert.match(processSource, /appendBuiltInExtensionArgs/);
 	assert.match(processSource, /--extension/);
+});
+
+test("main uses the already-eager built-in extension catalog without a fake dynamic import", () => {
+	const index = readFileSync("src/main/index.ts", "utf8");
+	assert.match(
+		index,
+		/import \{[\s\S]*?BUILT_IN_EXTENSIONS,[\s\S]*?\} from "\.\/extensions\/builtInExtensions"/,
+	);
+	assert.doesNotMatch(index, /await import\("\.\/extensions\/builtInExtensions"\)/);
 });

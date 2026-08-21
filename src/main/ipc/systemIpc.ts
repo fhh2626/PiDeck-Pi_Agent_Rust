@@ -64,8 +64,8 @@ export type SystemIpcDeps = {
 	modelSpecsStore: ModelSpecsStore;
 	getMainWindow: () => Electron.BrowserWindow | null;
 	mainCopy: (key: string, params?: Record<string, string | number>) => string;
-	/** Check for app update; defined in index.ts */
-	checkForAppUpdate: (installationType?: string) => Promise<import("../../shared/types").AppUpdateInfo | null>;
+	/** Check for app update; implemented by the update domain service. */
+	checkForAppUpdate: (installationType?: "portable" | "installed") => Promise<import("../../shared/types").AppUpdateInfo | null>;
 	/** Download update asset */
 	downloadUpdateAsset: (asset: AppUpdateAsset) => Promise<import("../../shared/types").AppUpdateDownloadResult>;
 	/** Install downloaded update */

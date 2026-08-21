@@ -193,25 +193,11 @@ test("incremental rescan recovers from non-append replacement", () => {
 	assert.equal(after.generation, 1);
 });
 
-test("MarkdownStream streams through frozen prefix + tail split", () => {
+test("MarkdownStream streaming path no longer imports the incremental Markdown parser", () => {
 	const stream = readFileSync("src/renderer/src/components/session/MarkdownStream.tsx", "utf8");
-	assert.match(stream, /IncrementalMarkdownFrontier/);
-	assert.match(stream, /FrozenMarkdownChunk/);
-	assert.match(stream, /UNSTABLE_TAIL_BLOCKS/);
-	assert.match(stream, /data-md-frozen/);
-});
-
-test("MarkdownStream keeps streaming plugin arrays as stable module references", () => {
-	// 防回归：流式精简插件若内联 []（每帧新引用），pipe 的 useMemo 依赖随之变化
-	// → pipe 每帧重建 → FrozenMarkdownChunk 的 memo 比较 props.pipe 引用变化
-	// → 冻结 prefix 每帧全量重解析（掉帧/抖动/GC 压力的根源）。
-	const stream = readFileSync("src/renderer/src/components/session/MarkdownStream.tsx", "utf8");
-	assert.match(stream, /NO_STREAM_REMARK_PLUGINS/);
-	assert.match(stream, /NO_STREAM_REHYPE_PLUGINS/);
-	// 流式分支必须引用常量，不得内联新数组
-	assert.match(stream, /isStreamingNow\s*\?\s*NO_STREAM_REMARK_PLUGINS/);
-	assert.match(stream, /isStreamingNow\s*\?\s*NO_STREAM_REHYPE_PLUGINS/);
-	assert.doesNotMatch(stream, /isStreamingNow\s*\?\s*\[\]/);
+	assert.doesNotMatch(stream, /IncrementalMarkdownFrontier|FrozenMarkdownChunk|UNSTABLE_TAIL_BLOCKS/);
+	assert.match(stream, /const renderRichMarkdown = !isStreamingNow/);
+	assert.match(stream, /<PlainStreamSplit text=\{displayText\} \/>/);
 });
 
 test("MarkdownStream plain fallback splits into frozen + live spans (split-plain)", () => {

@@ -8,7 +8,7 @@
  * - tool-invocation part → 工具卡片（复用桌面 tool-card 视觉）
  * - 流式期间底部显示响应指示器；出错显示诊断卡
  */
-import { Fragment, memo, useEffect, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, Brain, ChevronDown, ChevronUp, Wrench } from "lucide-react";
 import type { UIMessage } from "ai";
 import { Button } from "@/components/ui-shadcn/button";
@@ -16,7 +16,17 @@ import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { WebAssistantText } from "./WebAssistantText";
 import type { WebPendingUiRequest } from "./webTypes";
-import type { AgentUiResponse } from "../../../shared/types";
+import type { AgentUiRequest, AgentUiResponse, SessionUiResponseInput } from "../../../shared/types";
+import { getWebAskQuestionResult } from "./webApi";
+import { AskQuestionResultCard } from "../components/session/AskQuestionResultCard";
+import {
+	createSessionRuntimeUiResponder,
+	SessionRuntimeUiOverlay,
+} from "../components/overlays/SessionRuntimeUiOverlay";
+import type {
+	SessionRuntimeUiState,
+	SessionRuntimeViewState,
+} from "../atoms/session-atoms";
 import { MarkdownStream } from "@/components/session/MarkdownStream";
 import { SingleLinePreview } from "@/components/session/SingleLinePreview";
 import { TimelineMarker } from "../components/session/TimelineMarker";
@@ -174,15 +184,32 @@ export const WebAssistantMessage = memo(function WebAssistantMessage(props: {
 	isStreaming: boolean;
 }) {
 	const { message, isStreaming } = props;
+	// 已完成的 ask_question：主进程投影把结果挂在 metadata（经 webApi 规范化）。
+	// 有结果时把第一个工具 part 替换成常驻问答卡，其余 part（reasoning/text）
+	// 保持原样——与桌面「ask 不再折叠进执行过程」一致。
+	const askResult = getWebAskQuestionResult(message);
+	const firstToolIndex = askResult
+		? message.parts.findIndex(
+				(part) =>
+					part.type === "dynamic-tool" ||
+					(typeof part.type === "string" && part.type.startsWith("tool-")),
+		  )
+		: -1;
 	return (
 		<div className="w-full min-w-0">
 			{message.parts.map((part, index) => {
 				if (part.type === "reasoning") {
 					return <WebThinkingBlock key={index} text={part.text} running={isStreaming} />;
 				}
-				if (part.type === "dynamic-tool" || (typeof part.type === "string" && part.type.startsWith("tool-"))) {
+				if (
+					part.type === "dynamic-tool" ||
+					(typeof part.type === "string" && part.type.startsWith("tool-"))
+				) {
 					// v7：静态工具 part.type 为 `tool-${toolName}`（tool-input-start 无 dynamic 标志），
 					// 动态工具为 "dynamic-tool"；toolName/toolCallId/state 都直接挂在 part 上
+					if (askResult && index === firstToolIndex) {
+						return <AskQuestionResultCard key={index} result={askResult} messageId={message.id} />;
+					}
 					return (
 						<WebToolCard
 							key={index}
@@ -209,76 +236,113 @@ export const WebAssistantMessage = memo(function WebAssistantMessage(props: {
 	);
 });
 
-function WebAskCard(props: {
+/**
+ * Web 端 pending 提问卡：复用桌面 SessionRuntimeUiOverlay（select/confirm/input/
+ * editor/batch_ask 五种形态与桌面完全一致）。Web 没有桌面 atoms，这里把
+ * WebPendingUiRequest 快照现场构造成 overlay 需要的 runtime/ui 只读视图。
+ */
+function WebPendingAsk(props: {
 	request: WebPendingUiRequest;
-	busy: boolean;
-	onRespond: (response: AgentUiResponse) => void;
+	onRespond: (request: WebPendingUiRequest, response: AgentUiResponse) => Promise<boolean>;
 }) {
-	const [draft, setDraft] = useState(props.request.prefill ?? "");
-	const method = props.request.method;
-	const options = (props.request.options ?? []).filter((option) => !option.startsWith("✎"));
-	return (
-		<section className="mt-3 rounded-lg border border-border bg-card p-3 shadow-sm">
-			<div className="mb-2 text-caption font-medium text-foreground">{t("ask.toolName")}</div>
-			<p className="mb-3 text-sm text-foreground [overflow-wrap:anywhere]">
-				{props.request.title || t("ask.defaultTitle")}
-			</p>
-			{method === "select" && options.length > 0 ? (
-				<div className="flex flex-col gap-2">
-					{options.map((option) => (
-						<Button
-							key={option}
-							type="button"
-							variant="secondary"
-							size="sm"
-							disabled={props.busy}
-							onClick={() => props.onRespond({ value: option })}
-						>
-							{option}
-						</Button>
-					))}
-				</div>
-			) : method === "confirm" ? (
-				<div className="flex gap-2">
-					<Button type="button" size="sm" disabled={props.busy} onClick={() => props.onRespond({ confirmed: true })}>
-						{t("common.true")}
-					</Button>
-					<Button type="button" variant="secondary" size="sm" disabled={props.busy} onClick={() => props.onRespond({ confirmed: false })}>
-						{t("common.false")}
-					</Button>
-				</div>
-			) : (
-				<div className="flex flex-col gap-2">
-					<textarea
-						className="min-h-16 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-						placeholder={props.request.placeholder || t("ask.inputPlaceholder")}
-						value={draft}
-						disabled={props.busy}
-						onChange={(event) => setDraft(event.target.value)}
-					/>
-					<Button
-						type="button"
-						size="sm"
-						disabled={props.busy || !draft.trim()}
-						onClick={() => props.onRespond({ value: draft.trim() })}
-					>
-						{t("ask.submit")}
-					</Button>
-				</div>
-			)}
-			<Button
-				type="button"
-				variant="ghost"
-				size="sm"
-				className="mt-2"
-				disabled={props.busy}
-				onClick={() => props.onRespond({ cancelled: true })}
-			>
-				{t("common.cancel")}
-			</Button>
-		</section>
-	);
+	return <WebPendingAskInner key={props.request.requestId} request={props.request} onRespond={props.onRespond} />;
 }
+
+/**
+ * 内层 memo 是尽力而为：外层 key={requestId} 才是真正保证「同一请求只 remount 一次」
+ * 的机制（requestId 变了才重建 overlay 状态）。轮询每 2-3s 带来全新引用的
+ * request 对象、onRespond 每次渲染也是新函数，memo 比较多半会失败——
+ * 但即使重渲染，overlay 的草稿/题号状态依然存活：批量卡的 reset effect 只依赖
+ * 稳定的 requestKey（requestId 标量），input 卡的 reset 只依赖 prefill/value 标量，
+ * 不依赖对象身份。memo 只是减少无谓重渲染，不承担正确性。
+ */
+const WebPendingAskInner = memo(function WebPendingAskInner(props: {
+	request: WebPendingUiRequest;
+	onRespond: (request: WebPendingUiRequest, response: AgentUiResponse) => Promise<boolean>;
+}) {
+	const { request, onRespond } = props;
+	// 稳定引用：responder 的 claim/rollback 闭包不能随每次渲染重建
+	const requestRef = useRef(request);
+	requestRef.current = request;
+
+	const responder = useMemo(
+		() =>
+			createSessionRuntimeUiResponder({
+				binding: {
+					sessionId: request.sessionId,
+					agentId: request.agentId,
+					runtimeGeneration: request.runtimeGeneration,
+				},
+				// Web 侧只有轮询快照：send 前再校验一次请求身份，防止
+				// 「响应已过期」（轮询到旧快照后用户才点击）。
+				readBinding: () => {
+					const latest = requestRef.current;
+					return {
+						sessionId: latest.sessionId,
+						agentId: latest.agentId,
+						runtimeGeneration: latest.runtimeGeneration,
+					};
+				},
+				claim: () => true,
+				rollback: () => true,
+				send: async (input: SessionUiResponseInput) => {
+					// onRespond 内部走 /api/ui-response，成功后主进程移除 pending 快照
+					const accepted = await onRespond(requestRef.current, input.response);
+					if (!accepted) throw new Error("web ui request expired");
+				},
+			}),
+		[onRespond],
+	);
+
+	// overlay 的激活判定需要 runtime 与 ui 状态同 agentId/runtimeGeneration；
+	// 这里用只读视图构造最小状态，requests 只放当前这一条。
+	const runtimeView: SessionRuntimeViewState = useMemo(
+		() => ({
+			agentId: request.agentId,
+			runtimeGeneration: request.runtimeGeneration,
+			status: "running",
+			updatedAt: 0,
+		}),
+		[request.agentId, request.runtimeGeneration],
+	);
+	const uiView: SessionRuntimeUiState = useMemo(
+		() => ({
+			agentId: request.agentId,
+			runtimeGeneration: request.runtimeGeneration,
+			requests: {
+				[request.requestId]: {
+					request: {
+						agentId: request.agentId,
+						requestId: request.requestId,
+						method: request.method,
+						title: request.title,
+						...(request.options ? { options: request.options } : {}),
+						...(request.placeholder ? { placeholder: request.placeholder } : {}),
+						...(request.prefill ? { prefill: request.prefill } : {}),
+						...(request.allowOther ? { allowOther: true } : {}),
+						...(request.batchQuestions ? { batchQuestions: request.batchQuestions } : {}),
+						...(request.batchReview ? { batchReview: true } : {}),
+					} satisfies AgentUiRequest,
+					status: "pending",
+				},
+			},
+			widgets: {},
+			revision: 1,
+		}),
+		[request],
+	);
+
+	return (
+		<div className="mt-3 w-full">
+			<SessionRuntimeUiOverlay
+				sessionId={request.sessionId}
+				runtime={runtimeView}
+				ui={uiView}
+				responder={responder}
+			/>
+		</div>
+	);
+});
 
 export function WebTimeline(props: {
 	messages: UIMessage[];
@@ -289,8 +353,11 @@ export function WebTimeline(props: {
 	streaming: boolean;
 	error: string | null;
 	pendingUiRequest?: WebPendingUiRequest;
-	uiResponding?: boolean;
-	onRespondUi?: (response: AgentUiResponse) => void;
+	/** Web 端 pending 卡提交：带回快照本身（responder 用它取 4-tuple 身份），成功返回 true */
+	onRespondUi?: (
+		request: WebPendingUiRequest,
+		response: AgentUiResponse,
+	) => Promise<boolean>;
 	onLoadMore: () => void;
 }) {
 	const {
@@ -343,6 +410,25 @@ export function WebTimeline(props: {
 			onScroll={updateScrollState}
 		>
 			<div className="message-list flex flex-col gap-2 p-4">
+				{hasMoreHistory && (
+					<div className="flex justify-center py-1">
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={loadingMore}
+							onClick={() => {
+								stickToBottomRef.current = false;
+								// A short transcript can still count as "at bottom". Suspend live-edge
+								// following before prepending history so the new page stays visible.
+								setShowScrollToBottom(messages.length > 0);
+								onLoadMore();
+							}}
+							className="h-8 px-4 text-caption"
+						>
+							{loadingMore ? t("timeline.loadingMore") : t("timeline.loadMoreHistory", { count: moreCount })}
+						</Button>
+					</div>
+				)}
 				{!hasActiveSession && messages.length === 0 ? (
 					<div className="empty-state">
 						<div className="empty-logo">
@@ -402,9 +488,8 @@ export function WebTimeline(props: {
 				) : null}
 
 				{props.pendingUiRequest && props.onRespondUi ? (
-					<WebAskCard
+					<WebPendingAsk
 						request={props.pendingUiRequest}
-						busy={Boolean(props.uiResponding)}
 						onRespond={props.onRespondUi}
 					/>
 				) : null}
@@ -423,20 +508,6 @@ export function WebTimeline(props: {
 				</Button>
 			)}
 
-			{/* 分页加载更多 */}
-			{hasMoreHistory && (
-				<div className="flex justify-center py-3">
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={loadingMore}
-						onClick={onLoadMore}
-						className="h-8 px-4 text-caption"
-					>
-						{loadingMore ? t("timeline.loadingMore") : t("timeline.loadMoreHistory", { count: moreCount })}
-					</Button>
-				</div>
-			)}
 		</section>
 	);
 }

@@ -4,7 +4,7 @@ import test from "node:test";
 
 const timelineStyles = readFileSync("src/renderer/src/styles/timeline.css", "utf8");
 const events = readFileSync("src/renderer/src/components/session/TimelineEventCards.tsx", "utf8");
-const surface = readFileSync("src/renderer/src/components/session/SurfaceComponents.tsx", "utf8");
+const surface = readFileSync("src/renderer/src/components/session/EmptyState.tsx", "utf8");
 
 test("responding indicator reserves stable space across status changes", () => {
   assert.match(events, /data-kind=\{kind\}/);

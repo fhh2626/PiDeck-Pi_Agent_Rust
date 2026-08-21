@@ -4,18 +4,14 @@ import {
 	BrowserWindow,
 	dialog,
 	ipcMain,
-	Menu,
-	nativeImage,
 	nativeTheme,
-	net,
 	protocol,
-	session,
 	shell,
 	Tray,
 } from "electron";
 import { randomUUID } from "node:crypto";
-import { basename, join } from "node:path";
-import { createWriteStream, existsSync } from "node:fs";
+import { join } from "node:path";
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { is } from "@electron-toolkit/utils";
 import {
@@ -143,16 +139,12 @@ import type {
 	AgentTab,
 	AgentUiRequest,
 	AppSettings,
-	AppUpdateAsset,
-	AppUpdateDownloadProgress,
 	AppLogLevel,
 	AppLogQuery,
-	AppUpdateDownloadResult,
 	AvailableModel,
 	ExternalEditor,
 	ExternalEditorId,
 	ExternalEditorSetting,
-	AppUpdateInfo,
 	CreateSessionDraftInput,
 	CreateAnonymousSessionInput,
 	CreateAnonymousSessionResult,
@@ -209,6 +201,10 @@ import { PromptManager } from "./prompts/PromptManager";
 import { XuePromptManager } from "./prompts/XuePromptManager";
 import { SkillManager } from "./skills/SkillManager";
 import { ExtensionManager } from "./extensions/ExtensionManager";
+import {
+	BUILT_IN_EXTENSIONS,
+	LEGACY_BUILT_IN_EXTENSION_NAMES,
+} from "./extensions/builtInExtensions";
 import { ProjectResourceManager } from "./projects/ProjectResourceManager";
 import { listVisibleProjects, registerProjectsIpc } from "./ipc/projectsIpc";
 import { registerUsageStatsIpc } from "./ipc/usageStatsIpc";
@@ -231,10 +227,7 @@ import { registerSystemIpc } from "./ipc/systemIpc";
 import { fetchModelList, getCachedModelList, refreshModelList } from "./pi/modelListCache";
 import { ModelSpecsStore } from "./pi/modelSpecsStore";
 import { registerFilesIpc } from "./ipc/filesIpc";
-import {
-	BROWSER_PANEL_PARTITION as BROWSER_PANEL_PARTITION_SHARED,
-	isAllowedBrowserPanelUrl as isAllowedBrowserPanelUrlShared,
-} from "./browser/browserSecurity";
+import { configureBrowserPanelWebviewHost } from "./browser/browserPanelWebviewHost";
 import { WebServiceManager } from "./web/WebServiceManager";
 import { preparePreloadPath } from "./preloadPath";
 import { AppLogger } from "./logging/AppLogger";
@@ -249,6 +242,8 @@ import {
 	validateExternalEditorCommand,
 } from "./editors/EditorDetector";
 import { startMemoryProfile, isMemoryProfileEnabled, type MemoryProfileHandle } from "./memory/MemoryMonitor";
+import { createAppUpdateService, RELEASES_URL } from "./update/AppUpdateService";
+import { createAppTray, refreshAppTrayMenu } from "./window/AppTray";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -638,325 +633,6 @@ function applyNativeThemeSource(settings: AppSettings) {
 	nativeTheme.themeSource = settings.theme === "system" ? "system" : settings.theme;
 }
 
-const RELEASES_URL = "https://github.com/ayuayue/pi-desktop/releases";
-const LATEST_RELEASE_API =
-	"https://api.github.com/repos/ayuayue/pi-desktop/releases/latest";
-
-type GitHubReleaseAsset = {
-	name: string;
-	browser_download_url: string;
-	size: number;
-};
-
-type GitHubRelease = {
-	tag_name?: string;
-	name?: string;
-	body?: string;
-	html_url?: string;
-	published_at?: string;
-	assets?: GitHubReleaseAsset[];
-};
-
-function normalizeVersion(version: string) {
-	return version.trim().replace(/^v/i, "");
-}
-
-function compareVersions(left: string, right: string) {
-	const leftParts = normalizeVersion(left)
-		.split(/[.-]/)
-		.map((part) => Number(part) || 0);
-	const rightParts = normalizeVersion(right)
-		.split(/[.-]/)
-		.map((part) => Number(part) || 0);
-	const length = Math.max(leftParts.length, rightParts.length);
-	for (let index = 0; index < length; index += 1) {
-		const diff = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
-		if (diff !== 0) return diff;
-	}
-	return 0;
-}
-
-function selectRecommendedAsset(
-	assets: AppUpdateAsset[],
-	installationType?: "portable" | "installed",
-) {
-	const platform = process.platform;
-	const arch = process.arch;
-	// Windows 便携版以 electron-builder 注入的运行时环境变量为准；旧 settings 可能残留 installed。
-	const isPortable =
-		platform === "win32"
-			? process.env.PORTABLE_EXECUTABLE_DIR !== undefined || installationType === "portable"
-			: installationType === "portable";
-
-	// 映射资产以便匹配
-	const candidates = assets.map((asset) => ({
-		...asset,
-		lowerName: asset.name.toLowerCase(),
-	}));
-
-	// 根据架构确定关键词，严格匹配
-	const archKeywords =
-		arch === "arm64" ? ["arm64", "aarch64"] : ["x64", "amd64", "x86_64"];
-	const matchesArch = (name: string) =>
-		archKeywords.some((keyword) => name.includes(keyword));
-
-	// 检查是否为非目标架构（用于排除不匹配的资产）
-	const isWrongArch = (name: string) => {
-		if (arch === "arm64") {
-			// 当前是 ARM64，排除 x64 相关的
-			return /\b(x64|amd64|x86_64)\b/i.test(name);
-		} else {
-			// 当前是 x64，排除 arm64 相关的
-			return /\b(arm64|aarch64)\b/i.test(name);
-		}
-	};
-
-	const isWindowsAsset = (name: string) =>
-		/\.(exe|msi)$/i.test(name) || (name.endsWith(".zip") && !/(mac|darwin|osx|linux|appimage|deb|tar\.gz)/i.test(name));
-	const isMacAsset = (name: string) => /\.(dmg)$/i.test(name) || /(mac|darwin|osx)/i.test(name);
-	const isLinuxAsset = (name: string) => /(appimage|\.deb$|\.tar\.gz$|linux)/i.test(name);
-
-	if (platform === "win32") {
-		// Windows 只能在 Windows 资产里挑选；Release 同时包含 macOS zip，不能用全局 zip 回退。
-		const platformCandidates = candidates.filter((asset) => isWindowsAsset(asset.lowerName));
-		// Windows: 优先匹配当前安装形态（便携版 vs 安装版）和架构
-		if (isPortable) {
-			// 便携版 exe 是单文件绿色版，无需安装；优先推荐非 Setup 的便携 exe，其次 .zip
-			return (
-				platformCandidates.find(
-					(asset) => !asset.lowerName.includes("setup") && asset.lowerName.endsWith(".exe") && matchesArch(asset.lowerName),
-				) ??
-				platformCandidates.find(
-					(asset) => !asset.lowerName.includes("setup") && asset.lowerName.endsWith(".exe") && !isWrongArch(asset.lowerName),
-				) ??
-				platformCandidates.find(
-					(asset) => asset.lowerName.endsWith(".zip") && matchesArch(asset.lowerName),
-				) ??
-				platformCandidates.find(
-					(asset) => asset.lowerName.endsWith(".zip") && !isWrongArch(asset.lowerName),
-				)
-			);
-		} else {
-			// 安装版：优先推荐带 Setup 的安装 exe，其次普通 exe，最后 zip
-			return (
-				platformCandidates.find(
-					(asset) => asset.lowerName.includes("setup") && asset.lowerName.endsWith(".exe") && matchesArch(asset.lowerName),
-				) ??
-				platformCandidates.find(
-					(asset) => asset.lowerName.includes("setup") && asset.lowerName.endsWith(".exe") && !isWrongArch(asset.lowerName),
-				) ??
-				platformCandidates.find(
-					(asset) => asset.lowerName.endsWith(".exe") && matchesArch(asset.lowerName),
-				) ??
-				platformCandidates.find(
-					(asset) => asset.lowerName.endsWith(".exe") && !isWrongArch(asset.lowerName),
-				) ??
-				platformCandidates.find(
-					(asset) => asset.lowerName.endsWith(".zip") && matchesArch(asset.lowerName),
-				) ??
-				platformCandidates.find(
-					(asset) => asset.lowerName.endsWith(".zip") && !isWrongArch(asset.lowerName),
-				)
-			);
-		}
-	}
-
-	if (platform === "darwin") {
-		// macOS 只在 macOS 资产中选择，避免 x64 zip 回退到 Windows/Linux 包。
-		const platformCandidates = candidates.filter((asset) => isMacAsset(asset.lowerName));
-		return (
-			platformCandidates.find(
-				(asset) => asset.lowerName.endsWith(".dmg") && matchesArch(asset.lowerName),
-			) ??
-			platformCandidates.find(
-				(asset) => asset.lowerName.endsWith(".dmg") && !isWrongArch(asset.lowerName),
-			) ??
-			platformCandidates.find(
-				(asset) => asset.lowerName.endsWith(".zip") && matchesArch(asset.lowerName),
-			) ??
-			platformCandidates.find(
-				(asset) => asset.lowerName.endsWith(".zip") && !isWrongArch(asset.lowerName),
-			)
-		);
-	}
-
-	if (platform === "linux") {
-		// Linux 只在 Linux 资产中选择，避免跨平台 zip/exe 被误推荐。
-		const platformCandidates = candidates.filter((asset) => isLinuxAsset(asset.lowerName));
-		return (
-			platformCandidates.find(
-				(asset) => asset.lowerName.includes("appimage") && matchesArch(asset.lowerName),
-			) ??
-			platformCandidates.find(
-				(asset) =>
-					asset.lowerName.includes("appimage") && !isWrongArch(asset.lowerName),
-			) ??
-			platformCandidates.find(
-				(asset) => asset.lowerName.endsWith(".deb") && matchesArch(asset.lowerName),
-			) ??
-			platformCandidates.find(
-				(asset) => asset.lowerName.endsWith(".deb") && !isWrongArch(asset.lowerName),
-			) ??
-			platformCandidates.find(
-				(asset) => asset.lowerName.endsWith(".tar.gz") && matchesArch(asset.lowerName),
-			) ??
-			platformCandidates.find(
-				(asset) => asset.lowerName.endsWith(".tar.gz") && !isWrongArch(asset.lowerName),
-			)
-		);
-	}
-
-	// 回退：返回第一个匹配架构的资产
-	return candidates.find((asset) => matchesArch(asset.lowerName)) ?? candidates[0];
-}
-
-async function checkForAppUpdate(
-	installationType?: "portable" | "installed",
-): Promise<AppUpdateInfo> {
-	const currentVersion = app.getVersion();
-	void appLogger.info("update", "Check for app update", { currentVersion, installationType });
-	const response = await fetch(LATEST_RELEASE_API, {
-		headers: {
-			Accept: "application/vnd.github+json",
-			"User-Agent": `pi-desktop/${currentVersion}`,
-		},
-	});
-	if (!response.ok) {
-		void appLogger.warn("update", "GitHub release check failed", { status: response.status });
-		throw new Error(mainCopy("update.checkFailed"));
-	}
-	const release = (await response.json()) as GitHubRelease;
-	const latestVersion = normalizeVersion(release.tag_name || currentVersion);
-	const assets = (release.assets ?? []).map((asset) => ({
-		name: asset.name,
-		url: asset.browser_download_url,
-		size: asset.size,
-	}));
-	const recommendedAsset = selectRecommendedAsset(assets, installationType);
-	void appLogger.info("update", "App update check completed", {
-		currentVersion,
-		latestVersion,
-		hasUpdate: compareVersions(latestVersion, currentVersion) > 0,
-		recommendedAsset: recommendedAsset?.name,
-	});
-	return {
-		currentVersion,
-		latestVersion,
-		hasUpdate: compareVersions(latestVersion, currentVersion) > 0,
-		releaseName: release.name || `v${latestVersion}`,
-		releaseNotes: release.body || "",
-		releaseUrl: release.html_url || RELEASES_URL,
-		publishedAt: release.published_at,
-		assets,
-		recommendedAsset,
-	};
-}
-
-function emitUpdateProgress(progress: AppUpdateDownloadProgress) {
-	if (!mainWindow || mainWindow.isDestroyed()) return;
-	mainWindow.webContents.send(ipcChannels.appUpdateProgress, progress);
-}
-
-async function downloadUpdateAsset(asset: AppUpdateAsset): Promise<AppUpdateDownloadResult> {
-	if (!asset.url || !/^https:\/\//i.test(asset.url)) {
-		void appLogger.warn("update", "Rejected invalid update download URL", {
-			assetName: asset.name,
-			url: asset.url,
-		});
-		throw new Error(mainCopy("update.invalidDownloadUrl"));
-	}
-
-	const safeName = basename(asset.name).replace(/[<>:"/\\|?*]+/g, "-");
-	const downloadDir = join(app.getPath("userData"), "updates");
-	await mkdir(downloadDir, { recursive: true });
-	const filePath = join(downloadDir, safeName);
-	const startedAt = Date.now();
-	let receivedBytes = 0;
-	let totalBytes = asset.size > 0 ? asset.size : undefined;
-
-	// 使用 Electron net 下载可继承 Chromium 的 TLS/代理能力；进度通过 IPC 推送给 renderer。
-	return new Promise((resolve, reject) => {
-			void appLogger.info("update", "Download update asset started", { assetName: asset.name, url: asset.url });
-		const request = net.request({ method: "GET", url: asset.url });
-		request.setHeader("User-Agent", `pi-desktop/${app.getVersion()}`);
-		request.on("redirect", (_statusCode, _method, redirectUrl) => {
-			// GitHub browser_download_url 通常会 302 到对象存储,必须显式跟随重定向。
-			request.followRedirect();
-			void appLogger.debug("update", "Follow update download redirect", { redirectUrl });
-		});
-		request.on("response", (response) => {
-			if (response.statusCode < 200 || response.statusCode >= 300) {
-				const publicError = new Error(mainCopy("update.downloadFailed"));
-				void appLogger.warn("update", "Update download returned an error status", {
-					assetName: asset.name,
-					statusCode: response.statusCode,
-				});
-				emitUpdateProgress({ assetName: asset.name, receivedBytes, totalBytes, state: "failed", error: publicError.message });
-				reject(publicError);
-				return;
-			}
-
-			const contentLength = Number(response.headers["content-length"]);
-			if (Number.isFinite(contentLength) && contentLength > 0) totalBytes = contentLength;
-			const output = createWriteStream(filePath);
-			response.on("data", (chunk: Buffer) => {
-				receivedBytes += chunk.length;
-				output.write(chunk);
-				const elapsedSeconds = Math.max(0.001, (Date.now() - startedAt) / 1000);
-				emitUpdateProgress({
-					assetName: asset.name,
-					receivedBytes,
-					totalBytes,
-					percent: totalBytes ? Math.min(100, (receivedBytes / totalBytes) * 100) : undefined,
-					bytesPerSecond: receivedBytes / elapsedSeconds,
-					state: "downloading",
-				});
-			});
-			response.on("end", () => output.end());
-			output.on("finish", () => {
-				output.close(() => {
-					emitUpdateProgress({ assetName: asset.name, receivedBytes, totalBytes, percent: 100, state: "completed", filePath });
-					void appLogger.info("update", "Download update asset completed", { assetName: asset.name, filePath, receivedBytes });
-					resolve({ filePath, assetName: asset.name });
-				});
-			});
-			output.on("error", (error) => {
-				void appLogger.warn("update", "Failed to write update package", {
-					assetName: asset.name,
-					error: error.message,
-				});
-				const publicError = new Error(mainCopy("update.downloadFailed"));
-				emitUpdateProgress({ assetName: asset.name, receivedBytes, totalBytes, state: "failed", error: publicError.message });
-				reject(publicError);
-			});
-		});
-		request.on("error", (error) => {
-			void appLogger.warn("update", "Update download request failed", {
-				assetName: asset.name,
-				error: error.message,
-			});
-			const publicError = new Error(mainCopy("update.downloadFailed"));
-			emitUpdateProgress({ assetName: asset.name, receivedBytes, totalBytes, state: "failed", error: publicError.message });
-			reject(publicError);
-		});
-		request.end();
-	});
-}
-
-async function installDownloadedUpdate(filePath: string) {
-	// Windows/Linux 不同包类型的真正静默自更新风险较高；这里交给系统打开安装包或文件位置。
-	// 便携版用户通常下载 zip/AppImage/tar.gz 后需要替换当前目录,避免在运行中覆盖自身可执行文件。
-	await appLogger.info("update", "Open downloaded update package", { filePath });
-	const openError = await shell.openPath(filePath);
-	if (openError) {
-		await appLogger.warn("update", "Failed to open downloaded update package", {
-			filePath,
-			error: openError,
-		});
-		throw new Error(mainCopy("update.openFailed"));
-	}
-}
-
 /**
  * 重启应用：先同步退出标志并停掉常驻服务，再 relaunch + quit。
  * 必须置 isQuitting，否则 closeToTray 会把退出流程吞成「隐藏到托盘」，relaunch 不生效。
@@ -972,33 +648,29 @@ function restartApp(): void {
 
 function refreshTrayContextMenu(): void {
 	if (!tray) return;
-	tray.setContextMenu(Menu.buildFromTemplate([
+	refreshAppTrayMenu(
+		tray,
 		{
-			label: mainCopy("tray.showWindow"),
-			click: () => {
-				if (mainWindow && !mainWindow.isDestroyed()) {
-					mainWindow.show();
-					mainWindow.focus();
-				}
-			},
+			showWindow: mainCopy("tray.showWindow"),
+			restart: mainCopy("tray.restart"),
+			quit: mainCopy("tray.quit"),
 		},
-		{ type: "separator" },
 		{
-			// 托盘重启与系统设置 IPC 的 appRestart 保持同一套清理语义
-			label: mainCopy("tray.restart"),
-			click: restartApp,
-		},
-		{ type: "separator" },
-		{
-			label: mainCopy("tray.quit"),
-			click: () => {
+			showWindow: showMainWindowFromTray,
+			restart: restartApp,
+			quit: () => {
 				isQuitting = true;
 				app.quit();
 			},
 		},
-	]));
+	);
 }
 
+function showMainWindowFromTray(): void {
+	if (!mainWindow || mainWindow.isDestroyed()) return;
+	mainWindow.show();
+	mainWindow.focus();
+}
 
 /** 从托盘/任务栏/二次启动唤起主窗口：处理最小化、隐藏到托盘两种状态。 */
 function focusMainWindow() {
@@ -1083,19 +755,8 @@ function handleVersionFocusRequest(payload?: FocusPayload) {
 focusExistingWindow = handleVersionFocusRequest;
 
 function setupTray() {
-	// iconPath 由 electron-vite 的 ?asset 后缀自动解析，打包后也能正确定位
-	const icon = nativeImage.createFromPath(iconPath);
-	tray = new Tray(icon.resize({ width: 16, height: 16 }));
-	tray.setToolTip("PiDeck-Q");
-
-	// 双击托盘图标恢复窗口（Windows 常见交互）
-	tray.on("double-click", () => {
-		if (mainWindow && !mainWindow.isDestroyed()) {
-			mainWindow.show();
-			mainWindow.focus();
-		}
-	});
-
+	// ?asset 路径由构建器解析；模块仅负责 Electron Tray 细节。
+	tray = createAppTray(iconPath, showMainWindowFromTray);
 	refreshTrayContextMenu();
 }
 
@@ -1182,108 +843,6 @@ async function prepareMainPreloadPath() {
 	return preparePreloadPath(sourcePath, "main-preload.js");
 }
 
-const BROWSER_PANEL_PARTITION = BROWSER_PANEL_PARTITION_SHARED;
-
-function isAllowedBrowserPanelUrl(targetUrl: string): boolean {
-	return isAllowedBrowserPanelUrlShared(targetUrl);
-}
-
-/**
- * 浏览器面板 partition 上的导航白名单拦截是否已注册。
- * Electron webRequest 监听返回 void 且不可移除；macOS activate 重建窗口会重复调用
- * configureBrowserPanelWebviewHost，必须只注册一次，否则每次重建都在共享 partition
- * 上累积一份回调（2026-10 泄漏修复）。
- */
-let browserPanelRequestInstalled = false;
-
-function configureBrowserPanelWebviewHost(window: BrowserWindow): void {
-	const browserPanelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
-	browserPanelSession.setPermissionCheckHandler(() => false);
-	browserPanelSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-	browserPanelSession.setDevicePermissionHandler(() => false);
-	if (!browserPanelRequestInstalled) {
-		browserPanelRequestInstalled = true;
-		browserPanelSession.webRequest.onBeforeRequest(
-			(details, callback) => {
-		const isFrameNavigation = details.resourceType === "mainFrame" || details.resourceType === "subFrame";
-		if (isFrameNavigation && !isAllowedBrowserPanelUrl(details.url)) {
-			void appLogger.warn("browser", "Blocked unsafe webview frame request", {
-				resourceType: details.resourceType,
-				url: details.url,
-			});
-			callback({ cancel: true });
-			return;
-		}
-			callback({});
-		});
-	}
-
-	window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
-		const sourceUrl = params.src || "about:blank";
-		if ((params.partition && params.partition !== BROWSER_PANEL_PARTITION) || !isAllowedBrowserPanelUrl(sourceUrl)) {
-			event.preventDefault();
-			void appLogger.warn("browser", "Blocked unsafe webview attachment", {
-				sourceUrl,
-				partition: params.partition,
-			});
-			return;
-		}
-
-		params.src = sourceUrl;
-		params.partition = BROWSER_PANEL_PARTITION;
-		delete params.preload;
-		delete params.preloadURL;
-		delete params.allowfileaccess;
-		delete params.allowpopups;
-
-		webPreferences.partition = BROWSER_PANEL_PARTITION;
-		webPreferences.sandbox = true;
-		webPreferences.nodeIntegration = false;
-		webPreferences.nodeIntegrationInWorker = false;
-		webPreferences.nodeIntegrationInSubFrames = false;
-		webPreferences.contextIsolation = true;
-		webPreferences.webSecurity = true;
-		webPreferences.allowRunningInsecureContent = false;
-		webPreferences.webviewTag = false;
-		delete webPreferences.preload;
-		delete (webPreferences as Record<string, unknown>).preloadURL;
-	});
-
-	window.webContents.on("did-attach-webview", (_event, guest) => {
-		if (guest.session !== browserPanelSession) {
-			void appLogger.warn("browser", "Closed webview with unexpected session");
-			guest.close();
-			return;
-		}
-
-		const blockUnsafeNavigation = (event: { url: string; preventDefault(): void }, phase: string) => {
-			if (isAllowedBrowserPanelUrl(event.url)) return;
-			event.preventDefault();
-			void appLogger.warn("browser", "Blocked unsafe webview navigation", {
-				phase,
-				url: event.url,
-			});
-		};
-
-		guest.on("will-frame-navigate", (event) => blockUnsafeNavigation(event, "navigate"));
-		guest.on("will-redirect", (event) => blockUnsafeNavigation(event, "redirect"));
-		guest.setWindowOpenHandler(({ url }) => {
-			if (url !== "about:blank" && isAllowedBrowserPanelUrl(url)) {
-				void openExternalUrl(url);
-			} else if (!isAllowedBrowserPanelUrl(url)) {
-				void appLogger.warn("browser", "Blocked unsafe webview window open", { url });
-			}
-			return { action: "deny" };
-		});
-
-		guest.on("before-input-event", (event, input) => {
-			if (!isDevToolsShortcut(input)) return;
-			event.preventDefault();
-			toggleMainWindowDevTools(window);
-		});
-	});
-}
-
 async function createWindow() {
 	applyNativeThemeSource(settingsStore.get());
 	const windowOptions = settingsStore.createWindowOptions();
@@ -1350,7 +909,7 @@ async function createWindow() {
 		},
 	});
 	const createdWindow = mainWindow;
-	configureBrowserPanelWebviewHost(createdWindow);
+	configureBrowserPanelWebviewHost(createdWindow, { appLogger, openExternalUrl });
 	let hasShownMainWindow = false;
 	function showMainWindowOnce() {
 		if (createdWindow.isDestroyed() || hasShownMainWindow) return;
@@ -1726,6 +1285,14 @@ function registerIpc() {
 			? join(process.resourcesPath, "model-specs.db")
 			: join(app.getAppPath(), "resources", "model-specs.db"),
 	);
+	const appUpdateService = createAppUpdateService({
+		logger: appLogger,
+		translate: mainCopy,
+		emitProgress: (progress) => {
+			if (!mainWindow || mainWindow.isDestroyed()) return;
+			mainWindow.webContents.send(ipcChannels.appUpdateProgress, progress);
+		},
+	});
 	registerSystemIpc({
 		piLocator,
 		settingsStore,
@@ -1740,9 +1307,9 @@ function registerIpc() {
 		stopAgentFromMonitor,
 		getMainWindow: () => mainWindow,
 		mainCopy: mainCopy as (key: string, params?: Record<string, string | number>) => string,
-		checkForAppUpdate: checkForAppUpdate as (installationType?: string) => Promise<AppUpdateInfo | null>,
-		downloadUpdateAsset,
-		installDownloadedUpdate,
+		checkForAppUpdate: appUpdateService.checkForAppUpdate,
+		downloadUpdateAsset: appUpdateService.downloadUpdateAsset,
+		installDownloadedUpdate: appUpdateService.installDownloadedUpdate,
 		openExternalUrl,
 		extensionManager,
 		// 设置变更副作用（代理 / 主题 / WSL / Web 服务）
@@ -2305,9 +1872,9 @@ async function removeStalePiDeckExtension(extensionName: string, homeDir?: strin
  * 覆盖 Windows home；WSL 启用时同步清理 \\wsl$ 映射 home。
  */
 async function migrateLegacyBuiltInExtensions(): Promise<void> {
-	const { BUILT_IN_EXTENSIONS } = await import("./extensions/builtInExtensions");
 	const legacyNames = [
 		...BUILT_IN_EXTENSIONS,
+		...LEGACY_BUILT_IN_EXTENSION_NAMES,
 		"pi-deck-project-trust.ts",
 		"pi-deck-file-capture.ts",
 	];

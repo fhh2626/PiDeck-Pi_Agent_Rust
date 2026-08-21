@@ -10,6 +10,7 @@
 import type { UIMessage } from "ai";
 import type {
 	AvailableModel,
+	AskQuestionResultSummary,
 	ChatMessage,
 	ContextControllerState,
 	ImageContent,
@@ -21,6 +22,10 @@ import type {
 	SessionTargetedValue,
 	UpdateSessionRecordInput,
 } from "../../../shared/types";
+import {
+	getAskQuestionResultFromMessage,
+	normalizeAskQuestionResultSummary,
+} from "../../../shared/askQuestion";
 import type { WebState } from "./webTypes";
 
 /** 轮询 /api/state 拿项目/会话/运行态（低频兜底，主数据流走 useChat）。 */
@@ -185,6 +190,8 @@ type WebMessageMetadata = {
 	entryId?: string;
 	/** 工具结果的跨投影稳定身份；工具文本会随执行状态改变，不能用文本匹配。 */
 	toolCallId?: string;
+	/** 已完成的 ask_question 结果（规范化后）；存在时 Web 时间线渲染常驻问答卡。 */
+	askQuestionResult?: AskQuestionResultSummary;
 };
 
 function createWebMessageMetadata(message: ChatMessage): WebMessageMetadata {
@@ -196,6 +203,10 @@ function createWebMessageMetadata(message: ChatMessage): WebMessageMetadata {
 	if (typeof entryId === "string" && entryId) metadata.entryId = entryId;
 	const toolCallId = message.meta?.toolCallId;
 	if (typeof toolCallId === "string" && toolCallId) metadata.toolCallId = toolCallId;
+	// 主进程投影把 ask_question 结果挂在 meta._askCard；这里规范化后随
+	// UIMessage.metadata 下发，Web 时间线据此渲染常驻问答卡（与桌面一致）。
+	const askResult = getAskQuestionResultFromMessage(message);
+	if (askResult) metadata.askQuestionResult = askResult;
 	return metadata;
 }
 
@@ -324,12 +335,30 @@ function readWebMessageMetadata(message: UIMessage): WebMessageMetadata | undefi
 	const timestamp = Reflect.get(value, "timestamp");
 	const entryId = Reflect.get(value, "entryId");
 	const toolCallId = Reflect.get(value, "toolCallId");
+	const askQuestionResult = normalizeAskQuestionResultSummary(
+		Reflect.get(value, "askQuestionResult"),
+	);
 	return {
 		chatRole,
 		...(typeof timestamp === "number" ? { timestamp } : {}),
 		...(typeof entryId === "string" && entryId ? { entryId } : {}),
 		...(typeof toolCallId === "string" && toolCallId ? { toolCallId } : {}),
+		...(askQuestionResult ? { askQuestionResult } : {}),
 	};
+}
+
+/**
+ * 从 UIMessage 读取已完成的 ask_question 结果。
+ * 结果在 createWebMessageMetadata 时已规范化并挂在 metadata 上，
+ * 这里再走一次 normalizeAskQuestionResultSummary 兜底（SSE 占位合并 /
+ * 旧缓存），保证 Web 时间线拿到的一定是规范结构，损坏时返回 undefined。
+ */
+export function getWebAskQuestionResult(
+	message: UIMessage,
+): AskQuestionResultSummary | undefined {
+	const raw = readWebMessageMetadata(message)?.askQuestionResult;
+	if (!raw || typeof raw !== "object") return undefined;
+	return normalizeAskQuestionResultSummary(raw);
 }
 
 function uiMessageRole(message: UIMessage): ChatMessage["role"] {
@@ -369,7 +398,11 @@ function uiMessageText(message: UIMessage): string {
 function sameUiMessage(left: UIMessage, right: UIMessage): boolean {
 	return left.id === right.id
 		&& left.role === right.role
-		&& JSON.stringify(left.parts) === JSON.stringify(right.parts);
+		&& JSON.stringify(left.parts) === JSON.stringify(right.parts)
+		// metadata 也要比：ask_question 完成后快照只追加 metadata.askQuestionResult
+		// （parts 不变），只比 parts 会让「只变 metadata」的更新被误判为相同而跳过替换，
+		// Web 端看不到常驻问答卡。
+		&& JSON.stringify(left.metadata ?? null) === JSON.stringify(right.metadata ?? null);
 }
 
 function isEmptyUiMessage(message: UIMessage): boolean {
@@ -526,6 +559,30 @@ export function mergeAuthoritativeUiMessages(
 		}
 
 		if (matchIndex >= 0) {
+			// 缓存自身可能已被早先一次增量合并排乱，例如最终正文留在思考卡之前。
+			// 仅替换命中的内容无法自愈；当命中项落在上一条权威消息之前时，
+			// 必须把它移动到上一条之后，保证重连后严格恢复权威时间线顺序。
+			if (matchIndex < lastPlacedIndex) {
+				merged.splice(matchIndex, 1);
+				const shiftedAfterRemoval = [...matchedCurrent].map((index) =>
+					index > matchIndex ? index - 1 : index,
+				);
+				matchedCurrent.clear();
+				for (const index of shiftedAfterRemoval) matchedCurrent.add(index);
+				lastPlacedIndex -= 1;
+
+				const insertionIndex = lastPlacedIndex + 1;
+				const shiftedAfterInsertion = [...matchedCurrent].map((index) =>
+					index >= insertionIndex ? index + 1 : index,
+				);
+				matchedCurrent.clear();
+				for (const index of shiftedAfterInsertion) matchedCurrent.add(index);
+				merged.splice(insertionIndex, 0, incoming);
+				matchedCurrent.add(insertionIndex);
+				lastPlacedIndex = insertionIndex;
+				changed = true;
+				continue;
+			}
 			matchedCurrent.add(matchIndex);
 			if (!sameUiMessage(merged[matchIndex], incoming)) {
 				merged[matchIndex] = incoming;

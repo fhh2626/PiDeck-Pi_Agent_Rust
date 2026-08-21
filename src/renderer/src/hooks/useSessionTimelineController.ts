@@ -147,6 +147,34 @@ export function canLoadSessionTimelineMore(isStarting: boolean, messageCount: nu
   return !(isStarting && messageCount === 0);
 }
 
+/**
+ * runtime 窗口会话是否还能再补更早的历史。
+ * slideOut 合成的 history 常只有消息、没有真实分页游标（nextBefore 会被写成 null），
+ * 不能据此判定「已经到顶」——否则长会话滚到顶既不显示更早消息，也不出现加载按钮。
+ */
+export function hasMoreRuntimeHistory(entry: {
+  source?: string;
+  windowStart?: number;
+  windowStartFilePos?: number;
+  history?: {
+    nextBefore: number | null;
+    nextBeforeEntryId?: string | null;
+    exhausted?: boolean;
+  };
+} | undefined): boolean {
+  if (!entry || entry.source !== "runtime") return false;
+  if (entry.history?.exhausted) return false;
+  if (entry.history) {
+    if (entry.history.nextBefore !== null) return true;
+    if (typeof entry.history.nextBeforeEntryId === "string" && entry.history.nextBeforeEntryId) {
+      return true;
+    }
+    // 只有 slideOut 合成出的前缀：游标未知。窗口起点或文件游标 >0 仍说明前面还有历史。
+    return (entry.windowStart ?? 0) > 0 || (typeof entry.windowStartFilePos === "number" && entry.windowStartFilePos > 0);
+  }
+  return (entry.windowStart ?? 0) > 0 || (typeof entry.windowStartFilePos === "number" && entry.windowStartFilePos > 0);
+}
+
 export function isLatestTimelineRunBusy(
   isAgentBusy: boolean,
   index: number,
@@ -368,9 +396,7 @@ export function useSessionTimelineController(options: {
 		[runtimeHistory, messages],
 	);
 	// 窗口前还有历史可加载：已加载前缀看游标，未加载看窗口起点（>0 说明激活时被截断）
-	const historyHasMore = controllerEnabled && cachedEntry?.source === "runtime"
-		? (runtimeHistory ? runtimeHistory.nextBefore !== null : (cachedEntry.windowStart ?? 0) > 0)
-		: false;
+	const historyHasMore = controllerEnabled && hasMoreRuntimeHistory(cachedEntry);
 	// 2026-11 轮次模型：不再按 100 条分页器切片，显示数组 = 已加载全部（历史前缀 + 运行时窗口段）。
 	// 内存预算由主进程 12 轮缓存 + 回底临时历史清理承担，渲染层不再有第二道条数窗口。
 	const visibleMessages = combinedMessages;
@@ -502,35 +528,43 @@ export function useSessionTimelineController(options: {
 		if (historyHasMore) {
 			const sessionId = options.sessionId;
 			if (!sessionId || isLoadingMessagePage) return;
-			const before = runtimeHistory?.nextBefore;
+			const before = runtimeHistory?.nextBefore ?? undefined;
 			// 首次补历史锚点：窗口首条可能是无 entryId 的系统摘要卡片（compaction/branchSummary），
 			// 必须取第一条有 entryId 的消息，否则锚点解析失败导致首次上翻静默放弃。
-			const anchorMessage = !runtimeHistory
-				? messages.find((m) => typeof m.meta?.entryId === "string")
+			// slideOut 合成的 history 只有消息、没有 nextBefore 时，同样要从当前前缀/窗口首条再取锚点。
+			const needsSyntheticAnchor = !runtimeHistory || (
+				runtimeHistory.nextBefore === null &&
+				!runtimeHistory.nextBeforeEntryId
+			);
+			const anchorMessage = needsSyntheticAnchor
+				? [...(runtimeHistory?.messages ?? []), ...messages].find((m) => typeof m.meta?.entryId === "string")
 				: undefined;
 			const anchorEntryId =
-				typeof anchorMessage?.meta?.entryId === "string" ? anchorMessage.meta.entryId : undefined;
+				typeof runtimeHistory?.nextBeforeEntryId === "string"
+					? runtimeHistory.nextBeforeEntryId
+					: (typeof anchorMessage?.meta?.entryId === "string" ? anchorMessage.meta.entryId : undefined);
 			// 大历史窗口（skipEntries 路径）消息可能整体缺 entryId：退化为窗口首条消息的
 			// 文件消息下标（windowStartFilePos）作为数值游标——主进程缓存路径先把它解析成
 			// entryId 再查缓存，磁盘路径直接消费文件下标。两者都没有才放弃补历史。
-			const anchorFilePos = !runtimeHistory && !anchorEntryId
+			const anchorFilePos = !anchorEntryId && before === undefined
 				? (typeof cachedEntry?.windowStartFilePos === "number"
 					? cachedEntry.windowStartFilePos
 					: undefined)
 				: undefined;
-			if (!runtimeHistory && !anchorEntryId && anchorFilePos === undefined) return;
+			const requestBefore = before ?? (anchorFilePos !== undefined ? anchorFilePos : undefined);
+			if (requestBefore === undefined && !anchorEntryId) return;
 			const sequence = ++nextLoadSequence;
 			trackLatestLoad(sessionId, sequence);
 			const expectedRevision = cachedEntry?.revision ?? 0;
 			setIsLoadingMessagePage(true);
 			void desktopApi.sessions
-				.readRecordMessagePage(sessionId, before ?? (anchorFilePos !== undefined ? anchorFilePos : undefined), RUNTIME_HISTORY_TURN_PAGE_SIZE, {
+				.readRecordMessagePage(sessionId, requestBefore, RUNTIME_HISTORY_TURN_PAGE_SIZE, {
 					unit: "turn",
-					beforeEntryId: anchorEntryId ?? runtimeHistory?.nextBeforeEntryId ?? undefined,
+					beforeEntryId: anchorEntryId,
 				})
 				.then((page) => {
 					if (latestLoadBySession.get(sessionId) !== sequence) return;
-					if (prependHistoryPage({ sessionId, expectedRevision, before, page })) {
+					if (prependHistoryPage({ sessionId, expectedRevision, before: requestBefore, page })) {
 						// 同 disk 分支：补页成功同步扩大渲染窗口，避免新页被 turn 窗口裁剪不可见
 						setScrolledWindowTurns((prev) => prev + TIMELINE_WINDOW_EXPAND_STEP);
 					}

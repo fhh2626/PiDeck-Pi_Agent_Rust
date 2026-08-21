@@ -58,13 +58,6 @@ type AskCardSummary = {
   questions?: AskCardSummary[];
 };
 
-function askAnswerText(answer: unknown, label?: string): string {
-  if (label?.trim()) return label;
-  if (typeof answer === "string") return answer;
-  if (typeof answer === "boolean") return answer ? t("common.true") : t("common.false");
-  return t("ask.unanswered");
-}
-
 function toolIcon(toolName: string): ReactNode {
 	const key = toolName.toLowerCase();
 	if (key.includes("read") || key.includes("view")) return <FileText size={16} />;
@@ -161,7 +154,7 @@ const BUILT_IN_TOOLS = new Set(["bash", "edit", "find", "grep", "ls", "read", "w
  * 扩展工具中带下划线的名称，会被 MCP-direct 正则误匹配为形如 {server}_{tool}。
  * 在此登记后 getToolKind 将其归为 "extension" 而非 "mcp-direct"。
  */
-const NON_MCP_TOOLS = new Set(["ask_question"]);
+const NON_MCP_TOOLS = new Set(["ask_question", "web_search"]);
 
 /**
  * 识别工具来源类型：
@@ -306,7 +299,9 @@ export const ToolCard = memo(function ToolCard(props: {
 		return (
 			<Badge variant="secondary" className="gap-1 px-1 py-0 text-micro">
 				<CircleCheck size={9} aria-hidden="true" />
-				{askCard?.answered ? t("ask.answered") : t("tool.statusDone")}
+				{/* 已完成 ask 的「已回答」文案由常驻 AskQuestionResultCard 承载，
+				    ToolCard 的 done 统一用 statusDone（running/损坏 ask 同走此 badge）。 */}
+				{t("tool.statusDone")}
 			</Badge>
 		);
 	})();
@@ -384,43 +379,21 @@ export const ToolCard = memo(function ToolCard(props: {
 			</div>
 			{expanded && (
 				<div className="relative ml-5 mt-1 mb-2 rounded-b-sm border-l-2 border-border-subtle bg-transparent pl-3 animate-in fade-in slide-in-from-top-1 duration-150">
-					{isAskCard && askCard ? (
-						<div className="ask-question-card-tool-inner">
-							<div className="ask-question-card-title">
-								<MessageCircle size={13} />
-								<span>{t("ask.question")}</span>
-								<span className="ask-question-card-status">{askCard.answered ? t("ask.answered") : t("ask.unanswered")}</span>
-							</div>
-							<div className="ask-question-card-result-list">
-								{(askCard.questions?.length ? askCard.questions : [askCard]).map((item, index) => (
-									<div key={`${item.question ?? "question"}:${index}`} className="ask-question-card-result-row">
-										<span className="ask-question-card-result-index">{(askCard.questions?.length ?? 0) > 1 ? index + 1 : "?"}</span>
-										<div className="ask-question-card-result-copy">
-											<span className="ask-question-card-result-question">{item.question || t("ask.defaultTitle")}</span>
-											<span className={`ask-question-card-result-answer${item.answered ? " answered" : " unanswered"}`}>
-												{item.answered ? <Check size={12} aria-hidden="true" /> : null}
-												{item.answered ? askAnswerText(item.answer, item.answerLabel) : t("ask.unanswered")}
-											</span>
-										</div>
-									</div>
-								))}
-							</div>
-						</div>
-					) : (
-						<ToolResult
-							showHeader={false}
-							tool={toolIcon(toolName)}
-							title={toolName}
-							status={status === "running" ? "running" : status === "error" ? "error" : "success"}
-							kind={toolName.toLowerCase().includes("bash") || toolName.toLowerCase().includes("shell") ? "terminal" : "custom"}
-							maxHeight={320}
-							copyText={displayText}
-							copyClassName="tool-card-copy"
-							contentClassName="text-text-tertiary"
-						>
-							{displayText}
-						</ToolResult>
-					)}
+				{/* 已完成 ask_question 已拆成常驻 AskQuestionResultCard（buildTurnDisplay），
+				    ToolCard 这里只保留 running / 损坏 ask 的普通工具详情。 */}
+					<ToolResult
+						showHeader={false}
+						tool={toolIcon(toolName)}
+						title={toolName}
+						status={status === "running" ? "running" : status === "error" ? "error" : "success"}
+						kind={toolName.toLowerCase().includes("bash") || toolName.toLowerCase().includes("shell") ? "terminal" : "custom"}
+						maxHeight={320}
+						copyText={displayText}
+						copyClassName="tool-card-copy"
+						contentClassName="text-text-tertiary"
+					>
+						{displayText}
+					</ToolResult>
 					{isTruncated && !fullText && (
 						// 截断提示后的按需加载入口：内容完整与否由主进程决定（内存缓存/会话文件），
 						// 失败时保留重试，不让用户卡死在加载态。
