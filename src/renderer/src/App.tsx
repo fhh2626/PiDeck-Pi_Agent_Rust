@@ -142,7 +142,7 @@ import {
   type SessionModifiedFile,
 } from "./components/app/AppParts";
 import { ExternalEditorOverlay } from "./components/workspace/ExternalEditorOverlay";
-import { navigateTo } from "./components/app/BrowserPanel";
+import { requestBrowserNavigation } from "./browser/BrowserPanelSession";
 import {
   buildOutline,
   flattenFiles,
@@ -1368,7 +1368,7 @@ export function App() {
       // 外部链接必须强制打开 browser 面板（openDrawer 是 toggle 语义，
       // 已是 browser 展开时会关抽屉，导致首次点击关抽屉、二次重复入栈）
       workspace.openDrawerForce("browser");
-      navigateTo(url);
+      requestBrowserNavigation(url);
     },
     onTrustRequest: overlays.setTrustRequest,
     onFocusTarget: (target: { sessionId: string }) => {

@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const browserPanel = readFileSync("src/renderer/src/components/app/BrowserPanel.tsx", "utf8");
+const browserHost = readFileSync("src/renderer/src/browser/electron/ElectronWebviewHost.tsx", "utf8");
 const rendererTypes = readFileSync("src/renderer/src/types.d.ts", "utf8");
 const main = readFileSync("src/main/index.ts", "utf8");
 const webviewHost = readFileSync("src/main/browser/browserPanelWebviewHost.ts", "utf8");
 // #115 U4：partition/白名单已收敛到共享模块，webview 管线主进程加固与浏览器安全模块都从它导入
 const browserSecurity = readFileSync("src/main/browser/browserSecurity.ts", "utf8");
+const sessionModule = readFileSync("src/renderer/src/browser/BrowserPanelSession.ts", "utf8");
 const filesIpc = readFileSync("src/main/ipc/filesIpc.ts", "utf8");
 
 function functionBlock(source, signature, nextSignature) {
@@ -17,27 +18,30 @@ function functionBlock(source, signature, nextSignature) {
 	return source.slice(start, end >= 0 ? end : undefined);
 }
 
-test("BrowserPanel uses a fixed persistent partition without popup or file access attributes", () => {
+test("Browser host adapter uses a fixed persistent partition without popup or file access attributes", () => {
 	// The partition constant lives in main (configureBrowserPanelWebviewHost) and is
-	// no longer duplicated in the renderer component.
-	assert.doesNotMatch(browserPanel, /const BROWSER_PANEL_PARTITION = "persist:pideck-browser-panel"/);
+	// no longer duplicated anywhere in the renderer.
+	assert.doesNotMatch(browserHost, /persist:pideck-browser-panel/);
 	// 常量唯一定义在共享模块；index.ts 经别名引用同一值
 	assert.match(browserSecurity, /export const BROWSER_PANEL_PARTITION = "persist:pideck-browser-panel"/);
 	assert.match(browserSecurity, /export function isAllowedBrowserPanelUrl/);
 	assert.match(webviewHost, /from "\.\/browserSecurity"/);
 	assert.match(webviewHost, /session\.fromPartition\(BROWSER_PANEL_PARTITION\)/);
 	// The renderer-driven webview sets allowfileaccess and allowpopups via attributes.
-	assert.match(browserPanel, /setAttribute\("allowfileaccess", "true"\)/);
-	assert.match(browserPanel, /allowpopups=\{"true" as any\}/);
+	// Ownership moved to the ElectronWebviewHost adapter (renderer's only <webview> module).
+	assert.match(browserHost, /setAttribute\("allowfileaccess", "true"\)/);
+	assert.match(browserHost, /allowpopups=\{"true" as unknown as boolean\}/);
 	assert.match(rendererTypes, /partition\?: string/);
 	assert.doesNotMatch(rendererTypes, /allowpopups/i);
 });
 
-test("BrowserPanel navigation goes through the module-state pending-URL poll loop", () => {
-	assert.match(browserPanel, /export function navigateTo\(url: string\)/);
-	assert.match(browserPanel, /pendingNavigateUrl = url/);
-	assert.match(browserPanel, /moduleState\.tabs\.push\(\{ id, title: "", url \}\)/);
-	assert.doesNotMatch(browserPanel, /isAllowedBrowserUrl/);
+test("Browser navigation goes through BrowserPanelSession pending-URL poll loop", () => {
+	// navigateTo ownership moved from BrowserPanel to browser/BrowserPanelSession.ts;
+	// requestBrowserNavigation keeps the same semantics: new tab per request + pending URL.
+	assert.match(sessionModule, /export function requestBrowserNavigation\(url: string\)/);
+	assert.match(sessionModule, /pendingNavigateUrl = url/);
+	assert.match(sessionModule, /moduleState\.tabs\.push\(\{ id, title: "", url \}\)/);
+	assert.doesNotMatch(sessionModule, /isAllowedBrowserUrl/);
 });
 
 test("main process hardens webPreferences before attaching BrowserPanel guests", () => {
