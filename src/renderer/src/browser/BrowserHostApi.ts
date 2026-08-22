@@ -48,7 +48,6 @@ export interface BrowserHostApi {
 	goBack(): void;
 	goForward(): void;
 	reload(): void;
-	isLoading(): boolean;
 	setDeviceProfile(profile: BrowserDeviceProfile): void;
 }
 

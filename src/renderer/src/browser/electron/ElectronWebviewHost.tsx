@@ -28,7 +28,6 @@ type ElectronWebviewElement = HTMLElement & {
 	reload(): void;
 	canGoBack(): boolean;
 	canGoForward(): boolean;
-	isLoading(): boolean;
 	getUserAgent(): string;
 	setUserAgent(userAgent: string): void;
 };
@@ -112,9 +111,6 @@ export function ElectronWebviewHost({
 			},
 			reload() {
 				webviewRef.current?.reload();
-			},
-			isLoading() {
-				return webviewRef.current?.isLoading() ?? false;
 			},
 			setDeviceProfile(profile: BrowserDeviceProfile) {
 				applyDeviceProfile(profile);

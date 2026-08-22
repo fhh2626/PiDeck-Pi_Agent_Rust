@@ -5,8 +5,8 @@ import test from "node:test";
 // 回归门禁（loadUrl 中心化不变量）：loadUrl() 必须在 host.loadUrl 之前同步
 // url/inputValue。重构前所有导航入口天然拥有该保证；若缺失，「加载中」窗口期内
 // selectDevice 会读到旧 url，把刚发起的导航打回旧页面 —— 地址栏 Enter / 新建 Tab /
-// Home / 切 tab / 关 tab 全部受影响。所有产品入口统一经 loadUrl() 自动安全；
-// pending 外部导航轮询直接调 host.loadUrl（plan §23），必须自带显式同步。
+// Home / 切 tab / 关 tab 全部受影响。所有导航入口（含外部导航订阅回调）统一经
+// loadUrl() 自动安全。
 const panel = readFileSync("src/renderer/src/components/app/BrowserPanel.tsx", "utf8");
 
 /** 断言 markers 在源码中按给定顺序出现（用于锁定「先同步后加载」的先后关系）。 */
@@ -33,10 +33,10 @@ test("loadUrl itself syncs url/input before dispatching to the host", () => {
 	);
 });
 
-test("product entries funnel through loadUrl; direct host.loadUrl only where explicitly synced", () => {
-	// host.loadUrl 只允许出现两次：loadUrl 本体（中心同步）与 pending 轮询（显式同步）。
-	// 新增导航入口若绕过 loadUrl 直调 host，必须先补同步并更新此计数。
-	assert.equal((panel.match(/host\.loadUrl\(/g) ?? []).length, 2);
+test("product entries funnel through loadUrl; direct host.loadUrl only inside loadUrl itself", () => {
+	// 所有真实导航统一经 loadUrl()（含外部导航订阅回调）；host.loadUrl 只允许出现
+	// 一次（loadUrl 本体）。新增直调宿主的入口必须先补同步并更新此计数。
+	assert.equal((panel.match(/host\.loadUrl\(/g) ?? []).length, 1);
 	for (const marker of [
 		"void loadUrl(finalUrl);", // 地址栏 Enter（navigate）
 		"void loadUrl(DEFAULT_HOME);", // 新建 Tab + Home 按钮
@@ -47,14 +47,15 @@ test("product entries funnel through loadUrl; direct host.loadUrl only where exp
 	}
 });
 
-test("external navigation subscription syncs url/input before host.loadUrl", () => {
+test("external navigation subscription funnels through loadUrl and syncs tabs", () => {
+	// 订阅回调只做 tab 列表同步 + 统一 loadUrl 入口（地址栏/isLoading/device 由
+	// loadUrl 中心保证），不再自建第二套导航同步。
 	assertOrdered(
 		[
 			"subscribeBrowserNavigation(",
-			"setUrl(tab.url);",
-			"setInputValue(tab.url);",
-			"host.setDeviceProfile(snapshot.device);",
-			"host.loadUrl(tab.url)",
+			"setTabs([...snapshot.tabs]);",
+			"setActiveTabId(tab.id);",
+			"void loadUrl(tab.url, snapshot.device);",
 		],
 		"external navigation subscription",
 	);

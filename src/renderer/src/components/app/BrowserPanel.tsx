@@ -188,23 +188,18 @@ export function BrowserPanel(props: {
 	);
 
 	// 订阅外部导航请求：当外部（如 App.tsx / IPC）调用 requestBrowserNavigation 时，
-	// 直接收到通知并实时加载新 tab，替代原 50ms 轮询方案。
+	// 直接收到通知并实时加载新 tab，替代原 50ms 轮询方案。导航统一经 loadUrl()
+	// 中心入口（地址栏/isLoading/device/错误处理自动一致），本回调只同步 tab 列表。
 	useEffect(() => {
 		const unsubscribe = subscribeBrowserNavigation((tab) => {
-			const host = hostRef.current;
-			if (!host) return;
+			if (!hostRef.current) return;
 			const snapshot = getBrowserPanelSessionSnapshot();
-			// 显式状态同步（plan §23「保留现有状态同步」）：此路径直接调 host.loadUrl、
-			// 不经 loadUrl() 的中心同步，必须自己把地址栏对齐目标 URL。
-			setUrl(tab.url);
-			setInputValue(tab.url);
-			host.setDeviceProfile(snapshot.device);
 			setTabs([...snapshot.tabs]);
 			setActiveTabId(tab.id);
-			void host.loadUrl(tab.url).catch(() => {});
+			void loadUrl(tab.url, snapshot.device);
 		});
 		return unsubscribe;
-	}, []);
+	}, [loadUrl]);
 
 	const closeTab = useCallback(
 		(tabId: string, event: React.MouseEvent) => {
@@ -213,7 +208,6 @@ export function BrowserPanel(props: {
 			if (current.length <= 1) {
 				// 关闭最后一个 tab：清空 session 与本地 tabs 状态，避免旧 tab 残留显示
 				// （onClose 触发的 state 更新可能是同值 no-op，React 会跳过重渲染，必须显式同步）。
-				// 同时清除 pending 外部导航，防止下次打开浏览器时旧 URL 突然加载。
 				// onClose 语义 = 关闭整个浏览器面板：抽屉模式收起侧边栏，全屏模式退出全屏并收起侧边栏。
 				resetBrowserPanelSession();
 				setTabs([]);
