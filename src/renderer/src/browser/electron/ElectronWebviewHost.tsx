@@ -199,10 +199,12 @@ export function ElectronWebviewHost({
 		const onDidFailLoad = listener<"did-fail-load">((evt) => {
 			// 非 main frame 失败与顶层导航状态无关，忽略。
 			if (!evt.isMainFrame) return;
-			// -3 = 导航被替换/取消，不作为错误呈现（BrowserPanel 仅清 loading 态）。
+			// 被新导航替换（ERR_ABORTED / -3）不是产品层的「加载失败」，在边界吸收，
+			// 不向 BrowserPanel 下发 —— 否则快速连续导航时 loading 态被旧请求提前清掉。
+			if (evt.errorCode === -3) return;
 			emit({
 				type: "load-failed",
-				kind: evt.errorCode === -3 ? "aborted" : "failed",
+				kind: "failed",
 				errorCode: evt.errorCode,
 				errorDescription: evt.errorDescription,
 			});

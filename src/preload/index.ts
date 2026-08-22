@@ -900,6 +900,8 @@ const api = {
 			ipcRenderer.invoke(ipcChannels.appOpenExternal, url, forceSystem) as Promise<void>,
 		onOpenInBrowser: (callback: (url: string) => void) =>
 			subscribe(ipcChannels.appOpenInBrowser, callback),
+		onConfirmExternalProtocol: (callback: (url: string) => void) =>
+			subscribe(ipcChannels.appConfirmExternalProtocol, callback),
 		onFocusSessionTarget: (callback: (target: { sessionId: string }) => void) =>
 			subscribe(ipcChannels.appFocusSessionTarget, callback),
 		getPendingFocusTarget: () =>

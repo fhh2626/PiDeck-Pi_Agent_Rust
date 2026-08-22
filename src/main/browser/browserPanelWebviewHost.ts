@@ -9,8 +9,10 @@ let browserPanelRequestInstalled = false;
 
 type BrowserPanelWebviewHostDeps = {
 	appLogger: AppLogger;
-	/** 与 index.ts openExternalUrl 一致；guest 分发的系统协议需要 forceSystem。 */
+	/** 与 index.ts openExternalUrl 一致；window-open 分发的系统协议需要 forceSystem。 */
 	openExternalUrl: (url: string, forceSystem?: boolean) => Promise<void>;
+	/** guest 页面请求 mailto/tel/sms 时向主窗口渲染层发确认请求（用户同意后才真正打开）。 */
+	requestExternalProtocolConfirmation: (url: string) => void;
 };
 
 /** Applies the browser panel's permission, attachment, and navigation security policy. */
@@ -54,12 +56,14 @@ export function configureBrowserPanelWebviewHost(
 		delete params.preload;
 		delete params.preloadURL;
 		delete params.allowfileaccess;
-		// 弹窗能力必须开启：Electron 22 起 webview new-window 事件已移除，target="_blank"/
-		// window.open 只能经主进程 guest setWindowOpenHandler 接管；而 allowpopups=false
-		// 时 guest 根本不会发起弹窗流（window.open 返回 null），handler 收不到任何调用。
-		// 窗口创建仍一律 deny，实际去向由 URL 策略决定（新 tab / 系统处理器 / 拦截）。
-		// params 是 Record<string, string>：属性以 HTML attribute 字符串形式传递。
-		params.allowpopups = "true";
+		// 弹窗能力必须开启（Electron 22 起 webview new-window 事件已移除，target="_blank"/
+		// window.open 只能经主进程 guest setWindowOpenHandler 接管）。
+		// 时机关键：guest-view-manager.ts 中 makeWebPreferences() 先于本事件执行
+		// （disablePopups = !params.allowpopups 已算完），此处改 params 无效；但传入的
+		// webPreferences 对象会在事件后直通展开给 WebContents.create()，因此改它有效。
+		// disablePopups 是 Electron 内部字段（未收录进公开 WebPreferences 类型），
+		// 用 Object.assign 写入避免类型断言。窗口创建仍一律 deny，去向由 URL 策略决定。
+		Object.assign(webPreferences, { disablePopups: false });
 
 		webPreferences.partition = BROWSER_PANEL_PARTITION;
 		webPreferences.sandbox = true;
@@ -81,14 +85,21 @@ export function configureBrowserPanelWebviewHost(
 			return;
 		}
 
-		const blockUnsafeNavigation = (event: { url: string; preventDefault(): void }, phase: string) => {
+		const blockUnsafeNavigation = (event: { url: string; isMainFrame: boolean; preventDefault(): void }, phase: string) => {
 			if (isAllowedBrowserPanelUrl(event.url)) return;
 			// 非 http(s) 不一定都要拦死：mailto:/tel:/sms: 是网页里的合法外链，
-			// 阻止 webview 导航并转交系统默认处理器；其余协议（file:/search-ms:/
-			// 未知 scheme）阻止且不转系统，只记 warn。
+			// 阻止 webview 导航并交由受信渲染层确认后转系统；其余协议（file:/
+			// search-ms:/未知 scheme）阻止且不转系统，只记 warn。
 			event.preventDefault();
+			// 确认门禁：will-frame-navigate 对所有 iframe 触发且无 userGesture 信息，
+			// 任意远程脚本/隐藏 iframe 都可能反复唤起系统处理器；只有主 frame 的
+			// 请求才值得打扰用户，subframe 一律拦截记日志。
+			if (!event.isMainFrame) {
+				void deps.appLogger.warn("browser", "Blocked non-main-frame external protocol request", { phase, url: event.url });
+				return;
+			}
 			if (isAllowedGuestSystemProtocol(event.url)) {
-				void deps.openExternalUrl(event.url, true);
+				void deps.requestExternalProtocolConfirmation(event.url);
 				return;
 			}
 			void deps.appLogger.warn("browser", "Blocked unsafe webview navigation", { phase, url: event.url });
@@ -97,13 +108,14 @@ export function configureBrowserPanelWebviewHost(
 		guest.on("will-redirect", (event) => blockUnsafeNavigation(event, "redirect"));
 		guest.setWindowOpenHandler(({ url }) => {
 			// guest 弹窗统一在此接管（Electron 22 起 webview new-window 事件已移除，
-			// 渲染层监听不到；且 allowpopups 必须为 true 弹窗流才会到达本 handler）：
-			// 一律 deny 创建真实窗口，按 URL 策略分发。
+			// 渲染层监听不到；且弹窗能力已在 will-attach-webview 经 webPreferences
+			// 强制开启，弹窗流才能到达本 handler）：一律 deny 创建真实窗口，按 URL 策略分发。
 			if (url !== "about:blank" && isAllowedBrowserPanelUrl(url)) {
 				void deps.openExternalUrl(url);
 			} else if (isAllowedGuestSystemProtocol(url)) {
-				// 网页触发的 mailto:/tel: 等通信深链：阻止弹窗并转交系统。
-				void deps.openExternalUrl(url, true);
+				// 网页触发的 mailto:/tel: 等通信深链：同样交确认流（window.open 无用户
+				// 手势信息可依赖，不直接启动系统处理器）。
+				void deps.requestExternalProtocolConfirmation(url);
 			} else if (!isAllowedBrowserPanelUrl(url)) {
 				void deps.appLogger.warn("browser", "Blocked unsafe webview window open", { url });
 			}

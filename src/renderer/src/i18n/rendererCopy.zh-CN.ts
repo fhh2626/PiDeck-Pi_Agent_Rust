@@ -378,6 +378,8 @@ export const zhCN = {
   "browser.newTab": "新建标签页",
   "browser.closeTab": "关闭标签页",
   "browser.minimize": "最小化",
+  "browser.externalProtocolTitle": "打开外部链接",
+  "browser.externalProtocolMessage": "此网页想要打开外部应用：{url}，是否允许？",
   "app.showSplit": "双栏对比",
   "app.showInSidebar": "右侧边栏展示",
   "app.showSingle": "单栏查看",

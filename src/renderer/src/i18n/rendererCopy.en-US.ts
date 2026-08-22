@@ -377,6 +377,8 @@ export const enUS: Record<TranslationKey, string> = {
   "browser.newTab": "New Tab",
   "browser.closeTab": "Close Tab",
   "browser.minimize": "Minimize",
+  "browser.externalProtocolTitle": "Open external link",
+  "browser.externalProtocolMessage": "This website wants to open an external app: {url}. Allow?",
   "app.showSplit": "Split view",
   "app.showInSidebar": "Show in right sidebar",
   "app.showSingle": "Single view",

@@ -43,6 +43,7 @@ import { useAgentLoadNotice } from "./hooks/useAgentLoadNotice";
 import { useSessionLayout } from "./hooks/useSessionLayout";
 import { useFileEditor , resolveFileLinkPath } from "./hooks/useFileEditor";
 import { useOverlayActions } from "./hooks/useOverlayActions";
+import { useExternalProtocolConfirm } from "./hooks/useExternalProtocolConfirm";
 import { useWorkspacePanels, type WorkspaceDrawerPanel, type WorkspaceExternalEditorAdapter } from "./hooks/useWorkspacePanels";
 import { useDrawerPorts } from "./hooks/useDrawerPorts";
 import { useTerminalDock } from "./hooks/useTerminalDock";
@@ -694,6 +695,8 @@ export function App() {
     (project) => project.id === activeProjectId,
   );
   const overlays = useOverlayActions();
+  // 浏览器 guest 页面请求 mailto/tel/sms 的确认流（独立于通用 overlay 域）。
+  const externalProtocolConfirm = useExternalProtocolConfirm();
   const sessionsProject = projects.find(
     (project) => project.id === sessionsProjectId,
   );
@@ -3135,7 +3138,19 @@ export function App() {
       onChange={updateSettings}
       onCurrentVersion={setUpToDateVersion}
     />
-    <SessionActionOverlays {...overlays.overlayProps} />
+    <SessionActionOverlays
+      {...overlays.overlayProps}
+      externalProtocol={
+        externalProtocolConfirm.url
+          ? {
+              open: true as const,
+              url: externalProtocolConfirm.url,
+              onConfirm: externalProtocolConfirm.confirm,
+              onCancel: externalProtocolConfirm.dismiss,
+            }
+          : undefined
+      }
+    />
     <AppUpdateOverlay
       controller={appUpdate}
       releasesUrl={appInfo.releasesUrl}

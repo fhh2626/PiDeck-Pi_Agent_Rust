@@ -299,6 +299,17 @@ async function openExternalUrl(url: string, forceSystem = false) {
 	});
 }
 
+// guest 页面请求 mailto/tel/sms：主进程不直接启动系统处理器，先推给受信渲染层
+// 弹确认框（任意远程脚本/隐藏 iframe 不应能无交互唤起本机程序）；用户确认后
+// 渲染层经 browser.openExternal(forceSystem=true) 回流同一网关。
+function requestGuestExternalProtocolConfirmation(url: string) {
+	if (!mainWindow || mainWindow.isDestroyed()) {
+		void backend?.appLogger.warn("browser", "Dropped external protocol request: main window unavailable", { url });
+		return;
+	}
+	mainWindow.webContents.send(ipcChannels.appConfirmExternalProtocol, url);
+}
+
 function openInternalLinkInBrowserPanel(url: string) {
 	// 内部打开：将 URL 发送到渲染进程，由 BrowserPanel 在侧栏/弹框中加载，
 	// 替代之前的独立 BrowserWindow 方案，保持一致的浏览体验。
@@ -436,7 +447,11 @@ async function createWindow() {
 	const createdWindow = mainWindow;
 	// 内置浏览器面板的弹窗/外部链接走同一 openExternalUrl 网关（forceSystem=true 绕过
 	// linkOpenMode，非 http(s) 交给系统）。
-	configureBrowserPanelWebviewHost(createdWindow, { appLogger: backend.appLogger, openExternalUrl });
+	configureBrowserPanelWebviewHost(createdWindow, {
+		appLogger: backend.appLogger,
+		openExternalUrl,
+		requestExternalProtocolConfirmation: requestGuestExternalProtocolConfirmation,
+	});
 	let hasShownMainWindow = false;
 	function showMainWindowOnce() {
 		if (createdWindow.isDestroyed() || hasShownMainWindow) return;

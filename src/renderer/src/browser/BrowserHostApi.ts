@@ -33,7 +33,7 @@ export type BrowserHostEvent =
 	  }
 	| {
 			type: "load-failed";
-			kind: "aborted" | "failed";
+			kind: "failed";
 			errorCode?: number;
 			errorDescription?: string;
 	  };

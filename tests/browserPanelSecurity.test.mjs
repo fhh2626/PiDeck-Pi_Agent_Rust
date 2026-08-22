@@ -38,20 +38,40 @@ test("Browser host adapter uses a fixed persistent partition without popup or fi
 
 test("guest popups are force-enabled and dispatched only by the main-process window-open policy", () => {
 	// Electron 22 起 webview new-window 事件已移除：渲染层不得再监听它，弹窗流必须
-	// 经 allowpopups=true 到达主进程 guest setWindowOpenHandler 统一分发。
-	assert.match(webviewHost, /params\.allowpopups = "true";/);
+	// 到达主进程 guest setWindowOpenHandler 统一分发。
+	// 时机关键：guest-view-manager 的 makeWebPreferences() 先于 will-attach-webview 执行
+	// （disablePopups = !params.allowpopups 已算完），改 params 无效；webPreferences 对象
+	// 会在事件后直通展开给 WebContents.create()，必须改它。
+	assert.match(webviewHost, /Object\.assign\(webPreferences, \{ disablePopups: false \}\)/);
 	assert.doesNotMatch(webviewHost, /delete params\.allowpopups/);
 	// 渲染层 adapter 不再监听 new-window（该事件在当前 Electron 不存在）
 	assert.doesNotMatch(browserHost, /["']new-window["']/);
 	// 主进程窗口打开策略：web URL 转 openExternalUrl（linkOpenMode 路由），
-	// guest 白名单系统协议转系统，其余拦截；真实窗口一律 deny。
+	// guest 白名单系统协议走确认流，其余拦截；真实窗口一律 deny。
 	const openHandler = functionBlock(webviewHost, "guest.setWindowOpenHandler", "guest.on(");
 	assert.match(openHandler, /return \{ action: "deny" \}/);
 	assert.match(openHandler, /deps\.openExternalUrl\(url\)/);
-	assert.match(openHandler, /deps\.openExternalUrl\(url, true\)/);
+	assert.match(openHandler, /deps\.requestExternalProtocolConfirmation\(url\)/);
 	assert.match(openHandler, /isAllowedGuestSystemProtocol\(url\)/);
 	// mailto/tel/sms 是网页可触发的系统协议；vscode 系列只留给受信应用内 UI
 	assert.match(externalLinks, /GUEST_SYSTEM_SCHEMES[^\n]*= \["mailto:", "tel:", "sms:"\]/);
+});
+
+test("guest system-protocol requests require main frame and trusted-renderer confirmation", () => {
+	// will-frame-navigate 对所有 iframe 触发且无 userGesture 信息：任意远程脚本/隐藏
+	// iframe 不应能无交互唤起系统处理器，只有主 frame 请求才进确认流。
+	const navHandler = functionBlock(webviewHost, "const blockUnsafeNavigation", "guest.on(\"will-frame-navigate\"");
+	assert.match(navHandler, /event\.preventDefault\(\)/);
+	assert.match(navHandler, /if \(!event\.isMainFrame\) \{/);
+	assert.match(navHandler, /requestExternalProtocolConfirmation\(event\.url\)/);
+	assert.doesNotMatch(navHandler, /openExternalUrl\(/);
+	// 确认链路：主进程推送通道 → 渲染层订阅 → 用户同意后经 browserOpenExternal(forceSystem)
+	// 回流同一网关。
+	assert.match(main, /appConfirmExternalProtocol/);
+	assert.match(main, /mainWindow\.webContents\.send\(ipcChannels\.appConfirmExternalProtocol, url\)/);
+	const preload = readFileSync("src/preload/index.ts", "utf8");
+	assert.match(preload, /onConfirmExternalProtocol: \(callback: \(url: string\) => void\) =>/);
+	assert.doesNotMatch(navHandler, /deps\.openExternalUrl/);
 });
 
 test("Browser navigation goes through BrowserPanelSession pending-URL poll loop", () => {
