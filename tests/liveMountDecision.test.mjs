@@ -19,7 +19,6 @@ const base = {
 	lastMessageText: "",
 	agentRunning: false,
 	isStreaming: false,
-	isLastAgentRun: true,
 };
 
 test("skeleton id === streamingMessageId + 空文本骨架 + 活动流 → 挂载 live", () => {
@@ -74,6 +73,7 @@ test("核心回归：new user 已发送，新流式已到达但 new skeleton 尚
 	// 时序 1：新问题刚发送，history 仅有 [old assistant, new user]
 	// streamingText 已经收到新 assistant 的流式正文 (messageId: "new-assistant-id")
 	// 此时 old assistant run 计算 liveInterimId
+	// （即使它仍是历史里的最后一个 agent-run，也绝不挂载——归属只由 id 精确匹配决定）
 	const oldAssistantRunLiveId = resolveLiveInterimId({
 		sessionId: "session-1",
 		lastInterimId: "old-assistant-id",
@@ -81,7 +81,6 @@ test("核心回归：new user 已发送，新流式已到达但 new skeleton 尚
 		liveTextActive: true,
 		lastMessageText: "",
 		isStreaming: true,
-		isLastAgentRun: true, // 即使它仍是历史里的最后一个 agent-run，也绝不挂载
 	});
 	assert.equal(
 		oldAssistantRunLiveId,
@@ -98,7 +97,6 @@ test("核心回归：new user 已发送，新流式已到达但 new skeleton 尚
 		liveTextActive: true,
 		lastMessageText: "",
 		isStreaming: true,
-		isLastAgentRun: true,
 	});
 	assert.equal(
 		newAssistantRunLiveId,

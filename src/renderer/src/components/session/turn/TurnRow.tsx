@@ -184,13 +184,11 @@ export const TurnRow = memo(
 			lastMessageText: last.message.text,
 			agentRunning: props.agentRunning,
 			isStreaming: props.isStreaming,
-			isLastAgentRun: props.isLastAgentRun,
 		});
 	}, [
 		props.sessionId,
 		props.agentRunning,
 		props.isStreaming,
-		props.isLastAgentRun,
 		lastInterimId,
 		displayItems,
 		liveTextActive,

@@ -23,8 +23,6 @@ export function resolveLiveInterimId(input: {
 	lastMessageText: string;
 	agentRunning?: boolean;
 	isStreaming?: boolean;
-	/** 是否为时间线上最后一个 agent-run（保留供兼容或 UI 逻辑） */
-	isLastAgentRun?: boolean;
 }): string | undefined {
 	if (!input.sessionId || !input.lastInterimId) return undefined;
 	if (!input.liveTextActive) return undefined;
