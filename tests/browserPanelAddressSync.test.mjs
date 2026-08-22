@@ -2,13 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-// 回归门禁：导航入口必须在 host.loadUrl **之前**同步 url/inputValue 本地状态。
-//
-// 背景：重构后 BrowserPanel.loadUrl() 本体不再做 setUrl/setInputValue（plan §19），
-// 地址栏依赖 did-navigate 事件回填。若调用点不同步，则「切换 tab / 关闭 active tab /
-// 外部导航消费」之后、did-navigate 到达之前的窗口期内，url 状态仍指向旧页面；
-// 此时用户切换设备（selectDevice 读当前 url 重新加载）会把新 active tab 导航回旧 URL。
-// plan §23/§26/§27.3 分别要求这三处保留/执行 setUrl + setInput 同步。
+// 回归门禁（loadUrl 中心化不变量）：loadUrl() 必须在 host.loadUrl 之前同步
+// url/inputValue。重构前所有导航入口天然拥有该保证；若缺失，「加载中」窗口期内
+// selectDevice 会读到旧 url，把刚发起的导航打回旧页面 —— 地址栏 Enter / 新建 Tab /
+// Home / 切 tab / 关 tab 全部受影响。所有产品入口统一经 loadUrl() 自动安全；
+// pending 外部导航轮询直接调 host.loadUrl（plan §23），必须自带显式同步。
 const panel = readFileSync("src/renderer/src/components/app/BrowserPanel.tsx", "utf8");
 
 /** 断言 markers 在源码中按给定顺序出现（用于锁定「先同步后加载」的先后关系）。 */
@@ -21,38 +19,41 @@ function assertOrdered(markers, label) {
 	}
 }
 
-test("switchTab syncs url/input to the target tab before loading it", () => {
+test("loadUrl itself syncs url/input before dispatching to the host", () => {
 	assertOrdered(
 		[
-			"updateBrowserPanelSession({ activeTabId: tabId })",
-			"setActiveTabId(tabId)",
-			"setUrl(tab.url)",
-			"setInputValue(tab.url)",
-			"loadUrl(tab.url)",
+			"const loadUrl = useCallback(",
+			"setUrl(targetUrl);",
+			"setInputValue(targetUrl);",
+			"setIsLoading(true);",
+			"host.setDeviceProfile(",
+			"await host.loadUrl(targetUrl);",
 		],
-		"switchTab",
+		"loadUrl",
 	);
 });
 
-test("closing the active tab syncs url/input to the neighbour before loading it", () => {
-	assertOrdered(
-		[
-			"persistTabs(nextTabs, nextActiveId)",
-			"setUrl(nextTab.url)",
-			"setInputValue(nextTab.url)",
-			"loadUrl(nextTab.url)",
-		],
-		"closeTab",
-	);
+test("product entries funnel through loadUrl; direct host.loadUrl only where explicitly synced", () => {
+	// host.loadUrl 只允许出现两次：loadUrl 本体（中心同步）与 pending 轮询（显式同步）。
+	// 新增导航入口若绕过 loadUrl 直调 host，必须先补同步并更新此计数。
+	assert.equal((panel.match(/host\.loadUrl\(/g) ?? []).length, 2);
+	for (const marker of [
+		"void loadUrl(finalUrl);", // 地址栏 Enter（navigate）
+		"void loadUrl(DEFAULT_HOME);", // 新建 Tab + Home 按钮
+		"void loadUrl(tab.url);", // 切 tab
+		"void loadUrl(nextTab.url);", // 关闭 active tab 加载邻居
+	]) {
+		assert.ok(panel.includes(marker), `entry must call loadUrl: ${marker}`);
+	}
 });
 
 test("pending external navigation consumption syncs url/input before host.loadUrl", () => {
 	assertOrdered(
 		[
 			"consumePendingBrowserNavigation()",
-			"setUrl(targetUrl)",
-			"setInputValue(targetUrl)",
-			"host.setDeviceProfile(snapshot.device)",
+			"setUrl(targetUrl);",
+			"setInputValue(targetUrl);",
+			"host.setDeviceProfile(snapshot.device);",
 			"host.loadUrl(targetUrl)",
 		],
 		"pending navigation polling",

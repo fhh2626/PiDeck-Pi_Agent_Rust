@@ -99,6 +99,12 @@ export function BrowserPanel(props: {
 			const host = hostRef.current;
 			if (!host) return;
 
+			// 导航意图立即反映到地址栏与 url state（重构前 loadUrl 的不变量）：
+			// 若等宿主导航确认事件才回填，「加载中」窗口期内 selectDevice 会读到旧 url，
+			// 把刚发起的导航打回旧页面（慢网络下窗口更长）。所有导航入口经此函数自动安全。
+			setUrl(targetUrl);
+			setInputValue(targetUrl);
+
 			setIsLoading(true);
 			setLoadProgress(0);
 
@@ -133,10 +139,6 @@ export function BrowserPanel(props: {
 			if (!tab) return;
 			updateBrowserPanelSession({ activeTabId: tabId });
 			setActiveTabId(tabId);
-			// 立即同步地址栏到目标 tab（plan §26）：宿主导航确认事件到达前 url/input 仍指向旧 tab，
-			// 此窗口内再触发 selectDevice（读当前 url）会把新 tab 导航回旧 URL。
-			setUrl(tab.url);
-			setInputValue(tab.url);
 			void loadUrl(tab.url);
 		},
 		[loadUrl],
@@ -222,8 +224,8 @@ export function BrowserPanel(props: {
 			updateBrowserPanelSession({ navigateKey: 0 });
 			const snapshot = getBrowserPanelSessionSnapshot();
 			const activeTab = snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId);
-			// 保留现有状态同步（plan §23）：宿主导航确认事件到达前先把地址栏对齐目标 URL，
-			// 避免 selectDevice 在窗口期内读到旧 url 把新 tab 导航回旧页面。
+			// 显式状态同步（plan §23「保留现有状态同步」）：此路径直接调 host.loadUrl、
+			// 不经 loadUrl() 的中心同步，必须自己把地址栏对齐目标 URL。
 			setUrl(targetUrl);
 			setInputValue(targetUrl);
 			host.setDeviceProfile(snapshot.device);
@@ -257,13 +259,7 @@ export function BrowserPanel(props: {
 			}
 			persistTabs(nextTabs, nextActiveId);
 			const nextTab = nextTabs.find((tab) => tab.id === nextActiveId);
-			// 立即同步地址栏到邻居 tab（plan §27.3），理由同 switchTab：避免宿主导航确认事件
-			// 到达前 url/input 仍指向被关 tab，窗口期内切设备会把新 active 导航回旧 URL。
-			if (nextTab) {
-				setUrl(nextTab.url);
-				setInputValue(nextTab.url);
-				void loadUrl(nextTab.url);
-			}
+			if (nextTab) void loadUrl(nextTab.url);
 		},
 		[loadUrl, onClose, persistTabs],
 	);

@@ -31,6 +31,7 @@ import { registerBackgroundImageProtocol } from "./platform/electron/backgroundI
 import { resolveBackgroundsDir } from "./backgrounds/BackgroundPaths";
 import { createElectronPlatformServices } from "./platform/electron/createElectronPlatformServices";
 import { createElectronMainWindowControls } from "./window/MainWindowControls";
+import { openExternalLink } from "./browser/externalLinks";
 
 // 构建标记：npm run dist:win:dev 打包时由 vite define 注入 true（构建期替换，非运行时环境变量）。
 declare const __PIDECK_DEV_BUILD__: boolean;
@@ -284,19 +285,18 @@ function setupTray() {
 	refreshTrayContextMenu();
 }
 
+// 外部 URL 统一入口：协议路由与 linkOpenMode 策略在 externalLinks.ts（可单测），
+// 此处只注入 Electron shell / 主窗口 / 设置读取。
 async function openExternalUrl(url: string, forceSystem = false) {
-	if (!url.startsWith("http:") && !url.startsWith("https:")) return;
-	// 更新页的发行说明和安装包必须离开内置浏览器，避免下载被 webview 的导航策略拦截。
-	if (forceSystem) {
-		await shell.openExternal(url);
-		return;
-	}
-	const settings = backend?.settingsStore.get();
-	if (settings?.linkOpenMode === "internal") {
-		openInternalLinkInBrowserPanel(url);
-		return;
-	}
-	await shell.openExternal(url);
+	await openExternalLink(url, {
+		openInSystem: (url) => shell.openExternal(url),
+		openInBrowserPanel: openInternalLinkInBrowserPanel,
+		linkOpenMode: () => {
+			if (forceSystem) return "external";
+			return backend?.settingsStore.get().linkOpenMode ?? "external";
+		},
+		logger: backend?.appLogger,
+	});
 }
 
 function openInternalLinkInBrowserPanel(url: string) {
@@ -434,6 +434,8 @@ async function createWindow() {
 		},
 	});
 	const createdWindow = mainWindow;
+	// 内置浏览器面板的弹窗/外部链接走同一 openExternalUrl 网关（forceSystem=true 绕过
+	// linkOpenMode，非 http(s) 交给系统）。
 	configureBrowserPanelWebviewHost(createdWindow, { appLogger: backend.appLogger, openExternalUrl });
 	let hasShownMainWindow = false;
 	function showMainWindowOnce() {
