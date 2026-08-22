@@ -70,6 +70,12 @@ test("guest system-protocol requests require main frame and trusted-renderer con
 	assert.match(main, /appConfirmExternalProtocol/);
 	assert.match(main, /appRespondExternalProtocol/);
 	assert.match(main, /externalProtocolGateway\.confirm\(request\.id\)/);
+	// 确认后的路由语义与重构前一致：http(s) 遵守 linkOpenMode（不强制 forceSystem），
+	// 系统协议无论设置如何都交系统。回归点：曾误写 openExternalUrl(targetUrl, true)
+	// 导致 internal 模式下确认后仍被强拉系统浏览器。
+	const respondHandler = functionBlock(main, "appRespondExternalProtocol", "// 内存分析模式");
+	assert.match(respondHandler, /openExternalUrl\(targetUrl, isHttpLikeExternalUrl\(targetUrl\) \? undefined : true\)/);
+	assert.doesNotMatch(respondHandler, /openExternalUrl\(targetUrl, true\)/);
 	const preload = readFileSync("src/preload/index.ts", "utf8");
 	assert.match(preload, /onConfirmExternalProtocol: \(callback: \(payload: \{ id: string; url: string \}\) => void\) =>/);
 	assert.match(preload, /respondExternalProtocol: \(id: string, action: "confirm" \| "cancel"\) =>/);

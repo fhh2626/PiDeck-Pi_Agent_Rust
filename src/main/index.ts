@@ -755,7 +755,10 @@ app.whenReady().then(async () => {
 				void backend?.appLogger.warn("browser", "External protocol confirm for unknown/expired id", { id: request.id });
 				return;
 			}
-			await openExternalUrl(targetUrl, true);
+			// 路由与重构前 guest popup 语义一致：http(s) 遵守 linkOpenMode
+			// （internal → 内置浏览器面板新 tab，external → 系统浏览器）；
+			// mailto/tel/sms 等系统协议无论设置如何都交系统默认处理器。
+			await openExternalUrl(targetUrl, isHttpLikeExternalUrl(targetUrl) ? undefined : true);
 		},
 	);
 
