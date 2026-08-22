@@ -250,12 +250,18 @@ export const saveSessionScrollAnchorAtom = atom(
 );
 /**
  * 会话级独立流式正文（阶段1：学 Proma 独立存储）。
- * key: sessionId，value: { content, streaming }。
+ * key: sessionId，value: { messageId, content, streaming }。
  * 流式期间 content 由 agents:text-stream 通道实时更新；
  * message_end 后由历史消息（sessionMessagesCacheAtom）接管，此处清空。
  */
+export type StreamingTextState = {
+  messageId: string;
+  content: string;
+  streaming: boolean;
+};
+
 export const streamingTextByIdAtom = atom<
-	Record<string, { content: string; streaming: boolean }>
+	Record<string, StreamingTextState>
 >({});
 /**
  * Live 思考正文通道（镜像 text-stream）：key = msg-thinking-${assistantMessageId}。
@@ -314,14 +320,26 @@ export const liveTextStreamingBySessionAtom = atomFamily((sessionId: string) =>
   ),
 );
 
-/** 正文流条目同值比较：content 与 streaming 位都相等才算同值。 */
+/**
+ * 本会话当前流式正文绑定的 assistant messageId。
+ * 流式期间同一条 assistant 消息的 messageId 保持稳定不变，零额外重渲染。
+ */
+export const liveTextStreamingMessageIdBySessionAtom = atomFamily((sessionId: string) =>
+  selectAtom(
+    streamingTextByIdAtom,
+    (map) => (map[sessionId]?.streaming ? map[sessionId]?.messageId ?? "" : ""),
+    Object.is,
+  ),
+);
+
+/** 正文流条目同值比较：messageId、content 与 streaming 位都相等才算同值。 */
 function sameStreamingTextEntry(
-  a: { content: string; streaming: boolean } | undefined,
-  b: { content: string; streaming: boolean } | undefined,
+  a: StreamingTextState | undefined,
+  b: StreamingTextState | undefined,
 ): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
-  return a.content === b.content && a.streaming === b.streaming;
+  return a.messageId === b.messageId && a.content === b.content && a.streaming === b.streaming;
 }
 
 /**
@@ -1330,6 +1348,7 @@ export const applySessionRuntimeEventAtom = atom(
       // Live 正文：只更新 streamingTextByIdAtom。
       // 绑定未变时不写 sessionRuntimeByIdAtom，避免每帧戳醒 timeline/composer 订阅者。
       const prev = get(streamingTextByIdAtom)[event.sessionId];
+      const messageId = typeof payload.messageId === "string" ? payload.messageId : (prev?.messageId ?? "");
       // 增量协议（2026-08 治理）：主进程正常 append 只推 delta，渲染层追加到
       // 本地累积；text 全量快照（非 append 重置 / 2.5s 自愈）整体替换。
       const text = typeof payload.delta === "string"
@@ -1339,10 +1358,10 @@ export const applySessionRuntimeEventAtom = atom(
           : prev?.content ?? "";
       const done = payload.done === true;
       const streaming = !done && text.length > 0;
-      if (!prev || prev.content !== text || prev.streaming !== streaming) {
+      if (!prev || prev.messageId !== messageId || prev.content !== text || prev.streaming !== streaming) {
         set(streamingTextByIdAtom, {
           ...get(streamingTextByIdAtom),
-          [event.sessionId]: { content: text, streaming },
+          [event.sessionId]: { messageId, content: text, streaming },
         });
       }
       if (done) {
@@ -1409,7 +1428,25 @@ export const applySessionRuntimeEventAtom = atom(
                 history: current.history,
                 cardCount,
               });
+            } else {
+              console.warn("[messages] incremental update dropped", {
+                sessionId: event.sessionId,
+                upsertFrom,
+                totalLength,
+                windowStart: W,
+                offset,
+                currentLength: current.messages.length,
+              });
             }
+          } else {
+            console.warn("[messages] incremental update dropped", {
+              sessionId: event.sessionId,
+              upsertFrom,
+              totalLength,
+              windowStart: W,
+              offset,
+              currentLength: current?.messages?.length ?? 0,
+            });
           }
         } else {
           // 窗口化全量 / 传统全量：替换运行时窗口段；
@@ -1635,6 +1672,7 @@ export const removeSessionStateAtom = atom(null, (get, set, sessionId: string) =
   set(sessionMessagesCacheAtom, cache);
   clearSessionLiveThinking(get, set, sessionId);
   liveTextStreamingBySessionAtom.remove(sessionId);
+  liveTextStreamingMessageIdBySessionAtom.remove(sessionId);
   // atomFamily 无自动 GC：会话删除时必须同步 remove 各 family 实例，否则长期泄漏（2026-10）。
   liveThinkingIdBySessionIdAtomFamily.remove(sessionId);
   newTurnCollapseTickBySessionIdAtomFamily.remove(sessionId);

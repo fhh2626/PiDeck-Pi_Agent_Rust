@@ -18,6 +18,7 @@ import type {
 	SendPromptResult,
 	SessionEnvironment,
 	SessionMessagePage,
+	TextStreamUpdate,
 	ThinkingUpdate,
 } from "../../shared/types";
 import { ipcChannels } from "../../shared/ipc";
@@ -3692,7 +3693,6 @@ export class AgentManager {
 				this.upsertAssistantMessage(agentId, typed.message);
 				this.flushMessageEmit(agentId);
 				this.finishThinkingChannel(agentId);
-				this.activeAssistantMessageIds.delete(agentId);
 			}
 			// 结算性能指标（幂等：message_update done 先结算则 map 已删，直接返回）
 			this.settleMessagePerf(agentId, typed.message);
@@ -3703,6 +3703,7 @@ export class AgentManager {
 				this.textEmitter.flush(agentId);
 				this.emitTextStreamNow(agentId, finalText, true);
 			}
+			this.activeAssistantMessageIds.delete(agentId);
 			this.textEmitter.cancel(agentId);
 			this.streamingText.delete(agentId);
 			this.lastSentTextByAgent.delete(agentId);
@@ -4076,6 +4077,7 @@ export class AgentManager {
 		}
 
 		if (eventType === "text_delta") {
+			this.beginAssistantMessage(agentId);
 			this.setStreamingAgent(agentId, true);
 			this.markFirstDelta(agentId);
 			this.markFirstText(agentId);
@@ -4127,7 +4129,6 @@ export class AgentManager {
 			// message_end/done/error 是本轮回答的最终状态，立即 flush 确保完整消息及时可见。
 			this.flushMessageEmit(agentId);
 			this.finishThinkingChannel(agentId);
-			this.activeAssistantMessageIds.delete(agentId);
 			this.setStreamingAgent(agentId, false);
 			// 独立流式正文通道终止：推一次最终累积文本后清缓冲（渲染层由历史消息接管）
 			const finalText = this.streamingText.get(agentId);
@@ -4135,6 +4136,7 @@ export class AgentManager {
 				this.textEmitter.flush(agentId);
 				this.emitTextStreamNow(agentId, finalText, true);
 			}
+			this.activeAssistantMessageIds.delete(agentId);
 			this.textEmitter.cancel(agentId);
 			this.streamingText.delete(agentId);
 			this.lastSentTextByAgent.delete(agentId);
@@ -5441,13 +5443,10 @@ export class AgentManager {
 		const lastSent = this.lastSentTextByAgent.get(agentId) ?? "";
 		const pushCount = (this.textPushCountByAgent.get(agentId) ?? 0) + 1;
 		const sendFull = !text.startsWith(lastSent) || pushCount >= 50;
-		const payload: {
-			agentId: string;
-			text?: string;
-			delta?: string;
-			done: boolean;
-		} = {
+		const messageId = this.activeAssistantMessageIds.get(agentId);
+		const payload: TextStreamUpdate = {
 			agentId,
+			...(messageId ? { messageId } : {}),
 			...(!sendFull ? { delta: text.slice(lastSent.length) } : { text }),
 			done,
 		};

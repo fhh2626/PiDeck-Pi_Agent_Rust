@@ -2,7 +2,12 @@ import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { ChevronUp, Clock, Share, SquarePen, Trash } from "lucide-react";
 import { atom, useAtomValue } from "jotai";
 import type { ImageContent } from "../../../../../shared/types";
-import { liveTextStreamingBySessionAtom, newTurnCollapseTickBySessionIdAtomFamily, type SessionRuntimeUiState } from "../../../atoms/session-atoms";
+import {
+	liveTextStreamingBySessionAtom,
+	liveTextStreamingMessageIdBySessionAtom,
+	newTurnCollapseTickBySessionIdAtomFamily,
+	type SessionRuntimeUiState,
+} from "../../../atoms/session-atoms";
 import { sessionRuntimeUiBySessionIdAtomFamily } from "../../../atoms/session-selectors";
 import { turnFlowSettingsAtom } from "../../../atoms/app-ui-atoms";
 import { t } from "../../../i18n";
@@ -33,6 +38,8 @@ import type { DiffFileHandler } from "../ToolCallComponents";
 
 /** sessionId 为空时的占位 atom：恒 false（无会话不挂 live）。 */
 const NO_LIVE_TEXT_ATOM = atom(false);
+/** sessionId 为空时的占位 atom：恒 ""（无会话不订阅流式消息 ID）。 */
+const NO_STREAMING_MSG_ID_ATOM = atom("");
 /** sessionId 为空时的占位 atom：恒 0（无会话不订阅新一轮信号）。 */
 const NO_TURN_TICK_ATOM = atom(0);
 /** sessionId 为空时的占位 atom：恒 undefined（无会话不订阅 UI 请求）。 */
@@ -150,15 +157,19 @@ export const TurnRow = memo(
 	}, [displayItems]);
 
 	// 末条 Live 正文：挂在折叠容器外常显（避免 Radix Collapsible 卸载/收起导致无 DOM）。
-	// 要求「存在活动正文流」且「本轮是最后一个 agent-run」才挂 live：
+	// 要求「存在活动正文流」且「interim 骨架 id 与当前 streamingMessageId 精确匹配」才挂 live：
 	// - 中间回复 message_end 后槽删（streaming=false）立即落回容器内 settled，
 	//   消除双失明消失窗口（live 读空 + 容器内被跳过）；
-	// - 被 steer 打断的旧轮尾部是空文本 interim（骨架挂载点），若允许旧轮挂 live，
-	//   新一轮流式时旧轮会把会话槽里的新一轮正文再打印一遍——同一中间回复前后双份
-	//   （2026-08 回归：判定逻辑见 resolveLiveInterimId，按轮级门控）。
-	// 流式期间 content 每 50ms 变化但 streaming 不变 → 派生 boolean 引用稳定 → 零额外重渲染。
+	// - 被 steer 打断的旧轮或前序轮次 id 不匹配，绝不挂载新一轮流式正文；
+	// - 新一轮 assistant skeleton 尚未进入前端消息列表时，宁可短暂等待骨架到达，绝不挂错位置。
+	// 流式期间 content 每 50ms 变化但 streaming 位与 messageId 不变 → 派生 selector 引用稳定 → 零额外重渲染。
 	const liveTextActive = useAtomValue(
 		props.sessionId ? liveTextStreamingBySessionAtom(props.sessionId) : NO_LIVE_TEXT_ATOM,
+	);
+	const streamingMessageId = useAtomValue(
+		props.sessionId
+			? liveTextStreamingMessageIdBySessionAtom(props.sessionId)
+			: NO_STREAMING_MSG_ID_ATOM,
 	);
 	const liveInterimId = useMemo(() => {
 		const last = displayItems.find(
@@ -169,6 +180,7 @@ export const TurnRow = memo(
 			sessionId: props.sessionId,
 			lastInterimId,
 			liveTextActive,
+			streamingMessageId,
 			lastMessageText: last.message.text,
 			agentRunning: props.agentRunning,
 			isStreaming: props.isStreaming,
@@ -182,6 +194,7 @@ export const TurnRow = memo(
 		lastInterimId,
 		displayItems,
 		liveTextActive,
+		streamingMessageId,
 	]);
 
 	// live plain 卸下 → settled Markdown 挂上：只给刚卸下的那条 id 打一次 settle 淡入。
