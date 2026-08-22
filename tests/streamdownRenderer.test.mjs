@@ -171,9 +171,13 @@ test("loaded renderer is cached per-process: new static instances skip the plain
 	assert.match(stream, /loadedMarkdownRenderer = module\.MarkdownStreamRenderer/);
 	assert.match(stream, /rendererLoadPromise = undefined/);
 	assert.match(stream, /\.catch\(\(\) => \{/);
-	// 卸载后异步完成不得 setState：active 取消保护保留。
-	assert.match(stream, /if \(active\) setRenderer\(\(\) => component\)/);
+	// 首次静态 Markdown 延迟到浏览器空闲再加载（timeout 兜底），不与首帧争抢主线程；
+	// 卸载后取消调度不得 setState：cancelIdleCallback + active 双保险。
+	assert.match(stream, /requestIdleCallback\(load, \{ timeout: 1500 \}\)/);
+	assert.match(stream, /window\.setTimeout\(load, 50\)/);
+	assert.match(stream, /window\.cancelIdleCallback\(id\)/);
 	assert.match(stream, /active = false;/);
+	assert.match(stream, /if \(active\) setRenderer\(\(\) => component\)/);
 });
 
 test("AnswerOutput live path renders through MarkdownStream (no dual typewriter)", () => {
