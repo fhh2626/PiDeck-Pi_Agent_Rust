@@ -46,13 +46,13 @@ test("guest popups are force-enabled and dispatched only by the main-process win
 	assert.doesNotMatch(webviewHost, /delete params\.allowpopups/);
 	// 渲染层 adapter 不再监听 new-window（该事件在当前 Electron 不存在）
 	assert.doesNotMatch(browserHost, /["']new-window["']/);
-	// 主进程窗口打开策略：web URL 转 openExternalUrl（linkOpenMode 路由），
-	// guest 白名单系统协议走确认流，其余拦截；真实窗口一律 deny。
+	// 主进程窗口打开策略：所有 guest popup（web + 系统协议）一律进受控确认，
+	// 不直接 openExternalUrl（程序化 window.open 不代表用户意图）；真实窗口一律 deny。
 	const openHandler = functionBlock(webviewHost, "guest.setWindowOpenHandler", "guest.on(");
 	assert.match(openHandler, /return \{ action: "deny" \}/);
-	assert.match(openHandler, /deps\.openExternalUrl\(url\)/);
-	assert.match(openHandler, /deps\.requestExternalProtocolConfirmation\(url\)/);
-	assert.match(openHandler, /isAllowedGuestSystemProtocol\(url\)/);
+	assert.match(openHandler, /requestPopupConfirmation\(url\)/);
+	assert.doesNotMatch(openHandler, /deps\.openExternalUrl/);
+	assert.doesNotMatch(openHandler, /isHttpLikeExternalUrl\(url\)[^\n]*\n[^\n]*requestPopup/);
 	// mailto/tel/sms 是网页可触发的系统协议；vscode 系列只留给受信应用内 UI
 	assert.match(externalLinks, /GUEST_SYSTEM_SCHEMES[^\n]*= \["mailto:", "tel:", "sms:"\]/);
 });
@@ -63,15 +63,22 @@ test("guest system-protocol requests require main frame and trusted-renderer con
 	const navHandler = functionBlock(webviewHost, "const blockUnsafeNavigation", "guest.on(\"will-frame-navigate\"");
 	assert.match(navHandler, /event\.preventDefault\(\)/);
 	assert.match(navHandler, /if \(!event\.isMainFrame\) \{/);
-	assert.match(navHandler, /requestExternalProtocolConfirmation\(event\.url\)/);
+	assert.match(navHandler, /requestPopupConfirmation\(event\.url\)/);
 	assert.doesNotMatch(navHandler, /openExternalUrl\(/);
-	// 确认链路：主进程推送通道 → 渲染层订阅 → 用户同意后经 browserOpenExternal(forceSystem)
-	// 回流同一网关。
+	// 确认链路：主进程推送 {id,url} → 渲染层订阅 → 用户应答只回传 id →
+	// 主进程按自己保存的 targetUrl 经网关执行。
 	assert.match(main, /appConfirmExternalProtocol/);
-	assert.match(main, /mainWindow\.webContents\.send\(ipcChannels\.appConfirmExternalProtocol, url\)/);
+	assert.match(main, /appRespondExternalProtocol/);
+	assert.match(main, /externalProtocolGateway\.confirm\(request\.id\)/);
 	const preload = readFileSync("src/preload/index.ts", "utf8");
-	assert.match(preload, /onConfirmExternalProtocol: \(callback: \(url: string\) => void\) =>/);
+	assert.match(preload, /onConfirmExternalProtocol: \(callback: \(payload: \{ id: string; url: string \}\) => void\) =>/);
+	assert.match(preload, /respondExternalProtocol: \(id: string, action: "confirm" \| "cancel"\) =>/);
 	assert.doesNotMatch(navHandler, /deps\.openExternalUrl/);
+});
+
+test("guest destroy clears its pending external protocol request", () => {
+	// 注册表泄漏防线：guest 销毁必须 forgetGuest（pending + cooldown 一并清）。
+	assert.match(webviewHost, /guest\.once\("destroyed", \(\) => gateway\.forgetGuest\(guest\.id\)\)/);
 });
 
 test("Browser navigation goes through BrowserPanelSession pending-URL poll loop", () => {

@@ -32,22 +32,17 @@ export function SessionActionOverlays({ settings, confirm, trust, externalProtoc
 	</>;
 }
 
-/** guest 页面请求 mailto/tel/sms 的确认框：主进程推送 → 用户同意才经网关启动系统处理器。 */
+/** guest 页面请求外部协议的确认框：主进程推送 → 用户应答才经网关启动。 */
 function ExternalProtocolConfirmOverlay({ request }: { request?: NonNullable<SessionActionOverlaysProps["externalProtocol"]> }) {
 	if (!request?.open) return null;
-	// 必须展示完整 URI（含 query）：用户看到的内容必须与之后交给系统处理器的
-	// 一致——sms:/mailto: 的 query 可携带正文/subject，只显示 host 会掩盖真实目标。
-	// 超长 URI 截断尾部并以 … 提示（信息不完整时用户应拒绝），换行由 CSS 处理。
-	const MAX_URL_DISPLAY = 160;
-	const display =
-		request.url.length > MAX_URL_DISPLAY
-			? `${request.url.slice(0, MAX_URL_DISPLAY)}…`
-			: request.url;
+	// 必须完整展示 URI（含 query/bcc 等全部内容）：用户看到什么就确认什么——
+	// 截断会隐藏 URI 后半部分（如 bcc=hidden@example.com），破坏确认语义。
+	// 超长只靠布局解决：可滚动区域 + 强制换行，不修改字符串内容。
 	return (
 		<ConfirmDialog
 			title={t("browser.externalProtocolTitle")}
-			message={t("browser.externalProtocolMessage", { url: display })}
-			messageClassName="break-all"
+			message={t("browser.externalProtocolMessage", { url: request.url })}
+			messageClassName="break-all max-h-40 overflow-y-auto whitespace-pre-wrap"
 			onConfirm={request.onConfirm}
 			onCancel={request.onCancel}
 		/>

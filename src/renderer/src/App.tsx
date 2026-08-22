@@ -87,6 +87,7 @@ import {
   setSessionAttachmentsAtom,
   setSessionCatalogLoadStateAtom,
   setSessionDraftAtom,
+  settingsOpenAtom,
   upsertSessionAtom,
 } from "./atoms";
 import {
@@ -695,8 +696,13 @@ export function App() {
     (project) => project.id === activeProjectId,
   );
   const overlays = useOverlayActions();
-  // 浏览器 guest 页面请求 mailto/tel/sms 的确认流（独立于通用 overlay 域）。
+  // 浏览器 guest 外部协议确认流（独立于通用 overlay 域）。
   const externalProtocolConfirm = useExternalProtocolConfirm();
+  // Modal 仲裁 blocker：settings（settingsOpenAtom，SettingsFeatureRoot 独立 root）
+  // 或通用 confirm/trust 打开时，外部协议确认暂缓渲染（状态保留，弹框结束后出现）。
+  const settingsModalOpen = useAtomValue(settingsOpenAtom);
+  const externalProtocolModalBlocked =
+    settingsModalOpen || overlays.confirmDialog !== null || overlays.trustRequest !== null;
   const sessionsProject = projects.find(
     (project) => project.id === sessionsProjectId,
   );
@@ -3141,10 +3147,10 @@ export function App() {
     <SessionActionOverlays
       {...overlays.overlayProps}
       externalProtocol={
-        externalProtocolConfirm.url
+        externalProtocolConfirm.pending && !externalProtocolModalBlocked
           ? {
               open: true as const,
-              url: externalProtocolConfirm.url,
+              url: externalProtocolConfirm.pending.url,
               onConfirm: externalProtocolConfirm.confirm,
               onCancel: externalProtocolConfirm.dismiss,
             }

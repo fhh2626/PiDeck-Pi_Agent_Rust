@@ -31,7 +31,8 @@ import { registerBackgroundImageProtocol } from "./platform/electron/backgroundI
 import { resolveBackgroundsDir } from "./backgrounds/BackgroundPaths";
 import { createElectronPlatformServices } from "./platform/electron/createElectronPlatformServices";
 import { createElectronMainWindowControls } from "./window/MainWindowControls";
-import { openExternalLink } from "./browser/externalLinks";
+import { isHttpLikeExternalUrl, openExternalLink } from "./browser/externalLinks";
+import { createExternalProtocolGateway } from "./browser/externalProtocolRequests";
 
 // 构建标记：npm run dist:win:dev 打包时由 vite define 注入 true（构建期替换，非运行时环境变量）。
 declare const __PIDECK_DEV_BUILD__: boolean;
@@ -299,16 +300,10 @@ async function openExternalUrl(url: string, forceSystem = false) {
 	});
 }
 
-// guest 页面请求 mailto/tel/sms：主进程不直接启动系统处理器，先推给受信渲染层
-// 弹确认框（任意远程脚本/隐藏 iframe 不应能无交互唤起本机程序）；用户确认后
-// 渲染层经 browser.openExternal 回流同一网关。
-function requestGuestExternalProtocolConfirmation(url: string) {
-	if (!mainWindow || mainWindow.isDestroyed()) {
-		void backend?.appLogger.warn("browser", "Dropped external protocol request: main window unavailable", { url });
-		return;
-	}
-	mainWindow.webContents.send(ipcChannels.appConfirmExternalProtocol, url);
-}
+// guest 外部协议请求的 pending 注册表（主进程持有 URL 权威值；去重/cooldown/
+// guest 销毁清理都在 externalProtocolRequests.ts）。模块级单例：webview 宿主与
+// respond IPC handler 共享同一份 pending 状态。
+const externalProtocolGateway = createExternalProtocolGateway();
 
 function openInternalLinkInBrowserPanel(url: string) {
 	// 内部打开：将 URL 发送到渲染进程，由 BrowserPanel 在侧栏/弹框中加载，
@@ -450,8 +445,14 @@ async function createWindow() {
 	configureBrowserPanelWebviewHost(createdWindow, {
 		appLogger: backend.appLogger,
 		openExternalUrl,
-		requestExternalProtocolConfirmation: requestGuestExternalProtocolConfirmation,
-	});
+		sendExternalProtocolRequest: (payload) => {
+			if (!mainWindow || mainWindow.isDestroyed()) {
+				void backend?.appLogger.warn("browser", "Dropped external protocol request: main window unavailable", { url: payload.url });
+				return;
+			}
+			mainWindow.webContents.send(ipcChannels.appConfirmExternalProtocol, payload);
+		},
+	}, externalProtocolGateway);
 	let hasShownMainWindow = false;
 	function showMainWindowOnce() {
 		if (createdWindow.isDestroyed() || hasShownMainWindow) return;
@@ -728,6 +729,35 @@ app.whenReady().then(async () => {
 	registerElectronPreloadLifecycleIpc(ipcMain, {
 		appLogger: backend.appLogger,
 	});
+
+	// 外部协议确认应答：渲染层只回传 { id, action }；主进程按自己保存的
+	// targetUrl 执行打开（渲染层无法伪造/替换目标 URL），cancel 进入 cooldown。
+	router.handle(
+		ipcChannels.appRespondExternalProtocol,
+		async (payload: { id: string; action: "confirm" | "cancel" }) => {
+			if (
+				typeof payload !== "object" ||
+				payload === null ||
+				typeof (payload as { id?: unknown }).id !== "string" ||
+				((payload as { action?: unknown }).action !== "confirm" &&
+					(payload as { action?: unknown }).action !== "cancel")
+			) {
+				void backend?.appLogger.warn("browser", "Rejected malformed external protocol response");
+				return;
+			}
+			const request = payload as { id: string; action: "confirm" | "cancel" };
+			if (request.action === "cancel") {
+				externalProtocolGateway.cancel(request.id);
+				return;
+			}
+			const targetUrl = externalProtocolGateway.confirm(request.id);
+			if (targetUrl == null) {
+				void backend?.appLogger.warn("browser", "External protocol confirm for unknown/expired id", { id: request.id });
+				return;
+			}
+			await openExternalUrl(targetUrl, true);
+		},
+	);
 
 	// 内存分析模式（PIDECK_MEMORY_PROFILE=1）：尽早开始采样，覆盖窗口创建/加载全过程。
 	// 采样失败不阻塞启动（诊断工具降级为不可用）。

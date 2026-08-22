@@ -62,11 +62,15 @@ export function isAllowedSystemExternalProtocol(url: string): boolean {
 export function isAllowedGuestSystemProtocol(url: string): boolean {
 	const scheme = getUrlScheme(url);
 	if (scheme == null || !GUEST_SYSTEM_SCHEMES.includes(scheme)) return false;
-	// 结构校验：拒绝 authority 形式（sms://host/...、mailto://host/...）。
-	// 这些协议的标准形式是 opaque（host 为空，目标在 path/query）；authority 形式
-	// 只会出现在构造的混淆 URI 中，且确认框展示与真实目标可能不一致。
+	// 结构校验（按协议分别判定标准 opaque 形式）：
+	// - 不得有 authority（host 非空，如 mailto://example.com/...）——
+	//   这些协议没有 host 语义，authority 只会出现在构造的混淆 URI 中；
+	// - 不得是空 authority 的 path-form（如 sms:///abc、tel:/123、mailto:///x）——
+	//   标准形式的目标在 opaque path（pathname 不以 / 开头），path-form 同样
+	//   只出现在构造的混淆 URI 中。
 	try {
-		return new URL(url).host === "";
+		const parsed = new URL(url);
+		return parsed.host === "" && !parsed.pathname.startsWith("/");
 	} catch {
 		return false;
 	}

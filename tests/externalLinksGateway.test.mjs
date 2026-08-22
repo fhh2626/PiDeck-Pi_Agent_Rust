@@ -64,7 +64,7 @@ test("dangerous or unknown protocols are rejected before reaching the OS", () =>
 });
 
 test("guest allowlist is narrower than the trusted-UI allowlist", () => {
-	// 通信深链允许由网页触发（标准 opaque 形式，host 为空）
+	// 通信深链允许由网页触发（标准 opaque 形式：无 host、目标在 opaque path）
 	assert.equal(isAllowedGuestSystemProtocol("mailto:test@example.com"), true);
 	assert.equal(isAllowedGuestSystemProtocol("TEL:+1234567890"), true);
 	assert.equal(isAllowedGuestSystemProtocol("sms:+1234567890"), true);
@@ -74,6 +74,10 @@ test("guest allowlist is narrower than the trusted-UI allowlist", () => {
 	assert.equal(isAllowedGuestSystemProtocol("sms://1234567890?body=..."), false);
 	assert.equal(isAllowedGuestSystemProtocol("mailto://example.com/user@example.com?subject=x"), false);
 	assert.equal(isAllowedGuestSystemProtocol("tel://example.com/1234567890"), false);
+	// 空 authority 的 path-form（///、/）同样是构造形式，按协议分别拒绝
+	assert.equal(isAllowedGuestSystemProtocol("sms:///abc"), false);
+	assert.equal(isAllowedGuestSystemProtocol("tel:/123"), false);
+	assert.equal(isAllowedGuestSystemProtocol("mailto:///x"), false);
 	// 本机工具深链不允许由任意远程网页触发（仅供应用内受信 UI 使用）
 	assert.equal(isAllowedGuestSystemProtocol("vscode://open/file"), false);
 	assert.equal(isAllowedGuestSystemProtocol("vscode-insiders://file"), false);

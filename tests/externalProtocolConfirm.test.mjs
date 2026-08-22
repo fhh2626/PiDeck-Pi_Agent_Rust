@@ -4,9 +4,9 @@ import ts from "typescript";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
 
-// 确认流状态竞态测试（真实行为，非源码匹配）：
-// 远程脚本可在用户点击前连续推送 A/B/C —— hook 必须锁定首条请求，
-// confirm 打开的必须与用户看到的（第一条）一致。
+// 确认流状态测试（真实行为，非源码匹配）：
+// 渲染层只持有 { id, url } 用于展示；应答时只回传 id（URL 权威值在主进程
+// pending 注册表），渲染层无法在确认瞬间替换目标。
 const source = readFileSync("src/renderer/src/hooks/useExternalProtocolConfirm.ts", "utf8");
 
 function compileHook(reactStub, desktopApiStub) {
@@ -32,7 +32,7 @@ function compileHook(reactStub, desktopApiStub) {
 }
 
 /** 极简 React 替身：useState/useEffect/useCallback 按调用序展开。 */
-function createHarness(openedUrls) {
+function createHarness(responses) {
 	const states = [];
 	let cursor = 0;
 	let effectCleanup = null;
@@ -57,8 +57,10 @@ function createHarness(openedUrls) {
 		},
 	};
 	const desktopApi = {
-		app: { onConfirmExternalProtocol: (cb) => { harness.pushedFrom = cb; return () => { harness.pushedFrom = null; }; } },
-		browser: { openExternal: (url) => openedUrls.push(url) },
+		app: {
+			onConfirmExternalProtocol: (cb) => { harness.pushedFrom = cb; return () => { harness.pushedFrom = null; }; },
+			respondExternalProtocol: (id, action) => responses.push({ id, action }),
+		},
 	};
 	const hooks = compileHook(react, { desktopApi });
 	const harness = {
@@ -67,7 +69,7 @@ function createHarness(openedUrls) {
 			cursor = 0;
 			return hooks.useExternalProtocolConfirm();
 		},
-		/** 模拟 React 提交：先渲染 hook 体，再运行 effect（含 StrictMode 双挂载：mount → cleanup → mount）。 */
+		/** 模拟 React 提交：先渲染 hook 体，再运行 effect。 */
 		runEffect() {
 			this.render();
 			if (effectCleanup) { effectCleanup(); effectCleanup = null; }
@@ -77,62 +79,48 @@ function createHarness(openedUrls) {
 	return harness;
 }
 
-test("first request wins: later pushes never replace the pending URL", () => {
-	const opened = [];
-	const h = createHarness(opened);
+test("newest push replaces renderer view; confirm answers with that request's id only", () => {
+	const responses = [];
+	const h = createHarness(responses);
 	h.runEffect();
 
 	let r = h.render();
-	assert.equal(r.url, null);
+	assert.equal(r.pending, null);
 
-	// 网页连续触发三条外部协议请求
-	h.pushedFrom("mailto:first@example.com");
+	h.pushedFrom({ id: "req-a", url: "mailto:first@example.com" });
 	r = h.render();
-	assert.equal(r.url, "mailto:first@example.com");
+	assert.deepEqual(r.pending, { id: "req-a", url: "mailto:first@example.com" });
 
-	h.pushedFrom("mailto:second@example.com");
-	h.pushedFrom("tel:+9876543210");
+	// 主进程同 guest 去重后仍可能推新请求（前一条被 cancel 后）：渲染层以最新为准
+	h.pushedFrom({ id: "req-b", url: "tel:+9876543210" });
 	r = h.render();
-	// TOCTOU 门禁：确认框仍显示第一条
-	assert.equal(r.url, "mailto:first@example.com");
+	assert.equal(r.pending.id, "req-b");
 
-	// 用户确认：打开的必须是用户看到的第一条
 	r.confirm();
-	assert.deepEqual(opened, ["mailto:first@example.com"]);
-	assert.equal(h.render().url, null);
+	// 只回传 id，不回传 URL
+	assert.deepEqual(responses, [{ id: "req-b", action: "confirm" }]);
+	assert.equal(h.render().pending, null);
 });
 
-test("dismiss clears the locked slot so a later request can start fresh", () => {
-	const opened = [];
-	const h = createHarness(opened);
+test("dismiss answers cancel; responding twice is impossible after state clears", () => {
+	const responses = [];
+	const h = createHarness(responses);
 	h.runEffect();
-	h.pushedFrom("mailto:first@example.com");
+	h.pushedFrom({ id: "req-a", url: "sms:+1234567890" });
 	let r = h.render();
-	assert.equal(r.url, "mailto:first@example.com");
-
 	r.dismiss();
-	r = h.render();
-	assert.equal(r.url, null);
+	assert.deepEqual(responses, [{ id: "req-a", action: "cancel" }]);
+	assert.equal(h.render().pending, null);
 
-	h.pushedFrom("tel:+111");
-	r = h.render();
-	assert.equal(r.url, "tel:+111");
-	assert.deepEqual(opened, []);
+	// pending 已清空：重复 confirm 不应答（幂等）
+	h.render().confirm();
+	assert.deepEqual(responses, [{ id: "req-a", action: "cancel" }]);
 });
 
-test("unsubscribe stops new requests from reaching the state", () => {
-	const h = createHarness([]);
+test("confirm without any pending request is a no-op", () => {
+	const responses = [];
+	const h = createHarness(responses);
 	h.runEffect();
-	assert.ok(h.pushedFrom, "subscription active");
-	h.runEffect(); // StrictMode 双挂载：cleanup 后重订阅仍可用
-	assert.ok(h.pushedFrom, "re-subscribed after cleanup");
-});
-
-test("confirm does nothing when no request is pending", () => {
-	const opened = [];
-	const h = createHarness(opened);
-	h.runEffect();
-	const r = h.render();
-	r.confirm();
-	assert.deepEqual(opened, []);
+	h.render().confirm();
+	assert.deepEqual(responses, []);
 });
