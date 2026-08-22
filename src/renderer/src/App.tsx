@@ -1018,7 +1018,9 @@ export function App() {
   }, [settings.themeSkin, settings.theme, settings.customThemeOverrides, settings.backgroundImage, settings.backgroundImageOpacity]);
 
   // 字号与命名字体预设由 data 属性选择 CSS token；只有 custom 字体需要注入用户输入。
-  useEffect(() => {
+  // 这一组是纯视觉的 DOM/CSS token 同步，必须用 useLayoutEffect 在 paint 前写入，
+  // 否则 useEffect 在 paint 后执行会让首帧先使用 CSS 默认值再切到用户设置（如行距 1.35 → 1.2 收缩闪动）。
+  useLayoutEffect(() => {
     const root = document.documentElement;
     const uiFontSize = settings.uiFontSize ?? settings.fontSize;
     const chatFontSize = settings.chatFontSize ?? settings.fontSize;
