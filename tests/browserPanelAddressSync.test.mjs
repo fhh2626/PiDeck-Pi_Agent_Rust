@@ -59,3 +59,28 @@ test("pending external navigation consumption syncs url/input before host.loadUr
 		"pending navigation polling",
 	);
 });
+
+// 回归门禁（tab 元数据操作不触发多余导航）：
+// - closeTab 曾对任意非最后 tab 无条件 loadUrl(nextTab.url)，关闭后台 tab 会把
+//   正在填表单的当前页刷掉；必须仅 wasActive 时才导航。
+// - switchTab 曾对已激活 tab 也重新导航；重复点击当前 tab 不应刷新。
+test("closeTab navigates only when closing the active tab; switchTab no-ops on active tab", () => {
+	const closeBlock = panel.slice(
+		panel.indexOf("const closeTab = useCallback("),
+		panel.indexOf("const selectDevice = useCallback("),
+	);
+	assert.ok(closeBlock.length > 0, "missing closeTab block");
+	const wasActivePos = closeBlock.indexOf("const wasActive = currentActiveId === tabId;");
+	const loadNeighborPos = closeBlock.indexOf("void loadUrl(nextTab.url);");
+	assert.ok(wasActivePos >= 0, "closeTab must compute wasActive");
+	assert.ok(loadNeighborPos > wasActivePos, "loadUrl(nextTab.url) must be guarded by wasActive");
+
+	const switchStart = panel.indexOf("const switchTab = useCallback(");
+	const switchEnd = panel.indexOf("const addTab = useCallback(");
+	assert.ok(switchStart >= 0 && switchEnd > switchStart, "missing switchTab block");
+	const switchBlock = panel.slice(switchStart, switchEnd);
+	const guardPos = switchBlock.indexOf('getBrowserPanelSessionSnapshot().activeTabId === tabId) return;');
+	const findTabPos = switchBlock.indexOf("getBrowserPanelSessionSnapshot().tabs.find");
+	assert.ok(guardPos >= 0 && guardPos < findTabPos,
+		"switchTab must early-return when the clicked tab is already active");
+});

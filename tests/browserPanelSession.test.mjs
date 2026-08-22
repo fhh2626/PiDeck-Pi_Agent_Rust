@@ -172,3 +172,20 @@ test("device user-agent mapping matches the pre-refactor values exactly", () => 
 	);
 	assert.equal(deviceUserAgent("pc"), null);
 });
+
+test("regression: mount initializer consumes pending navigation if matching initialTab, preventing double load", () => {
+	resetForTest();
+	// 面板未挂载时外部请求打开 url
+	requestBrowserNavigation("https://example.test/initial-target");
+	assert.ok(peekPendingBrowserNavigation());
+
+	// 模拟 BrowserPanel 挂载时的 useState(() => ...) 初始化器逻辑
+	const initialTab = ensureInitialBrowserTab();
+	const pending = peekPendingBrowserNavigation();
+	if (pending && pending.tabId === initialTab.id) {
+		consumePendingBrowserNavigation();
+	}
+
+	assert.equal(initialTab.url, "https://example.test/initial-target");
+	assert.equal(peekPendingBrowserNavigation(), null, "pending must be cleared upon mount consumption");
+});

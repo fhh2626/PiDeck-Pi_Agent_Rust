@@ -440,11 +440,9 @@ async function createWindow() {
 		},
 	});
 	const createdWindow = mainWindow;
-	// 内置浏览器面板的弹窗/外部链接走同一 openExternalUrl 网关（forceSystem=true 绕过
-	// linkOpenMode，非 http(s) 交给系统）。
+	// 内置浏览器面板的弹窗与外部协议请求走受控确认流（主进程保存待确认请求，由渲染层应答）。
 	configureBrowserPanelWebviewHost(createdWindow, {
 		appLogger: backend.appLogger,
-		openExternalUrl,
 		sendExternalProtocolRequest: (payload) => {
 			if (!mainWindow || mainWindow.isDestroyed()) {
 				void backend?.appLogger.warn("browser", "Dropped external protocol request: main window unavailable", { url: payload.url });

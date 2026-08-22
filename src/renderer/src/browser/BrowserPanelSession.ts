@@ -1,7 +1,7 @@
 /**
  * BrowserPanel 的 host 无关模块级会话状态。
  *
- * 浏览器抽屉/全屏切换会导致 BrowserPanel remount，但 tabs/activeTabId/device/navigateKey
+ * 浏览器抽屉/全屏切换会导致 BrowserPanel remount，但 tabs/activeTabId/device
  * 必须在同一 renderer 生命周期内保留，因此这里沿用原 BrowserPanel.tsx 中的
  * intentional module state（不迁 Jotai，见任务边界）。
  *
@@ -22,7 +22,6 @@ export type BrowserPanelSessionSnapshot = {
 	tabs: BrowserTab[];
 	activeTabId: string | null;
 	device: BrowserDeviceProfile;
-	navigateKey: number;
 };
 
 export type PendingBrowserNavigation = {
@@ -39,7 +38,6 @@ const moduleState: BrowserPanelSessionSnapshot = {
 	tabs: [],
 	activeTabId: null,
 	device: "pc",
-	navigateKey: 0,
 };
 
 /** 待消费的外部导航请求（记录目标 tabId 与 URL），BrowserPanel 通过轮询检测。 */
@@ -58,7 +56,6 @@ export function getBrowserPanelSessionSnapshot(): BrowserPanelSessionSnapshot {
 		tabs: [...moduleState.tabs],
 		activeTabId: moduleState.activeTabId,
 		device: moduleState.device,
-		navigateKey: moduleState.navigateKey,
 	};
 }
 
@@ -76,7 +73,6 @@ export function updateBrowserPanelSession(patch: Partial<BrowserPanelSessionSnap
 	if (patch.tabs !== undefined) moduleState.tabs = patch.tabs;
 	if (patch.activeTabId !== undefined) moduleState.activeTabId = patch.activeTabId;
 	if (patch.device !== undefined) moduleState.device = patch.device;
-	if (patch.navigateKey !== undefined) moduleState.navigateKey = patch.navigateKey;
 }
 
 /** 在 session 内新建一个 tab（统一 id 生成入口，返回新 tab；不改变 activeTabId）。 */
@@ -98,7 +94,6 @@ export function requestBrowserNavigation(url: string): void {
 	// 防止标题闪烁
 	moduleState.tabs.push({ id, title: "", url });
 	moduleState.activeTabId = id;
-	moduleState.navigateKey += 1;
 	// 记录目标 tabId 与 URL；轮询消费时校验 activeTabId 匹配，防止加载期间切 tab 导致串扰
 	pendingNavigation = { tabId: id, url };
 }
@@ -123,6 +118,5 @@ export function consumePendingBrowserNavigation(): PendingBrowserNavigation | nu
 export function resetBrowserPanelSession(): void {
 	moduleState.tabs = [];
 	moduleState.activeTabId = null;
-	moduleState.navigateKey = 0;
 	pendingNavigation = null;
 }

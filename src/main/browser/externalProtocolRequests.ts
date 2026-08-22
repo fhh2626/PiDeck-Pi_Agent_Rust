@@ -22,7 +22,6 @@ export type PendingExternalProtocolRequest = {
 	id: string;
 	guestId: number;
 	targetUrl: string;
-	createdAt: number;
 };
 
 export type ExternalProtocolGateway = {
@@ -31,7 +30,7 @@ export type ExternalProtocolGateway = {
 	 * 返回推送给渲染层的 payload；被去重/cooldown 拒绝时返回 null。
 	 */
 	request(guestId: number, url: string): ExternalProtocolRequestPayload | null;
-	/** 用户确认：按 id 取回权威 URL；id 不存在/cooldown 中返回 null。 */
+	/** 用户确认：按 id 取回权威 URL 并释放槽位；id 不存在返回 null。 */
 	confirm(id: string): string | null;
 	/** 用户取消：清除 pending 并对该 guest 进入 cooldown。 */
 	cancel(id: string): void;
@@ -69,7 +68,6 @@ export function createExternalProtocolGateway(logger?: Pick<AppLogger, "warn">):
 				id: randomUUID(),
 				guestId,
 				targetUrl: url,
-				createdAt: now,
 			};
 			pendingByGuest.set(guestId, request);
 			pendingById.set(request.id, request);

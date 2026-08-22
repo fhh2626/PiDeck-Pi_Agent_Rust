@@ -13,8 +13,6 @@ let browserPanelRequestInstalled = false;
 
 type BrowserPanelWebviewHostDeps = {
 	appLogger: AppLogger;
-	/** 与 index.ts openExternalUrl 一致；确认后的分发入口（web/system 都走它）。 */
-	openExternalUrl: (url: string, forceSystem?: boolean) => Promise<void>;
 	/** 向主窗口渲染层推送确认请求 payload（{ id, url }）；主进程不直接打开。 */
 	sendExternalProtocolRequest: (payload: { id: string; url: string }) => void;
 };

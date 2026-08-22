@@ -58,7 +58,17 @@ export function BrowserPanel(props: {
 	hostSurface: BrowserHostSurface;
 }) {
 	const { onClose, onMinimize, onToggleFullscreen } = props;
-	const [initialTab] = useState(() => ensureInitialBrowserTab());
+	const [initialTab] = useState(() => {
+		const tab = ensureInitialBrowserTab();
+		// 若本次 mount 消费的是刚由 requestBrowserNavigation 设置的 pending 外部导航
+		// （webview 标签通过 src={initialUrl} 已在初始挂载时直接加载了该 URL），
+		// 消费掉 pendingNavigation，防止后续 50ms 轮询等加载完成后再次 loadUrl 导致重复加载。
+		const pending = peekPendingBrowserNavigation();
+		if (pending && pending.tabId === tab.id) {
+			consumePendingBrowserNavigation();
+		}
+		return tab;
+	});
 	const hostRef = useRef<BrowserHostApi | null>(null);
 	const [tabs, setTabs] = useState<BrowserTab[]>(() => [...getBrowserPanelSessionSnapshot().tabs]);
 	const [activeTabId, setActiveTabId] = useState<string | null>(
@@ -131,6 +141,7 @@ export function BrowserPanel(props: {
 
 	const switchTab = useCallback(
 		(tabId: string) => {
+			if (getBrowserPanelSessionSnapshot().activeTabId === tabId) return;
 			const tab = getBrowserPanelSessionSnapshot().tabs.find((item) => item.id === tabId);
 			if (!tab) return;
 			updateBrowserPanelSession({ activeTabId: tabId });
@@ -201,7 +212,6 @@ export function BrowserPanel(props: {
 			// 通过加载检查后才消费，防止加载中时丢请求
 			const consumed = consumePendingBrowserNavigation();
 			if (!consumed) return;
-			updateBrowserPanelSession({ navigateKey: 0 });
 			const snapshot = getBrowserPanelSessionSnapshot();
 			if (snapshot.activeTabId !== consumed.tabId) {
 				// 用户在 pending 期间已主动切到其他 tab：
@@ -238,15 +248,19 @@ export function BrowserPanel(props: {
 				onClose?.();
 				return;
 			}
+			const currentActiveId = getBrowserPanelSessionSnapshot().activeTabId;
+			const wasActive = currentActiveId === tabId;
 			const index = current.findIndex((tab) => tab.id === tabId);
 			const nextTabs = current.filter((tab) => tab.id !== tabId);
-			let nextActiveId = getBrowserPanelSessionSnapshot().activeTabId;
-			if (nextActiveId === tabId) {
+			let nextActiveId = currentActiveId;
+			if (wasActive) {
 				nextActiveId = nextTabs[Math.min(index, nextTabs.length - 1)]?.id ?? null;
 			}
 			persistTabs(nextTabs, nextActiveId);
-			const nextTab = nextTabs.find((tab) => tab.id === nextActiveId);
-			if (nextTab) void loadUrl(nextTab.url);
+			if (wasActive) {
+				const nextTab = nextTabs.find((tab) => tab.id === nextActiveId);
+				if (nextTab) void loadUrl(nextTab.url);
+			}
 		},
 		[loadUrl, onClose, persistTabs],
 	);
