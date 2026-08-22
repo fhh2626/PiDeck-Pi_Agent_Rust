@@ -564,7 +564,7 @@ export function useSessionTimelineController(options: {
 				})
 				.then((page) => {
 					if (latestLoadBySession.get(sessionId) !== sequence) return;
-					if (prependHistoryPage({ sessionId, expectedRevision, before: requestBefore, page })) {
+					if (prependHistoryPage({ sessionId, expectedRevision, before, page })) {
 						// 同 disk 分支：补页成功同步扩大渲染窗口，避免新页被 turn 窗口裁剪不可见
 						setScrolledWindowTurns((prev) => prev + TIMELINE_WINDOW_EXPAND_STEP);
 					}

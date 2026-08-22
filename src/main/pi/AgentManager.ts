@@ -3502,9 +3502,16 @@ export class AgentManager {
 				}
 				this.emitState();
 				void this.emitRuntimeState(agentId);
-				setTimeout(() => {
-					void this.markIdleIfPiReportsNoWork(agentId);
+				const settledProcess = runtime.process;
+				const settledGeneration = this.getStreamGate(agentId).currentGeneration;
+				const timer = setTimeout(() => {
+					void this.markIdleIfPiReportsNoWork(
+						agentId,
+						settledProcess,
+						settledGeneration,
+					);
 				}, 300);
+				timer.unref?.();
 			}
 			void this.appLogger?.info("agent", "Compaction ended", {
 				agentId,
@@ -4898,8 +4905,11 @@ export class AgentManager {
 	}
 
 	private scheduleIdleCheckAfterExtensionCommand(agentId: string) {
+		const runtime = this.agents.get(agentId);
+		const expectedProcess = runtime?.process;
+		const expectedGeneration = this.getStreamGate(agentId).currentGeneration;
 		const timer = setTimeout(() => {
-			void this.markIdleIfPiReportsNoWork(agentId);
+			void this.markIdleIfPiReportsNoWork(agentId, expectedProcess, expectedGeneration);
 		}, 100);
 		timer.unref?.();
 	}
@@ -4910,18 +4920,22 @@ export class AgentManager {
 		expectedGeneration?: number,
 	) {
 		const runtime = this.agents.get(agentId);
-		if (expectedProcess && runtime?.process !== expectedProcess) return;
+		if (!runtime) return;
+
+		const observedProcess = expectedProcess ?? runtime.process;
+		const observedGeneration =
+			expectedGeneration ?? this.getStreamGate(agentId).currentGeneration;
+
+		if (runtime.process !== observedProcess) return;
+		const gateBefore = this.getStreamGate(agentId);
 		if (
-			expectedGeneration !== undefined &&
-			(
-				this.getStreamGate(agentId).currentGeneration !== expectedGeneration ||
-				this.getStreamGate(agentId).pendingOpenAfterSettled
-			)
+			gateBefore.currentGeneration !== observedGeneration ||
+			gateBefore.pendingOpenAfterSettled
 		) return;
 		// Rust 运行时在最终错误路径也不会发 agent_settled；允许 error 状态
 		// 走同一条 get_state 兜底，关闭 Web SSE，但保留桌面端 error 状态。
-		const mayBeSettled = runtime?.tab.status === "running" || runtime?.tab.status === "error";
-		if (!runtime || !mayBeSettled) return;
+		const mayBeSettled = runtime.tab.status === "running" || runtime.tab.status === "error";
+		if (!mayBeSettled) return;
 		if ((this.pendingUIRequests.get(agentId)?.size ?? 0) > 0) return;
 		if (this.rpcCompactingAgents.has(agentId) || this.compactingAgents.has(agentId)) return;
 		if (this.activeAssistantMessageIds.has(agentId)) return;
@@ -4938,18 +4952,17 @@ export class AgentManager {
 			pendingMessageCount?: number;
 		};
 		if (state.isStreaming || state.isCompacting || (state.pendingMessageCount ?? 0) > 0) return;
-		if (expectedProcess && this.agents.get(agentId)?.process !== expectedProcess) return;
+		const current = this.agents.get(agentId);
+		if (!current || current.process !== observedProcess) return;
+		const gateAfter = this.getStreamGate(agentId);
 		if (
-			expectedGeneration !== undefined &&
-			(
-				this.getStreamGate(agentId).currentGeneration !== expectedGeneration ||
-				this.getStreamGate(agentId).pendingOpenAfterSettled
-			)
+			gateAfter.currentGeneration !== observedGeneration ||
+			gateAfter.pendingOpenAfterSettled
 		) return;
 		// 查询期间可能又收到新的 prompt；以查询返回时的实际 runtime 状态为准，
 		// 避免旧的兜底定时器把新一轮运行误发成 settled。
-		if (runtime.tab.status !== "running" && runtime.tab.status !== "error") return;
-		const keepError = runtime.tab.status === "error";
+		if (current.tab.status !== "running" && current.tab.status !== "error") return;
+		const keepError = current.tab.status === "error";
 
 		if (!keepError) runtime.tab.status = "idle";
 		this.finalizeThinkingIntoMessage(agentId);
