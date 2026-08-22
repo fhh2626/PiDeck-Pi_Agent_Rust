@@ -39,10 +39,12 @@ export function SkillsQuickDialog(props: {
 	const [togglingPath, setTogglingPath] = useState<string | null>(null);
 
 	// 每次 open 从 false 变 true 都重新拉取：设置页与快捷窗口之间以磁盘 SKILL.md 为权威，
-	// 不做长期缓存，避免打开时看到过期 enabled 状态。
+	// 不做长期缓存。打开时先清空上次的数据再加载：避免加载期间短暂展示过期 enabled 状态
+	// （用户据旧值点 toggle 会反向写盘），loading 态由空列表分支呈现。
 	useEffect(() => {
 		if (!props.open) return;
 		let cancelled = false;
+		setData({ locations: [], skills: [] });
 		setLoading(true);
 		setError(null);
 		api.skills
@@ -62,21 +64,28 @@ export function SkillsQuickDialog(props: {
 	}, [props.open]);
 
 	const handleToggle = async (skill: PiSkillSummary) => {
-		if (props.locked || togglingPath) return;
+		if (props.locked || loading || togglingPath) return;
 		setTogglingPath(skill.path);
 		setError(null);
 		// 与 ConfigModal.handleToggleSkill 同语义：目标态（toggle 后的 enabled）。
 		const nextEnabled = !skill.enabled;
 		try {
 			await api.skills.toggle(skill.path, nextEnabled);
-			// 与 ConfigModal.handleToggleSkill 同序：toggle 后重新 list()，
-			// 以磁盘状态为准更新视图，而不是仅在 React 内存里反转 enabled。
-			const refreshed = await api.skills.list();
-			setData(refreshed);
-			props.onChanged();
-			showNotice(nextEnabled ? t("config.skillEnabledToast") : t("config.skillDisabledToast"));
 		} catch (e) {
-			// toggle 失败不 mark changed：关闭窗口就不会触发 stop all。
+			// 写盘失败不 mark changed：关闭窗口就不会触发 stop all。
+			setError(e instanceof Error ? e.message : String(e));
+			setTogglingPath(null);
+			return;
+		}
+		// toggle 一旦成功 SKILL.md 就已改变，「是否需要在关闭时停止 Agent」由写盘结果决定，
+		// 不能被随后的列表刷新成败影响——先立即标记 changed，再刷新 UI。
+		props.onChanged();
+		showNotice(nextEnabled ? t("config.skillEnabledToast") : t("config.skillDisabledToast"));
+		// 刷新列表以磁盘状态为准更新视图（而非仅在 React 内存里反转 enabled）；
+		// 刷新失败只展示错误，已标记的 changed 不回退。
+		try {
+			setData(await api.skills.list());
+		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setTogglingPath(null);
@@ -154,7 +163,7 @@ export function SkillsQuickDialog(props: {
 										variant="ghost"
 										size="icon-sm"
 										className="size-7 shrink-0"
-										disabled={props.locked || Boolean(togglingPath)}
+										disabled={props.locked || loading || Boolean(togglingPath)}
 										onClick={() => void handleToggle(skill)}
 										title={skill.enabled ? t("common.disable") : t("common.enabled")}
 										style={skill.enabled ? { color: "var(--color-accent)" } : undefined}
