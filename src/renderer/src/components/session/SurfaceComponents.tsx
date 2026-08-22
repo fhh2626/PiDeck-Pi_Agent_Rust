@@ -1079,6 +1079,8 @@ type EntryAction = {
 	label: string;
 	onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
 	icon: ReactNode;
+	/** 真 HTML disabled（鼠标/键盘均不可触发）；用于全局安全门控，如 Skills 快捷入口。 */
+	disabled?: boolean;
 };
 
 export function ConversationOutline(props: {
@@ -1090,6 +1092,7 @@ export function ConversationOutline(props: {
 	gitAction?: EntryAction;
 	editorsAction?: EntryAction & { anchorRef?: React.RefObject<HTMLButtonElement | null> };
 	browserAction?: EntryAction;
+	skillsAction?: EntryAction;
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const [dragging, setDragging] = useState(false);
@@ -1241,6 +1244,18 @@ export function ConversationOutline(props: {
 					onClick={props.editorsAction.onClick}
 				>
 					{props.editorsAction.icon}
+				</button>
+			)}
+			{props.skillsAction && (
+				<button
+					type="button"
+					className={`skills-entry${props.skillsAction.active ? " active" : ""}`}
+					title={props.skillsAction.label}
+					aria-label={props.skillsAction.label}
+					disabled={props.skillsAction.disabled}
+					onClick={props.skillsAction.onClick}
+				>
+					{props.skillsAction.icon}
 				</button>
 			)}
 			{props.browserAction && (

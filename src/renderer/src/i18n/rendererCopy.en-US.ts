@@ -1004,6 +1004,12 @@ export const enUS: Record<TranslationKey, string> = {
     "Skill disabled. Restart agents for it to take effect.",
   "config.skillEnabledToast":
     "Skill enabled. Restart agents for it to take effect.",
+  "skills.quickUnavailable": "Agents are working. Skills can be modified once all agents are idle.",
+  "skills.quickDescription": "Quickly enable or disable loaded skills.",
+  "skills.quickApplyHint": "After closing this window, all started agents will be stopped automatically; the new skill configuration applies the next time agents start.",
+  "skills.quickWaitIdle": "Agents are working. Wait until all agents are idle before closing the skills window.",
+  "skills.quickAgentsStopped": "Skills updated. {count} agent(s) stopped.",
+  "skills.quickStopFailed": "Skills updated, but {count} agent(s) failed to stop.",
   "config.extensionUninstalledToast":
     "Extension uninstalled. Restart agents for it to take effect.",
   "config.extensionUninstallFailed": "Uninstall failed: {error}",

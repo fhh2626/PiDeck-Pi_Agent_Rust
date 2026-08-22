@@ -21,6 +21,7 @@ import {
   SquarePen,
   Terminal,
   GitBranch,
+  Sparkles,
 } from "lucide-react";
 import { showNotice } from "./utils/notice";
 import {
@@ -89,6 +90,7 @@ import {
   setSessionDraftAtom,
   settingsOpenAtom,
   upsertSessionAtom,
+  anyAgentRuntimeWorkingAtom,
 } from "./atoms";
 import {
   buildComposerPromptSubmission,
@@ -115,6 +117,7 @@ import { useSessionActions } from "./hooks/useSessionActions";
 import { useScratchPad } from "./hooks/useScratchPad";
 import { useWorktreeActions } from "./hooks/useWorktreeActions";
 import { ChatSessionPane } from "./components/session/ChatSessionPane";
+import { SkillsQuickDialog } from "./components/session/SkillsQuickDialog";
 import { SessionSplitStage } from "./components/session/SessionSplitStage";
 import { canStopBoundAgent } from "./utils/canStopBoundAgent";
 import { splitLayoutSessionIds } from "./utils/sessionSplitEdge";
@@ -814,6 +817,30 @@ export function App() {
   const activeQueuedPrompts = currentSessionId
     ? (queue.queuedPrompts[currentSessionId] ?? [])
     : [];
+
+  // ── Skills 快捷修改入口的全局安全门控 ──────────────────────────────
+  // Skills 是全局 ~/.pi/agent/skills 与 ~/.agents/skills，门控必须全局判断：
+  // anyAgentRuntimeWorkingAtom 覆盖任意项目任意 runtime 的 working 状态（含流式/执行工具），
+  // 不能用 activeProjectHasBusyAgent（只覆盖当前项目）。
+  const anyAgentRuntimeWorking = useAtomValue(anyAgentRuntimeWorkingAtom);
+  // pending Agent（新建/重启）在真实 runtime 进入 sessionRuntimeByIdAtom 前也要算 working。
+  const hasPendingWorkingAgent = pendingAgents.some(
+    (agent) => agent.status === "starting" || agent.status === "running",
+  );
+  // 待发送队列是全局按 sessionId 保存的：Agent 刚变 idle 但已有 follow-up/steer 排队时，
+  // 随后会自动继续工作，此时修改 Skills 会产生 race，也必须禁止。
+  const hasQueuedAgentWork = Object.values(queue.queuedPrompts).some(
+    (items) => items.length > 0,
+  );
+  // 关闭前的「有没有工作中的 Agent」单独计算：不能包含 skillsStoppingAgents 自身，
+  // 否则 stop 过程中 handleSkillsQuickClose 的 busy 判断会永远为 true。
+  const skillsRuntimeBusy =
+    anyAgentRuntimeWorking ||
+    hasPendingWorkingAgent ||
+    hasQueuedAgentWork;
+  // Skills 快捷修改期间（stop all 进行中）同样禁止重新打开弹窗/修改。
+  const [skillsStoppingAgents, setSkillsStoppingAgents] = useState(false);
+  const skillsQuickLocked = skillsRuntimeBusy || skillsStoppingAgents;
 
   const enqueueSessionPrompt = useCallback((
     sessionId: string,
@@ -1813,6 +1840,62 @@ export function App() {
     }
     requireSessionCommand(await api.sessions.stopRuntime(target));
   }
+
+  // ── Skills 快捷修改后的自动收尾 ────────────────────────────────
+  // 弹窗状态：changed 用 ref（toggle 回调只置位，不触发重渲染）；open/stopping 用 state。
+  const [skillsQuickOpen, setSkillsQuickOpen] = useState(false);
+  const skillsQuickChangedRef = useRef(false);
+
+  /**
+   * Skills 修改完成后停止所有当前真实 Agent runtime。
+   * 只从 agentsRef（agentInventoryAtom，已绑定真实 runtime）取 ID；
+   * displayAgents 混有 pendingAgents（无 runtime target），直接 closeAgent 会报 runtime unavailable。
+   * Promise.allSettled：一个 Agent stop 失败不能阻止其他 Agent 被关闭。
+   * closeAgent 只 stopRuntime：不 delete SessionRecord、不 removeSessionState、不关 Tab、不 restart。
+   */
+  async function stopAllAgentsAfterSkillsChange() {
+    const agentIds = agentsRef.current.map((agent) => agent.id);
+    if (agentIds.length === 0) return;
+
+    setSkillsStoppingAgents(true);
+    try {
+      const results = await Promise.allSettled(
+        agentIds.map((agentId) => closeAgent(agentId)),
+      );
+
+      const failed = results.filter((result) => result.status === "rejected");
+      if (failed.length > 0) {
+        showToast(t("skills.quickStopFailed", { count: failed.length }), 5000);
+      } else {
+        showToast(t("skills.quickAgentsStopped", { count: agentIds.length }), 2500);
+      }
+    } finally {
+      setSkillsStoppingAgents(false);
+    }
+  }
+
+  /**
+   * Skills 弹窗关闭入口：Dialog 的 X 与 onOpenChange 都走这里。
+   * - 本次没改过：直接关，不动任何 Agent。
+   * - 改过且此刻仍有 working Agent：拒绝本次关闭请求（保留弹窗 + 提示），绝不能强杀正在生成/执行工具的 Agent；等全部 idle 后用户再点关闭才执行 stop all。
+   */
+  const handleSkillsQuickClose = useCallback(() => {
+    if (skillsStoppingAgents) return;
+
+    // 弹窗打开期间理论上主 UI 不能启动 Agent，但后台队列/runtime 仍可能变化。
+    if (skillsQuickChangedRef.current && skillsRuntimeBusy) {
+      showToast(t("skills.quickWaitIdle"), 3500);
+      return;
+    }
+
+    const changed = skillsQuickChangedRef.current;
+    skillsQuickChangedRef.current = false;
+    setSkillsQuickOpen(false);
+
+    if (changed) {
+      void stopAllAgentsAfterSkillsChange();
+    }
+  }, [skillsStoppingAgents, skillsRuntimeBusy]);
 
   function requestCloseAgent(agent: AgentTab): Promise<void> {
     if (!agent.noSession) {
@@ -2938,6 +3021,22 @@ export function App() {
             },
             icon: <Code size={14} />,
           }}
+          // Skills 快捷入口：仅 Native 显示（LAN Web 不允许直接操作宿主机全局 ~/.pi 与 ~/.agents Skills）。
+          // 全局门控：任意项目任意 Agent working / pending working / 有排队消息 / stop all 进行中时禁用。
+          skillsAction={!isLanWeb ? {
+            active: skillsQuickOpen,
+            disabled: skillsQuickLocked,
+            label: skillsQuickLocked
+              ? t("skills.quickUnavailable")
+              : t("config.nav.skills"),
+            onClick: () => {
+              // 点击瞬间再次检查 busy，防止状态变化与点击之间的 race。
+              if (skillsQuickLocked) return;
+              skillsQuickChangedRef.current = false;
+              setSkillsQuickOpen(true);
+            },
+            icon: <Sparkles size={14} />,
+          } : undefined}
           browserAction={undefined}
         />
       }
@@ -3187,6 +3286,19 @@ export function App() {
 
     {/* Scratch Pad（草稿本）：根级渲染，避免受 chat-pane grid 影响定位 */}
     <ScratchPadOverlay controller={scratchPad} />
+
+    {/* Skills 快捷管理小窗口：全局配置，根级渲染，不随某个 session pane 的 mount/unmount 卸载。
+        locked 用 skillsRuntimeBusy（不含 skillsStoppingAgents 自身）+ stopping，保证 stop 过程中 toggle 全禁。 */}
+    {!isLanWeb && (
+      <SkillsQuickDialog
+        open={skillsQuickOpen}
+        locked={skillsRuntimeBusy || skillsStoppingAgents}
+        onChanged={() => {
+          skillsQuickChangedRef.current = true;
+        }}
+        onRequestClose={handleSkillsQuickClose}
+      />
+    )}
 
     {/* 并行问询结果弹框（AskPanel）：独立匿名会话的结果展示，根级渲染 */}
     <AskPanelOverlay />
