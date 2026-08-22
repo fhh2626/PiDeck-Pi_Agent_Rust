@@ -10,6 +10,8 @@ const webviewHost = readFileSync("src/main/browser/browserPanelWebviewHost.ts", 
 const browserSecurity = readFileSync("src/main/browser/browserSecurity.ts", "utf8");
 const sessionModule = readFileSync("src/renderer/src/browser/BrowserPanelSession.ts", "utf8");
 const filesIpc = readFileSync("src/main/ipc/filesIpc.ts", "utf8");
+// Electron 43：webview new-window 事件已移除（Electron 22 起），弹窗只能由主进程接管
+const externalLinks = readFileSync("src/main/browser/externalLinks.ts", "utf8");
 
 function functionBlock(source, signature, nextSignature) {
 	const start = source.indexOf(signature);
@@ -27,12 +29,29 @@ test("Browser host adapter uses a fixed persistent partition without popup or fi
 	assert.match(browserSecurity, /export function isAllowedBrowserPanelUrl/);
 	assert.match(webviewHost, /from "\.\/browserSecurity"/);
 	assert.match(webviewHost, /session\.fromPartition\(BROWSER_PANEL_PARTITION\)/);
-	// The renderer-driven webview sets allowfileaccess and allowpopups via attributes.
+	// The renderer-driven webview sets allowfileaccess via attributes.
 	// Ownership moved to the ElectronWebviewHost adapter (renderer's only <webview> module).
 	assert.match(browserHost, /setAttribute\("allowfileaccess", "true"\)/);
-	assert.match(browserHost, /allowpopups=\{"true" as unknown as boolean\}/);
 	assert.match(rendererTypes, /partition\?: string/);
 	assert.doesNotMatch(rendererTypes, /allowpopups/i);
+});
+
+test("guest popups are force-enabled and dispatched only by the main-process window-open policy", () => {
+	// Electron 22 起 webview new-window 事件已移除：渲染层不得再监听它，弹窗流必须
+	// 经 allowpopups=true 到达主进程 guest setWindowOpenHandler 统一分发。
+	assert.match(webviewHost, /params\.allowpopups = "true";/);
+	assert.doesNotMatch(webviewHost, /delete params\.allowpopups/);
+	// 渲染层 adapter 不再监听 new-window（该事件在当前 Electron 不存在）
+	assert.doesNotMatch(browserHost, /["']new-window["']/);
+	// 主进程窗口打开策略：web URL 转 openExternalUrl（linkOpenMode 路由），
+	// guest 白名单系统协议转系统，其余拦截；真实窗口一律 deny。
+	const openHandler = functionBlock(webviewHost, "guest.setWindowOpenHandler", "guest.on(");
+	assert.match(openHandler, /return \{ action: "deny" \}/);
+	assert.match(openHandler, /deps\.openExternalUrl\(url\)/);
+	assert.match(openHandler, /deps\.openExternalUrl\(url, true\)/);
+	assert.match(openHandler, /isAllowedGuestSystemProtocol\(url\)/);
+	// mailto/tel/sms 是网页可触发的系统协议；vscode 系列只留给受信应用内 UI
+	assert.match(externalLinks, /GUEST_SYSTEM_SCHEMES[^\n]*= \["mailto:", "tel:", "sms:"\]/);
 });
 
 test("Browser navigation goes through BrowserPanelSession pending-URL poll loop", () => {

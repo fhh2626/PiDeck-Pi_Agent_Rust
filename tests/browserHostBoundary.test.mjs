@@ -13,8 +13,8 @@ const app = readFileSync("src/renderer/src/App.tsx", "utf8");
 const browserSurface = readFileSync("src/renderer/src/components/workspace/BrowserSurface.tsx", "utf8");
 
 // raw 宿主事件名只允许出现在 addEventListener/removeEventListener 调用里（adapter 职责）。
-// neutral BrowserHostEvent 的 type 字面量（如 "load-progress"）属于共享契约，BrowserPanel
-// 的 switch 分支必然出现，不算违规。
+// neutral BrowserHostEvent 的 type 字面量属于共享契约，BrowserPanel 的 switch 分支
+// 必然出现，不算违规。
 const RAW_EVENT_NAMES = [
 	"did-navigate",
 	"did-navigate-in-page",

@@ -4,7 +4,9 @@ import test from "node:test";
 // 外部链接协议网关行为测试：openExternalUrl 是渲染层/更新流程共用的唯一入口，
 // 协议路由策略抽在 src/main/browser/externalLinks.ts（纯函数 + 依赖注入）。
 import {
-	isAllowedExternalProtocol,
+	getUrlScheme,
+	isAllowedGuestSystemProtocol,
+	isAllowedSystemExternalProtocol,
 	isHttpLikeExternalUrl,
 	NON_HTTP_EXTERNAL_SCHEMES,
 	openExternalLink,
@@ -31,26 +33,46 @@ function makeDeps(overrides = {}) {
 	return { deps, calls };
 }
 
-test("isHttpLikeExternalUrl only accepts web protocols", () => {
+test("getUrlScheme parses via WHATWG URL and lowercases", () => {
+	assert.equal(getUrlScheme("HTTPS://example.com"), "https:");
+	assert.equal(getUrlScheme("MailTo:test@example.com"), "mailto:");
+	assert.equal(getUrlScheme("not a url"), null);
+	assert.equal(getUrlScheme(""), null);
+});
+
+test("isHttpLikeExternalUrl accepts web protocols case-insensitively", () => {
 	assert.equal(isHttpLikeExternalUrl("https://example.com"), true);
-	assert.equal(isHttpLikeExternalUrl("http://example.com"), true);
+	assert.equal(isHttpLikeExternalUrl("HTTPS://example.com"), true);
+	assert.equal(isHttpLikeExternalUrl("Http://example.com"), true);
 	assert.equal(isHttpLikeExternalUrl("mailto:test@example.com"), false);
 	assert.equal(isHttpLikeExternalUrl("file:///C:/x"), false);
 });
 
-test("allowlist covers communication and editor schemes, case-insensitive", () => {
+test("trusted-UI allowlist covers communication and editor schemes", () => {
 	for (const scheme of NON_HTTP_EXTERNAL_SCHEMES) {
 		const url = `${scheme}rest`;
-		assert.equal(isAllowedExternalProtocol(url), true, url);
+		assert.equal(isAllowedSystemExternalProtocol(url), true, url);
 	}
-	assert.equal(isAllowedExternalProtocol("MAILTO:test@example.com"), true);
-	assert.equal(isAllowedExternalProtocol("VSCode://open"), true);
+	assert.equal(isAllowedSystemExternalProtocol("MAILTO:test@example.com"), true);
+	assert.equal(isAllowedSystemExternalProtocol("VSCode://open"), true);
 });
 
 test("dangerous or unknown protocols are rejected before reaching the OS", () => {
 	for (const url of ["file:///C:/Windows/System32/config", "search-ms:query=x", "ms-settings:display", "javascript:alert(1)", "ftp://host/x"]) {
-		assert.equal(isAllowedExternalProtocol(url), false, url);
+		assert.equal(isAllowedSystemExternalProtocol(url), false, url);
 	}
+});
+
+test("guest allowlist is narrower than the trusted-UI allowlist", () => {
+	// 通信深链允许由网页触发
+	assert.equal(isAllowedGuestSystemProtocol("mailto:test@example.com"), true);
+	assert.equal(isAllowedGuestSystemProtocol("TEL:+1234567890"), true);
+	assert.equal(isAllowedGuestSystemProtocol("sms:+1234567890"), true);
+	// 本机工具深链不允许由任意远程网页触发（仅供应用内受信 UI 使用）
+	assert.equal(isAllowedGuestSystemProtocol("vscode://open/file"), false);
+	assert.equal(isAllowedGuestSystemProtocol("vscode-insiders://file"), false);
+	// web 协议不属于 guest system 转发范围（webview 自己导航）
+	assert.equal(isAllowedGuestSystemProtocol("https://example.com"), false);
 });
 
 test("mailto goes to the system handler instead of being silently dropped", async () => {
@@ -59,6 +81,18 @@ test("mailto goes to the system handler instead of being silently dropped", asyn
 	assert.deepEqual(calls.system, ["mailto:test@example.com"]);
 	assert.deepEqual(calls.panel, []);
 	assert.deepEqual(calls.warns, []);
+});
+
+test("uppercase HTTP(S) is routed as web protocol, not rejected", async () => {
+	const { deps, calls } = makeDeps();
+	await openExternalLink("HTTPS://example.com/release", deps);
+	assert.deepEqual(calls.system, ["HTTPS://example.com/release"]);
+	assert.deepEqual(calls.panel, []);
+
+	const internal = makeDeps({ linkOpenMode: () => "internal" });
+	await openExternalLink("HTTP://example.com/docs", internal.deps);
+	assert.deepEqual(internal.calls.panel, ["HTTP://example.com/docs"]);
+	assert.deepEqual(internal.calls.system, []);
 });
 
 test("non-http open failure is downgraded to a warn log, not propagated", async () => {

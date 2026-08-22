@@ -27,7 +27,6 @@ import {
 	ensureInitialBrowserTab,
 	getBrowserPanelSessionSnapshot,
 	peekPendingBrowserNavigation,
-	requestBrowserNavigation,
 	resetBrowserPanelSession,
 	updateBrowserPanelSession,
 	type BrowserTab,
@@ -70,7 +69,6 @@ export function BrowserPanel(props: {
 	const [canGoBack, setCanGoBack] = useState(false);
 	const [canGoForward, setCanGoForward] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
-	const [loadProgress, setLoadProgress] = useState(0);
 	const [device, setDevice] = useState<BrowserDeviceProfile>(() => getBrowserPanelSessionSnapshot().device);
 	const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
 	const deviceMenuRef = useRef<HTMLDivElement | null>(null);
@@ -106,7 +104,6 @@ export function BrowserPanel(props: {
 			setInputValue(targetUrl);
 
 			setIsLoading(true);
-			setLoadProgress(0);
 
 			host.setDeviceProfile(deviceOverride ?? device);
 
@@ -115,7 +112,6 @@ export function BrowserPanel(props: {
 			} catch (error) {
 				console.warn("Browser navigation failed", error);
 				setIsLoading(false);
-				setLoadProgress(0);
 			}
 		},
 		[device],
@@ -172,7 +168,6 @@ export function BrowserPanel(props: {
 				}
 				case "loading-stopped": {
 					setIsLoading(false);
-					setLoadProgress(0);
 					setCanGoBack(event.canGoBack);
 					setCanGoForward(event.canGoForward);
 					break;
@@ -180,26 +175,11 @@ export function BrowserPanel(props: {
 				case "load-failed": {
 					// 无论 aborted/failed 都确保 loading 态复位；不新增 error page/modal/toast。
 					setIsLoading(false);
-					setLoadProgress(0);
-					break;
-				}
-				case "load-progress": {
-					setLoadProgress(event.progress);
 					break;
 				}
 				case "title-updated": {
 					// 只在真实 page title 到达时才替换 tab 标题（adapter 已过滤空值）。
 					updateActiveTab({ title: event.title });
-					break;
-				}
-				case "new-window": {
-					// 页面内 target="_blank" 或 window.open 的分发属于产品策略：
-					// http(s) 在内置浏览器新 tab 打开；其余协议走系统默认浏览器。
-					if (event.url.startsWith("http://") || event.url.startsWith("https://")) {
-						requestBrowserNavigation(event.url);
-					} else {
-						void window.piDesktop.browser.openExternal(event.url);
-					}
 					break;
 				}
 			}
@@ -401,8 +381,9 @@ export function BrowserPanel(props: {
 			</div>
 
 			{isLoading && (
+				// 宿主无渐进进度事件（webview 标签无 load-progress），只做不确定动画。
 				<div className="h-0.5 shrink-0 overflow-hidden bg-bg-subtle">
-					<div className="h-full bg-[var(--color-accent)] transition-[width] duration-150" style={{ width: `${Math.max(5, loadProgress * 100)}%` }} />
+					<div className="h-full w-1/3 animate-[browser-load-slide_1s_ease-in-out_infinite] bg-[var(--color-accent)] rounded-full" />
 				</div>
 			)}
 

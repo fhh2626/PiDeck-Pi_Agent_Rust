@@ -7,13 +7,28 @@ import type { AppLogger } from "../logging/AppLogger";
  * Electron shell 细节留在 index.ts 装配处。
  */
 
-/** 判断 URL 是否为内置浏览器可导航的 web 协议。 */
+/**
+ * 解析 URL 的 scheme（统一小写，含冒号）；无法解析返回 null。
+ *
+ * 用 WHATWG URL 解析而不是字符串前缀：HTTP:/MAILTO: 等大写 scheme、以及
+ * 渲染层拼出的各种畸形输入都能得到一致的判定结果。
+ */
+export function getUrlScheme(url: string): string | null {
+	try {
+		return new URL(url).protocol.toLowerCase();
+	} catch {
+		return null;
+	}
+}
+
+/** 判断 URL 是否为内置浏览器可导航的 web 协议（scheme 大小写不敏感）。 */
 export function isHttpLikeExternalUrl(url: string): boolean {
-	return url.startsWith("http:") || url.startsWith("https:");
+	const scheme = getUrlScheme(url);
+	return scheme === "http:" || scheme === "https:";
 }
 
 /**
- * 允许交给系统处理器的非 web 协议白名单。
+ * 允许交给系统处理器的非 web 协议白名单（应用内受信 UI 触发，如设置页/更新流程）。
  *
  * 渲染层传来的 URL 属于不可信输入（IPC 边界必须校验）：不能把任意 scheme 全量
  * 放行给操作系统（file:/search-ms:/ms-* 等系统协议可能触发本机处理程序），
@@ -28,11 +43,25 @@ export const NON_HTTP_EXTERNAL_SCHEMES: readonly string[] = [
 	"vscode-insiders:",
 ];
 
-/** 是否为允许离开应用的 URL（web 协议或白名单内的系统协议，scheme 大小写不敏感）。 */
-export function isAllowedExternalProtocol(url: string): boolean {
-	if (isHttpLikeExternalUrl(url)) return true;
-	const lowered = url.toLowerCase();
-	return NON_HTTP_EXTERNAL_SCHEMES.some((scheme) => lowered.startsWith(scheme));
+/**
+ * guest 网页内容可触发的系统协议白名单（更窄）：只有通信类深链。
+ * vscode: 等本机工具深链不允许由任意远程网页触发——它们仅供受信的应用内
+ * UI 使用（见 NON_HTTP_EXTERNAL_SCHEMES），两份白名单刻意分开维护。
+ */
+export const GUEST_SYSTEM_SCHEMES: readonly string[] = ["mailto:", "tel:", "sms:"];
+
+/** 是否为允许离开应用的 URL（web 协议或受信 UI 白名单内的系统协议）。 */
+export function isAllowedSystemExternalProtocol(url: string): boolean {
+	const scheme = getUrlScheme(url);
+	if (scheme == null) return false;
+	if (scheme === "http:" || scheme === "https:") return true;
+	return NON_HTTP_EXTERNAL_SCHEMES.includes(scheme);
+}
+
+/** guest 页面内链接可转系统的非 web 协议（GUEST_SYSTEM_SCHEMES 判定）。 */
+export function isAllowedGuestSystemProtocol(url: string): boolean {
+	const scheme = getUrlScheme(url);
+	return scheme != null && GUEST_SYSTEM_SCHEMES.includes(scheme);
 }
 
 export type OpenExternalLinkDeps = {
@@ -57,7 +86,7 @@ export type OpenExternalLinkDeps = {
  * - 白名单外协议：拒绝并记 warn，不再静默丢弃也不再放行到 OS。
  */
 export async function openExternalLink(url: string, deps: OpenExternalLinkDeps): Promise<void> {
-	if (!isAllowedExternalProtocol(url)) {
+	if (!isAllowedSystemExternalProtocol(url)) {
 		deps.logger?.warn("browser", "Rejected external link with non-allowlisted protocol", { url });
 		return;
 	}

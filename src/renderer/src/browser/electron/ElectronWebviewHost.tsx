@@ -6,7 +6,8 @@
  * - 吸收 ERR_ABORTED / -3 等预期导航取消（不向 BrowserPanel 泄漏 Electron 错误格式）；
  * - 管理 device UA（mobile/tablet 自定义 UA；PC 恢复该 guest 首次捕获的真实默认 UA）。
  *
- * 不负责：URL normalization、tab/popup 产品策略、外部链接分发（属于 BrowserPanel）。
+ * 不负责：URL normalization、tab/popup 产品策略、外部链接分发（popup 由主进程
+ * guest setWindowOpenHandler 接管，Electron 22 起 webview 无 new-window 事件）。
  * 安全边界仍在主进程 browserPanelWebviewHost.ts（partition/权限/preload 清理）。
  */
 import { useCallback, useEffect, useRef } from "react";
@@ -44,9 +45,7 @@ type ElectronWebviewEventMap = {
 	"did-start-loading": Record<string, never>;
 	"did-stop-loading": Record<string, never>;
 	"did-fail-load": { errorCode: number; errorDescription: string; validatedURL: string; isMainFrame: boolean };
-	"load-progress": { progress: number };
 	"page-title-updated": { title: string };
-	"new-window": { url: string; preventDefault: () => void };
 };
 
 export function ElectronWebviewHost({
@@ -208,20 +207,16 @@ export function ElectronWebviewHost({
 				errorDescription: evt.errorDescription,
 			});
 		});
-		const onLoadProgress = listener<"load-progress">((evt) => {
-			emit({ type: "load-progress", progress: evt.progress });
-		});
 		const onPageTitleUpdated = listener<"page-title-updated">((evt) => {
 			// 只有真实非空 title 才下发，防止 tab 标题被空串/空白来回闪烁覆盖。
 			const title = evt.title?.trim();
 			if (!title) return;
 			emit({ type: "title-updated", title });
 		});
-		const onNewWindow = listener<"new-window">((evt) => {
-			// 始终阻止默认弹窗；internal tab / external browser 的分发由 BrowserPanel 决定。
-			evt.preventDefault();
-			emit({ type: "new-window", url: evt.url });
-		});
+
+		// 注：Electron <webview> 的 new-window 事件已在 Electron 22 移除（本仓 Electron 43），
+		// target="_blank"/window.open 由主进程 guest setWindowOpenHandler 统一接管
+		//（browserPanelWebviewHost.ts），不再有渲染层事件可听。
 
 		const rawListeners: Array<[string, (event: Event) => void]> = [
 			["did-navigate", onDidNavigate],
@@ -229,9 +224,7 @@ export function ElectronWebviewHost({
 			["did-start-loading", onDidStartLoading],
 			["did-stop-loading", onDidStopLoading],
 			["did-fail-load", onDidFailLoad],
-			["load-progress", onLoadProgress],
 			["page-title-updated", onPageTitleUpdated],
-			["new-window", onNewWindow],
 		];
 		for (const [name, handler] of rawListeners) {
 			webview.addEventListener(name, handler);
@@ -258,7 +251,6 @@ export function ElectronWebviewHost({
 			ref={handleWebviewRef as unknown as React.Ref<HTMLDivElement>}
 			className={className ?? "browser-webview"}
 			src={mountInitialUrlRef.current}
-			allowpopups={"true" as unknown as boolean}
 		/>
 	);
 }

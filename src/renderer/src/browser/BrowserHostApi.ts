@@ -28,10 +28,6 @@ export type BrowserHostEvent =
 			canGoForward: boolean;
 	  }
 	| {
-			type: "load-progress";
-			progress: number;
-	  }
-	| {
 			type: "title-updated";
 			title: string;
 	  }
@@ -40,10 +36,6 @@ export type BrowserHostEvent =
 			kind: "aborted" | "failed";
 			errorCode?: number;
 			errorDescription?: string;
-	  }
-	| {
-			type: "new-window";
-			url: string;
 	  };
 
 /**
