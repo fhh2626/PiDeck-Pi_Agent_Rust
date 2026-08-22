@@ -91,7 +91,7 @@ test("Browser navigation goes through BrowserPanelSession pending-URL poll loop"
 	// navigateTo ownership moved from BrowserPanel to browser/BrowserPanelSession.ts;
 	// requestBrowserNavigation keeps the same semantics: new tab per request + pending URL.
 	assert.match(sessionModule, /export function requestBrowserNavigation\(url: string\)/);
-	assert.match(sessionModule, /pendingNavigateUrl = url/);
+	assert.match(sessionModule, /pendingNavigation = \{ tabId: id, url \}/);
 	assert.match(sessionModule, /moduleState\.tabs\.push\(\{ id, title: "", url \}\)/);
 	assert.doesNotMatch(sessionModule, /isAllowedBrowserUrl/);
 });

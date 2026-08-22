@@ -51,10 +51,10 @@ test("pending external navigation consumption syncs url/input before host.loadUr
 	assertOrdered(
 		[
 			"consumePendingBrowserNavigation()",
-			"setUrl(targetUrl);",
-			"setInputValue(targetUrl);",
+			"setUrl(consumed.url);",
+			"setInputValue(consumed.url);",
 			"host.setDeviceProfile(snapshot.device);",
-			"host.loadUrl(targetUrl)",
+			"host.loadUrl(consumed.url)",
 		],
 		"pending navigation polling",
 	);

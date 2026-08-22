@@ -25,6 +25,11 @@ export type BrowserPanelSessionSnapshot = {
 	navigateKey: number;
 };
 
+export type PendingBrowserNavigation = {
+	tabId: string;
+	url: string;
+};
+
 let nextTabId = 1;
 function genTabId(): string {
 	return `tab-${nextTabId++}`;
@@ -37,8 +42,8 @@ const moduleState: BrowserPanelSessionSnapshot = {
 	navigateKey: 0,
 };
 
-/** 待消费的外部导航 URL，BrowserPanel 通过轮询检测。 */
-let pendingNavigateUrl: string | null = null;
+/** 待消费的外部导航请求（记录目标 tabId 与 URL），BrowserPanel 通过轮询检测。 */
+let pendingNavigation: PendingBrowserNavigation | null = null;
 
 function ensureInitialTab() {
 	if (moduleState.tabs.length > 0) return;
@@ -94,20 +99,20 @@ export function requestBrowserNavigation(url: string): void {
 	moduleState.tabs.push({ id, title: "", url });
 	moduleState.activeTabId = id;
 	moduleState.navigateKey += 1;
-	// 直接设 pendingUrl，轮询会立即检测到，无需等 re-render
-	pendingNavigateUrl = url;
+	// 记录目标 tabId 与 URL；轮询消费时校验 activeTabId 匹配，防止加载期间切 tab 导致串扰
+	pendingNavigation = { tabId: id, url };
 }
 
-/** 查看待消费的外部导航 URL（不清除）。 */
-export function peekPendingBrowserNavigation(): string | null {
-	return pendingNavigateUrl;
+/** 查看待消费的外部导航请求（不清除）。 */
+export function peekPendingBrowserNavigation(): PendingBrowserNavigation | null {
+	return pendingNavigation;
 }
 
-/** 消费待处理的外部导航 URL（返回并清除）；无 pending 时返回 null。 */
-export function consumePendingBrowserNavigation(): string | null {
-	const url = pendingNavigateUrl;
-	pendingNavigateUrl = null;
-	return url;
+/** 消费待处理的外部导航请求（返回并清除）；无 pending 时返回 null。 */
+export function consumePendingBrowserNavigation(): PendingBrowserNavigation | null {
+	const pending = pendingNavigation;
+	pendingNavigation = null;
+	return pending;
 }
 
 /**
@@ -119,5 +124,5 @@ export function resetBrowserPanelSession(): void {
 	moduleState.tabs = [];
 	moduleState.activeTabId = null;
 	moduleState.navigateKey = 0;
-	pendingNavigateUrl = null;
+	pendingNavigation = null;
 }

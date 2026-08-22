@@ -187,9 +187,9 @@ export function BrowserPanel(props: {
 		[updateActiveTab],
 	);
 
-	// 轮询检测 requestBrowserNavigation 设置的 pending URL（module 变量不触发 React 重渲染）。
+	// 轮询检测 requestBrowserNavigation 设置的 pending 导航请求（module 变量不触发 React 重渲染）。
 	// 消费顺序不可交换：先确认 pending 存在 → host 已挂载 → host 空闲，最后才 consume，
-	// 否则 drawer 刚打开/webview 加载中时会把 URL 静默丢掉。
+	// 否则 drawer 刚打开/webview 加载中时会把请求静默丢掉。
 	useEffect(() => {
 		const interval = window.setInterval(() => {
 			const pending = peekPendingBrowserNavigation();
@@ -198,20 +198,27 @@ export function BrowserPanel(props: {
 			if (!host) return;
 			// 如果宿主正在加载中，跳过本次轮询保留 pending，下次轮询会重试
 			if (host.isLoading()) return;
-			// 通过加载检查后才消费 URL，防止加载中时丢请求
-			const targetUrl = consumePendingBrowserNavigation();
-			if (!targetUrl) return;
+			// 通过加载检查后才消费，防止加载中时丢请求
+			const consumed = consumePendingBrowserNavigation();
+			if (!consumed) return;
 			updateBrowserPanelSession({ navigateKey: 0 });
 			const snapshot = getBrowserPanelSessionSnapshot();
-			const activeTab = snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId);
+			if (snapshot.activeTabId !== consumed.tabId) {
+				// 用户在 pending 期间已主动切到其他 tab：
+				// 不要把 consumed.url 加载进当前 tab。新建的 tab 已在 session 中保存正确 url，
+				// 用户之后切换到该 tab 时 switchTab 会正常 loadUrl(tab.url)。
+				setTabs([...snapshot.tabs]);
+				setActiveTabId(snapshot.activeTabId);
+				return;
+			}
 			// 显式状态同步（plan §23「保留现有状态同步」）：此路径直接调 host.loadUrl、
 			// 不经 loadUrl() 的中心同步，必须自己把地址栏对齐目标 URL。
-			setUrl(targetUrl);
-			setInputValue(targetUrl);
+			setUrl(consumed.url);
+			setInputValue(consumed.url);
 			host.setDeviceProfile(snapshot.device);
 			setTabs([...snapshot.tabs]);
-			setActiveTabId(snapshot.activeTabId);
-			void host.loadUrl(targetUrl).catch(() => {});
+			setActiveTabId(consumed.tabId);
+			void host.loadUrl(consumed.url).catch(() => {});
 		}, 50);
 		return () => window.clearInterval(interval);
 	}, []);
