@@ -87,12 +87,12 @@ test("guest destroy clears its pending external protocol request", () => {
 	assert.match(webviewHost, /guest\.once\("destroyed", \(\) => gateway\.forgetGuest\(guest\.id\)\)/);
 });
 
-test("Browser navigation goes through BrowserPanelSession pending-URL poll loop", () => {
+test("Browser navigation routes through BrowserPanelSession module subscription", () => {
 	// navigateTo ownership moved from BrowserPanel to browser/BrowserPanelSession.ts;
-	// requestBrowserNavigation keeps the same semantics: new tab per request + pending URL.
+	// requestBrowserNavigation keeps the same semantics: new tab per request + listener notification.
 	assert.match(sessionModule, /export function requestBrowserNavigation\(url: string\)/);
-	assert.match(sessionModule, /pendingNavigation = \{ tabId: id, url \}/);
-	assert.match(sessionModule, /moduleState\.tabs\.push\(\{ id, title: "", url \}\)/);
+	assert.match(sessionModule, /export function subscribeBrowserNavigation/);
+	assert.match(sessionModule, /moduleState\.tabs\.push\(/);
 	assert.doesNotMatch(sessionModule, /isAllowedBrowserUrl/);
 });
 

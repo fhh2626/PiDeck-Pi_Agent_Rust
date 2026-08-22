@@ -4,14 +4,13 @@ import test from "node:test";
 // BrowserPanelSession 行为测试：模块级会话状态（host 无关）。
 // 渲染层纯函数模块（无 DOM/无 React 依赖），node:test 可直接 import（同 chatTypography.test.mjs 策略）。
 import {
-	consumePendingBrowserNavigation,
 	createBrowserTabInSession,
 	DEFAULT_HOME,
 	ensureInitialBrowserTab,
 	getBrowserPanelSessionSnapshot,
-	peekPendingBrowserNavigation,
 	requestBrowserNavigation,
 	resetBrowserPanelSession,
+	subscribeBrowserNavigation,
 	updateBrowserPanelSession,
 } from "../src/renderer/src/browser/BrowserPanelSession.ts";
 import { isExpectedNavigationAbort } from "../src/renderer/src/browser/electron/ElectronWebviewNavigation.ts";
@@ -34,10 +33,13 @@ test("initial state: ensure creates exactly one Home tab and activates it", () =
 	assert.equal(tab.url, DEFAULT_HOME);
 });
 
-test("external request: each request creates a new active tab with pending URL", () => {
+test("external request: each request creates a new active tab and notifies subscribers", () => {
 	resetForTest();
 	ensureInitialBrowserTab();
-	requestBrowserNavigation("https://example.test/a");
+	const received = [];
+	const unsubscribe = subscribeBrowserNavigation((tab) => received.push(tab));
+
+	const tab = requestBrowserNavigation("https://example.test/a");
 	const snapshot = getBrowserPanelSessionSnapshot();
 	assert.equal(snapshot.tabs.length, 2);
 	const newTab = snapshot.tabs.find((item) => item.url === "https://example.test/a");
@@ -45,102 +47,60 @@ test("external request: each request creates a new active tab with pending URL",
 	// 初始 title 为空，渲染层 fallback 显示 URL，等 page title 到达再替换
 	assert.equal(newTab.title, "");
 	assert.equal(snapshot.activeTabId, newTab.id);
-	assert.deepEqual(peekPendingBrowserNavigation(), {
-		tabId: newTab.id,
-		url: "https://example.test/a",
-	});
+	assert.deepEqual(received, [tab]);
+
+	unsubscribe();
 });
 
-test("multiple external requests keep every tab; only the latest stays pending", () => {
+test("multiple external requests keep every tab; all notify subscribers", () => {
 	resetForTest();
 	ensureInitialBrowserTab();
-	requestBrowserNavigation("https://example.test/a");
-	requestBrowserNavigation("https://example.test/b");
+	const received = [];
+	const unsubscribe = subscribeBrowserNavigation((tab) => received.push(tab));
+
+	const tabA = requestBrowserNavigation("https://example.test/a");
+	const tabB = requestBrowserNavigation("https://example.test/b");
 	const snapshot = getBrowserPanelSessionSnapshot();
 	assert.equal(snapshot.tabs.length, 3);
 	assert.ok(snapshot.tabs.some((tab) => tab.url === "https://example.test/a"), "tab A must survive");
-	const tabB = snapshot.tabs.find((tab) => tab.url === "https://example.test/b");
 	assert.equal(snapshot.activeTabId, tabB.id);
-	assert.deepEqual(peekPendingBrowserNavigation(), {
-		tabId: tabB.id,
-		url: "https://example.test/b",
-	});
+	assert.deepEqual(received, [tabA, tabB]);
+
+	unsubscribe();
 });
 
-test("pending navigation: peek does not clear; consume returns once then null", () => {
+test("subscription: unsubscribe stops receiving notifications", () => {
 	resetForTest();
-	ensureInitialBrowserTab();
-	requestBrowserNavigation("https://example.test/only");
-	const snapshot = getBrowserPanelSessionSnapshot();
-	const expected = { tabId: snapshot.activeTabId, url: "https://example.test/only" };
-	assert.deepEqual(peekPendingBrowserNavigation(), expected);
-	assert.deepEqual(peekPendingBrowserNavigation(), expected);
-	assert.deepEqual(consumePendingBrowserNavigation(), expected);
-	assert.equal(peekPendingBrowserNavigation(), null);
-	assert.equal(consumePendingBrowserNavigation(), null);
+	const received = [];
+	const unsubscribe = subscribeBrowserNavigation((tab) => received.push(tab));
+	requestBrowserNavigation("https://example.test/sub-1");
+	assert.equal(received.length, 1);
+
+	unsubscribe();
+	requestBrowserNavigation("https://example.test/sub-2");
+	assert.equal(received.length, 1, "unsubscribed listener must not be notified");
 });
 
-test("regression: user switching tab while host is loading does not navigate active tab to pending URL", () => {
+test("mount before subscription: ensureInitialBrowserTab returns the externally requested tab directly without double loading", () => {
 	resetForTest();
-	const homeTab = ensureInitialBrowserTab();
-	// 1. 创建已有 tab C
-	const tabC = createBrowserTabInSession("https://example.test/c", "Tab C");
-	updateBrowserPanelSession({ activeTabId: tabC.id });
+	// 模拟面板未挂载时外部请求打开链接（此时无 subscriber）
+	const requestedTab = requestBrowserNavigation("https://example.test/target");
+	assert.equal(requestedTab.url, "https://example.test/target");
 
-	// 2. 模拟外部导航请求 B（例如确认 popup B 产生）
-	requestBrowserNavigation("https://example.test/b");
-	const snapshotAfterRequest = getBrowserPanelSessionSnapshot();
-	const tabB = snapshotAfterRequest.tabs.find((t) => t.url === "https://example.test/b");
-	assert.ok(tabB);
-	assert.equal(snapshotAfterRequest.activeTabId, tabB.id);
-
-	// 3. 模拟 host.isLoading() 期间用户切换回 tab C
-	updateBrowserPanelSession({ activeTabId: tabC.id });
-
-	// 4. 模拟 BrowserPanel 轮询消费 pending B
-	const hostLoadedUrls = [];
-	const mockHost = {
-		isLoading: () => false,
-		loadUrl: async (url) => {
-			hostLoadedUrls.push(url);
-		},
-		setDeviceProfile: () => {},
-	};
-
-	const pending = peekPendingBrowserNavigation();
-	assert.ok(pending);
-	assert.equal(mockHost.isLoading(), false);
-
-	const consumed = consumePendingBrowserNavigation();
-	assert.ok(consumed);
-
-	// 执行与 BrowserPanel.tsx 相同的目标 tab 校验逻辑
-	const currentSnapshot = getBrowserPanelSessionSnapshot();
-	if (currentSnapshot.activeTabId !== consumed.tabId) {
-		// 用户切走：跳过对 host 的 loadUrl
-	} else {
-		mockHost.loadUrl(consumed.url);
-	}
-
-	// 5. 断言：C.url 仍是 C，B.url 仍是 B，host 未将 B 加载进当前 tab C
-	const finalSnapshot = getBrowserPanelSessionSnapshot();
-	const finalC = finalSnapshot.tabs.find((t) => t.id === tabC.id);
-	const finalB = finalSnapshot.tabs.find((t) => t.id === tabB.id);
-	assert.equal(finalC.url, "https://example.test/c");
-	assert.equal(finalB.url, "https://example.test/b");
-	assert.equal(finalSnapshot.activeTabId, tabC.id);
-	assert.deepEqual(hostLoadedUrls, [], "host must NOT navigate current tab C to pending URL B");
+	// 模拟 BrowserPanel 挂载时的 ensureInitialBrowserTab 读取
+	const initialTab = ensureInitialBrowserTab();
+	assert.equal(initialTab.id, requestedTab.id);
+	assert.equal(initialTab.url, "https://example.test/target");
 });
 
-test("reset clears stale tabs and pending URL; next ensure recreates the Home tab", () => {
+test("reset clears stale tabs; next ensure recreates the Home tab", () => {
 	resetForTest();
 	ensureInitialBrowserTab();
 	requestBrowserNavigation("https://example.test/stale");
 	updateBrowserPanelSession({ device: "mobile" });
 	resetForTest();
-	// reset 后不主动 ensure：stale tabs 已清空，pending 为 null
+	// reset 后不主动 ensure：stale tabs 已清空
 	assert.equal(getBrowserPanelSessionSnapshot().tabs.length, 0);
-	assert.equal(peekPendingBrowserNavigation(), null);
 	// reset 不重置 device（与重构前一致）：设备模式是用户偏好，关闭最后 tab 不丢失
 	assert.equal(getBrowserPanelSessionSnapshot().device, "mobile");
 	// 下一次打开浏览器时 ensure 才重建默认 Home tab
@@ -173,19 +133,4 @@ test("device user-agent mapping matches the pre-refactor values exactly", () => 
 	assert.equal(deviceUserAgent("pc"), null);
 });
 
-test("regression: mount initializer consumes pending navigation if matching initialTab, preventing double load", () => {
-	resetForTest();
-	// 面板未挂载时外部请求打开 url
-	requestBrowserNavigation("https://example.test/initial-target");
-	assert.ok(peekPendingBrowserNavigation());
 
-	// 模拟 BrowserPanel 挂载时的 useState(() => ...) 初始化器逻辑
-	const initialTab = ensureInitialBrowserTab();
-	const pending = peekPendingBrowserNavigation();
-	if (pending && pending.tabId === initialTab.id) {
-		consumePendingBrowserNavigation();
-	}
-
-	assert.equal(initialTab.url, "https://example.test/initial-target");
-	assert.equal(peekPendingBrowserNavigation(), null, "pending must be cleared upon mount consumption");
-});

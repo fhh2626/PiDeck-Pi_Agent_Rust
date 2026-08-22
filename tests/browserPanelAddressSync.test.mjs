@@ -47,16 +47,16 @@ test("product entries funnel through loadUrl; direct host.loadUrl only where exp
 	}
 });
 
-test("pending external navigation consumption syncs url/input before host.loadUrl", () => {
+test("external navigation subscription syncs url/input before host.loadUrl", () => {
 	assertOrdered(
 		[
-			"consumePendingBrowserNavigation()",
-			"setUrl(consumed.url);",
-			"setInputValue(consumed.url);",
+			"subscribeBrowserNavigation(",
+			"setUrl(tab.url);",
+			"setInputValue(tab.url);",
 			"host.setDeviceProfile(snapshot.device);",
-			"host.loadUrl(consumed.url)",
+			"host.loadUrl(tab.url)",
 		],
-		"pending navigation polling",
+		"external navigation subscription",
 	);
 });
 

@@ -21,13 +21,12 @@ import type {
 	BrowserHostSurface,
 } from "../../browser/BrowserHostApi";
 import {
-	consumePendingBrowserNavigation,
 	createBrowserTabInSession,
 	DEFAULT_HOME,
 	ensureInitialBrowserTab,
 	getBrowserPanelSessionSnapshot,
-	peekPendingBrowserNavigation,
 	resetBrowserPanelSession,
+	subscribeBrowserNavigation,
 	updateBrowserPanelSession,
 	type BrowserTab,
 } from "../../browser/BrowserPanelSession";
@@ -58,17 +57,7 @@ export function BrowserPanel(props: {
 	hostSurface: BrowserHostSurface;
 }) {
 	const { onClose, onMinimize, onToggleFullscreen } = props;
-	const [initialTab] = useState(() => {
-		const tab = ensureInitialBrowserTab();
-		// 若本次 mount 消费的是刚由 requestBrowserNavigation 设置的 pending 外部导航
-		// （webview 标签通过 src={initialUrl} 已在初始挂载时直接加载了该 URL），
-		// 消费掉 pendingNavigation，防止后续 50ms 轮询等加载完成后再次 loadUrl 导致重复加载。
-		const pending = peekPendingBrowserNavigation();
-		if (pending && pending.tabId === tab.id) {
-			consumePendingBrowserNavigation();
-		}
-		return tab;
-	});
+	const [initialTab] = useState(() => ensureInitialBrowserTab());
 	const hostRef = useRef<BrowserHostApi | null>(null);
 	const [tabs, setTabs] = useState<BrowserTab[]>(() => [...getBrowserPanelSessionSnapshot().tabs]);
 	const [activeTabId, setActiveTabId] = useState<string | null>(
@@ -198,39 +187,23 @@ export function BrowserPanel(props: {
 		[updateActiveTab],
 	);
 
-	// 轮询检测 requestBrowserNavigation 设置的 pending 导航请求（module 变量不触发 React 重渲染）。
-	// 消费顺序不可交换：先确认 pending 存在 → host 已挂载 → host 空闲，最后才 consume，
-	// 否则 drawer 刚打开/webview 加载中时会把请求静默丢掉。
+	// 订阅外部导航请求：当外部（如 App.tsx / IPC）调用 requestBrowserNavigation 时，
+	// 直接收到通知并实时加载新 tab，替代原 50ms 轮询方案。
 	useEffect(() => {
-		const interval = window.setInterval(() => {
-			const pending = peekPendingBrowserNavigation();
-			if (!pending) return;
+		const unsubscribe = subscribeBrowserNavigation((tab) => {
 			const host = hostRef.current;
 			if (!host) return;
-			// 如果宿主正在加载中，跳过本次轮询保留 pending，下次轮询会重试
-			if (host.isLoading()) return;
-			// 通过加载检查后才消费，防止加载中时丢请求
-			const consumed = consumePendingBrowserNavigation();
-			if (!consumed) return;
 			const snapshot = getBrowserPanelSessionSnapshot();
-			if (snapshot.activeTabId !== consumed.tabId) {
-				// 用户在 pending 期间已主动切到其他 tab：
-				// 不要把 consumed.url 加载进当前 tab。新建的 tab 已在 session 中保存正确 url，
-				// 用户之后切换到该 tab 时 switchTab 会正常 loadUrl(tab.url)。
-				setTabs([...snapshot.tabs]);
-				setActiveTabId(snapshot.activeTabId);
-				return;
-			}
 			// 显式状态同步（plan §23「保留现有状态同步」）：此路径直接调 host.loadUrl、
 			// 不经 loadUrl() 的中心同步，必须自己把地址栏对齐目标 URL。
-			setUrl(consumed.url);
-			setInputValue(consumed.url);
+			setUrl(tab.url);
+			setInputValue(tab.url);
 			host.setDeviceProfile(snapshot.device);
 			setTabs([...snapshot.tabs]);
-			setActiveTabId(consumed.tabId);
-			void host.loadUrl(consumed.url).catch(() => {});
-		}, 50);
-		return () => window.clearInterval(interval);
+			setActiveTabId(tab.id);
+			void host.loadUrl(tab.url).catch(() => {});
+		});
+		return unsubscribe;
 	}, []);
 
 	const closeTab = useCallback(

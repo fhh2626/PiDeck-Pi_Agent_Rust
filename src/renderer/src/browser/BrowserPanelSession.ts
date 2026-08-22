@@ -24,10 +24,7 @@ export type BrowserPanelSessionSnapshot = {
 	device: BrowserDeviceProfile;
 };
 
-export type PendingBrowserNavigation = {
-	tabId: string;
-	url: string;
-};
+export type BrowserNavigationListener = (tab: BrowserTab) => void;
 
 let nextTabId = 1;
 function genTabId(): string {
@@ -40,8 +37,8 @@ const moduleState: BrowserPanelSessionSnapshot = {
 	device: "pc",
 };
 
-/** 待消费的外部导航请求（记录目标 tabId 与 URL），BrowserPanel 通过轮询检测。 */
-let pendingNavigation: PendingBrowserNavigation | null = null;
+/** 已挂载 BrowserPanel 的主动订阅集合。 */
+const navigationListeners = new Set<BrowserNavigationListener>();
 
 function ensureInitialTab() {
 	if (moduleState.tabs.length > 0) return;
@@ -85,38 +82,35 @@ export function createBrowserTabInSession(url: string, title: string): BrowserTa
 
 /**
  * 供外部（App.tsx）调用：在浏览器侧栏/弹框中导航到指定 URL。
- * 每次都新建 tab，避免多个外部链接复用同一个 tab。
+ * 每次都新建 tab 并设为 active；若 BrowserPanel 已挂载，直接推送事件通知组件导航。
  */
-export function requestBrowserNavigation(url: string): void {
-	// 每次外部导航创建新 tab，避免多个链接复用同一个 tab
+export function requestBrowserNavigation(url: string): BrowserTab {
 	const id = genTabId();
 	// 初始 title 留空（渲染层 fallback 显示 URL，等宿主上报真实 page title 后替换），
 	// 防止标题闪烁
-	moduleState.tabs.push({ id, title: "", url });
+	const tab: BrowserTab = { id, title: "", url };
+	moduleState.tabs.push(tab);
 	moduleState.activeTabId = id;
-	// 记录目标 tabId 与 URL；轮询消费时校验 activeTabId 匹配，防止加载期间切 tab 导致串扰
-	pendingNavigation = { tabId: id, url };
+	// 主动通知已挂载的 BrowserPanel 实例（无需轮询）
+	for (const listener of navigationListeners) {
+		listener(tab);
+	}
+	return tab;
 }
 
-/** 查看待消费的外部导航请求（不清除）。 */
-export function peekPendingBrowserNavigation(): PendingBrowserNavigation | null {
-	return pendingNavigation;
-}
-
-/** 消费待处理的外部导航请求（返回并清除）；无 pending 时返回 null。 */
-export function consumePendingBrowserNavigation(): PendingBrowserNavigation | null {
-	const pending = pendingNavigation;
-	pendingNavigation = null;
-	return pending;
+/** 订阅外部导航请求事件（BrowserPanel 挂载时监听，卸载时取消）。 */
+export function subscribeBrowserNavigation(listener: BrowserNavigationListener): () => void {
+	navigationListeners.add(listener);
+	return () => {
+		navigationListeners.delete(listener);
+	};
 }
 
 /**
  * 清空会话状态（关闭最后一个 tab 时使用），下次打开时重建默认 Home tab。
- * 注意：与重构前行为一致，不重置 device——设备模式（mobile/tablet UA + 视口约束）
- * 属于用户偏好，关闭最后一个 tab 不应静默丢失。
+ * 注意：与重构前行为一致，不重置 device——设备模式属于用户偏好，关闭最后 tab 不丢失。
  */
 export function resetBrowserPanelSession(): void {
 	moduleState.tabs = [];
 	moduleState.activeTabId = null;
-	pendingNavigation = null;
 }
