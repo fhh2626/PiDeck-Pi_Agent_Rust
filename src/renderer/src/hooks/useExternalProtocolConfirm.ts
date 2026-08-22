@@ -6,7 +6,7 @@ import { desktopApi } from "../desktopApi";
  *
  * 主进程 guest 导航/弹窗策略拦截到白名单内系统协议后，经
  * appConfirmExternalProtocol 推送到主窗口；本 hook 持有该确认请求状态，
- * 用户同意后经 browser.openExternal(forceSystem=true) 回流同一网关。
+ * 用户同意后经 browser.openExternal 回流同一网关。
  *
  * 独立于 useOverlayActions：后者是既有 confirm/trust 域（有范围收敛门禁），
  * 浏览器外部协议确认属于 browser feature 域，不并入通用 overlay 状态。
@@ -19,17 +19,22 @@ export function useExternalProtocolConfirm(): {
 } {
 	const [url, setUrl] = useState<string | null>(null);
 
-	useEffect(() => {
-		const off = desktopApi.app.onConfirmExternalProtocol?.((next) => setUrl(next));
-		return () => off?.();
+	// TOCTOU 门禁：确认框已打开时锁定第一条请求，后续推送丢弃不覆盖——
+	// 否则远程脚本可在用户点击前的最后一刻把 A 换成 B（用户看到的与
+	// 实际交给系统处理器的必须一致）。functional updater 是纯函数
+	// （只做 ?? 选择），与「副作用不得进 updater」的约定不冲突。
+	const acceptRequest = useCallback((next: string) => {
+		setUrl((current) => current ?? next);
 	}, []);
 
-	const requestConfirm = useCallback((next: string) => setUrl(next), []);
+	useEffect(() => {
+		const off = desktopApi.app.onConfirmExternalProtocol?.(acceptRequest);
+		return () => off?.();
+	}, [acceptRequest]);
+
+	const requestConfirm = acceptRequest;
 	const confirm = useCallback(() => {
-		// 副作用不放进 setState updater：StrictMode 开发模式下 updater 会被刻意
-		// 双调用（暴露非纯函数），会把系统处理器拉起两次。闭包捕获当前 url，
-		// 对话框仅在 url != null 时渲染。
-		if (url) void desktopApi.browser.openExternal(url, true);
+		if (url) void desktopApi.browser.openExternal(url);
 		setUrl(null);
 	}, [url]);
 	const dismiss = useCallback(() => setUrl(null), []);

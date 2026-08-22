@@ -1234,9 +1234,9 @@ const api = {
 
 	// ===== 内置浏览器 =====
 	browser: {
-		/** 在系统默认浏览器中打开外部链接。
-		 *  用于 webview 不支持或需要另开浏览器查看的场景。 */
-		openExternal: (url: string, forceSystem?: boolean) =>
+		/** 在系统默认处理器中打开外部链接（mailto:/tel: 等确认后的回流也走此通道）。
+		 *  主进程侧固定 forceSystem=true：本契约就是「离开应用交给系统」，无路由语义。 */
+		openExternal: (url: string) =>
 			ipcRenderer.invoke(ipcChannels.browserOpenExternal, url) as Promise<void>,
 	},
 

@@ -35,19 +35,19 @@ export function SessionActionOverlays({ settings, confirm, trust, externalProtoc
 /** guest 页面请求 mailto/tel/sms 的确认框：主进程推送 → 用户同意才经网关启动系统处理器。 */
 function ExternalProtocolConfirmOverlay({ request }: { request?: NonNullable<SessionActionOverlaysProps["externalProtocol"]> }) {
 	if (!request?.open) return null;
-	// mailto:user@example.com 等 WHATWG 解析不出 host 的 URL 直接展示原串，
-	// http(s) 展示 host 避免超长 query 干扰阅读。
-	let display = request.url;
-	try {
-		const parsed = new URL(request.url);
-		if (parsed.host) display = parsed.host;
-	} catch {
-		// 保持原串
-	}
+	// 必须展示完整 URI（含 query）：用户看到的内容必须与之后交给系统处理器的
+	// 一致——sms:/mailto: 的 query 可携带正文/subject，只显示 host 会掩盖真实目标。
+	// 超长 URI 截断尾部并以 … 提示（信息不完整时用户应拒绝），换行由 CSS 处理。
+	const MAX_URL_DISPLAY = 160;
+	const display =
+		request.url.length > MAX_URL_DISPLAY
+			? `${request.url.slice(0, MAX_URL_DISPLAY)}…`
+			: request.url;
 	return (
 		<ConfirmDialog
 			title={t("browser.externalProtocolTitle")}
 			message={t("browser.externalProtocolMessage", { url: display })}
+			messageClassName="break-all"
 			onConfirm={request.onConfirm}
 			onCancel={request.onCancel}
 		/>

@@ -61,7 +61,15 @@ export function isAllowedSystemExternalProtocol(url: string): boolean {
 /** guest 页面内链接可转系统的非 web 协议（GUEST_SYSTEM_SCHEMES 判定）。 */
 export function isAllowedGuestSystemProtocol(url: string): boolean {
 	const scheme = getUrlScheme(url);
-	return scheme != null && GUEST_SYSTEM_SCHEMES.includes(scheme);
+	if (scheme == null || !GUEST_SYSTEM_SCHEMES.includes(scheme)) return false;
+	// 结构校验：拒绝 authority 形式（sms://host/...、mailto://host/...）。
+	// 这些协议的标准形式是 opaque（host 为空，目标在 path/query）；authority 形式
+	// 只会出现在构造的混淆 URI 中，且确认框展示与真实目标可能不一致。
+	try {
+		return new URL(url).host === "";
+	} catch {
+		return false;
+	}
 }
 
 export type OpenExternalLinkDeps = {

@@ -301,7 +301,7 @@ async function openExternalUrl(url: string, forceSystem = false) {
 
 // guest 页面请求 mailto/tel/sms：主进程不直接启动系统处理器，先推给受信渲染层
 // 弹确认框（任意远程脚本/隐藏 iframe 不应能无交互唤起本机程序）；用户确认后
-// 渲染层经 browser.openExternal(forceSystem=true) 回流同一网关。
+// 渲染层经 browser.openExternal 回流同一网关。
 function requestGuestExternalProtocolConfirmation(url: string) {
 	if (!mainWindow || mainWindow.isDestroyed()) {
 		void backend?.appLogger.warn("browser", "Dropped external protocol request: main window unavailable", { url });
